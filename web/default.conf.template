@@ -1,0 +1,46 @@
+# Germ Arena — brauzer build-ini verən statik server.
+#
+# `${PORT}` konteyner işə düşəndə nginx obrazının öz envsubst skripti ilə doldurulur
+# (/etc/nginx/templates/*.template → /etc/nginx/conf.d/). Railway portu bu dəyişənlə verir.
+
+server {
+    listen       ${PORT};
+    listen       [::]:${PORT};
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # .wasm/.pck/.js əvvəlcədən .gz kimi sıxılıb (bax: Dockerfile) — nginx hazır faylı verir,
+    # hər sorğuda 39 MB-ı yenidən sıxmır.
+    gzip_static on;
+
+    # Build-ın fayl adları dəyişmir (index.wasm, index.pck), ona görə brauzer keşi
+    # köhnə versiyanı ilişdirib saxlaya bilər. `no-cache` = hər dəfə ETag ilə yoxla:
+    # dəyişməyibsə 304, dəyişibsə yeni build. Test deployu üçün doğru davranış budur.
+    add_header Cache-Control "no-cache" always;
+
+    # Godot web build-i thread-siz yığılıb, yəni bu başlıqlar hazırda MƏCBURİ deyil.
+    # Saxlanılır ki, presetdə `variant/thread_support` açılsa host tərəfdə düzəliş
+    # lazım gəlməsin — SharedArrayBuffer məhz bu iki başlıq olanda işə düşür.
+    add_header Cross-Origin-Opener-Policy   "same-origin"  always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # nginx-in mime.types-ında wasm olmasa brauzer streaming kompilyasiyadan imtina edir.
+    # Boş `types` bloku + `default_type` bu genişlənmə üçün tipi məcburi təyin edir.
+    location ~ \.wasm$ {
+        types { }
+        default_type application/wasm;
+
+        gzip_static on;
+        # `add_header` irsi qırılır: cari səviyyədə bir dənə də olsa varsa, yuxarıdakılar
+        # ötürülmür. Ona görə hamısı burada təkrarlanır.
+        add_header Cache-Control "no-cache" always;
+        add_header Cross-Origin-Opener-Policy   "same-origin"  always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+    }
+}

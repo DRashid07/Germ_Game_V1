@@ -1,0 +1,108 @@
+extends Node
+## Giriş nöqtəsi. Eyni build həm oyun, həm server kimi işə düşür.
+##
+##   Oyun   : Godot_v4.7.2.exe --path game
+##   Server : Godot_v4.7.2.exe --headless --path game -- --server --port 27015
+##
+## Bir build olması vacibdir: server və client EYNİ [Sim] kodunu icra edir,
+## versiya fərqi olsa simulyasiyalar ayrılar.
+
+
+func _ready() -> void:
+	var args := OS.get_cmdline_user_args()
+	if args.has("--simtest"):
+		get_tree().quit(SimTest.run())
+	elif args.has("--server"):
+		_start_server(args)
+	elif args.has("--practice"):
+		_start_practice(args)
+	elif args.has("--autoclient"):
+		_start_auto_client(args)
+	else:
+		# `_ready` icra olunarkən ağac hələ məşğuldur — səhnə dəyişimi
+		# növbəti kadra təxirə salınmalıdır.
+		get_tree().change_scene_to_file.call_deferred("res://scenes/ui/main_menu.tscn")
+		_setup_screenshot(args)
+
+
+## Menyunu keçib birbaşa botlarla dolu yerli dünyaya düşür.
+## Həm cihazda sürətli sınaq, həm də bütün oyun axınının inteqrasiya testidir.
+func _start_practice(args: PackedStringArray) -> void:
+	var arena: Arena = load("res://scenes/game/arena.tscn").instantiate()
+	arena.configure_practice()
+	arena.auto_input = args.has("--shot")   # görüntü üçün mikrob hərəkətdə olsun
+	var tree := get_tree()
+	tree.root.add_child.call_deferred(arena)
+	tree.set_deferred("current_scene", arena)
+
+	_setup_screenshot(args)
+	_setup_perf(args)
+
+
+## `--perf <saniyə>` verilibsə, kadr vaxtlarını ölçüb hesabat yazır.
+func _setup_perf(args: PackedStringArray) -> void:
+	var secs := _arg_value(args, "--perf", "")
+	if secs.is_empty():
+		return
+	var probe := PerfProbe.new()
+	probe.duration = maxf(float(secs), 3.0)
+	get_tree().root.add_child.call_deferred(probe)
+
+
+## `--shot <yol>` verilibsə, bir neçə kadr sonra görüntü çəkib çıxır.
+## Səhnə dəyişimindən sağ çıxsın deyə node kökə əlavə olunur.
+func _setup_screenshot(args: PackedStringArray) -> void:
+	var shot := _arg_value(args, "--shot", "")
+	if shot.is_empty():
+		return
+	var cam := Screenshot.new()
+	cam.path = shot
+	cam.delay_frames = int(_arg_value(args, "--shot-delay", "90"))
+	get_tree().root.add_child.call_deferred(cam)
+
+
+## Şəbəkə inteqrasiya testi üçün insansız client.
+func _start_auto_client(args: PackedStringArray) -> void:
+	var client := AutoClient.new()
+	client.name = "AutoClient"
+	client.host = _arg_value(args, "--host", "127.0.0.1")
+	client.port = int(_arg_value(args, "--port", str(Const.DEFAULT_PORT)))
+	client.label = _arg_value(args, "--label", "auto")
+	client.drop_after = float(_arg_value(args, "--drop-after", "0"))
+	client.quit_after = float(_arg_value(args, "--quit-after", "0"))
+	get_tree().root.add_child.call_deferred(client)
+
+
+static func _arg_value(args: PackedStringArray, key: String, fallback: String) -> String:
+	var i := args.find(key)
+	if i >= 0 and i + 1 < args.size():
+		return args[i + 1]
+	return fallback
+
+
+func _start_server(args: PackedStringArray) -> void:
+	# Railway və bənzər platformalar portu `PORT` mühit dəyişəni ilə verir və
+	# ictimai UDP-yə icazə vermir — orada avtomatik WebSocket-ə keçirik.
+	var env_port := OS.get_environment("PORT")
+	var on_paas := not env_port.is_empty()
+
+	var port := Const.DEFAULT_PORT
+	if on_paas and env_port.is_valid_int():
+		port = int(env_port)
+	else:
+		var i := args.find("--port")
+		if i >= 0 and i + 1 < args.size():
+			port = int(args[i + 1])
+
+	var use_ws := on_paas or args.has("--ws")
+
+	if Net.host_server(port, use_ws) != OK:
+		push_error("Server qalxa bilmədi, çıxılır.")
+		get_tree().quit(1)
+		return
+
+	var lobby := Lobby.new()
+	lobby.name = "Lobby"
+	lobby.verbose = args.has("--verbose")
+	get_tree().root.add_child.call_deferred(lobby)
+	print("[boot] server rejimi aktivdir")

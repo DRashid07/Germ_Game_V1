@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" width="220" height="220">
+  <!-- Üzən joystickin bazası — barmaq harada toxunsa orada çəkilir. -->
+  <circle cx="110" cy="110" r="104" fill="#071012" opacity="0.55"/>
+  <circle cx="110" cy="110" r="104" fill="none" stroke="#1F3D45" stroke-width="6"/>
+  <circle cx="110" cy="110" r="82" fill="none" stroke="#2FE8E0" stroke-width="3" opacity="0.35"/>
+  <g stroke="#7FA0A0" stroke-width="5" stroke-linecap="round" opacity="0.65">
+    <path d="M110 34 v18"/>
+    <path d="M110 168 v18"/>
+    <path d="M34 110 h18"/>
+    <path d="M168 110 h18"/>
+  </g>
+</svg>

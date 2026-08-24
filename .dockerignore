@@ -1,0 +1,6 @@
+*
+!build
+build/*
+!build/server
+build/server/*
+!build/server/germ_arena_server.x86_64

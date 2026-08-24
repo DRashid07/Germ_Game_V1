@@ -1,0 +1,41 @@
+; Engine configuration file.
+; Godot 4.7.2-stable
+
+config_version=5
+
+[application]
+
+config/name="Germ Arena"
+config/description="Onlayn io tipli mikrob arenası — 10 nəfərlik sonsuz dünya"
+run/main_scene="res://scenes/boot.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+Const="*res://scripts/shared/constants.gd"
+Net="*res://scripts/shared/net.gd"
+Sfx="*res://scripts/client/sfx.gd"
+
+[display]
+
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/handheld/orientation=1
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+
+[physics]
+
+common/physics_ticks_per_second=60
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.027451, 0.058824, 0.070588, 1)

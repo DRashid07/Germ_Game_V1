@@ -1,0 +1,13 @@
+# Godot-un idxal keşi — yerli maşına aiddir, hər klonda yenidən qurulur.
+game/.godot/
+
+# Build nəticələri. Böyükdür və mənbədən yenidən yaradılır:
+#   bash tools/deploy_server.sh   → build/server/
+#   bash tools/build_release_apk.sh → build/
+# Railway `railway up` ilə YERLİ faylları göndərir, ona görə git-də saxlamağa ehtiyac yoxdur.
+build/
+web/public/
+
+# İmza açarları heç vaxt repoda olmamalıdır.
+*.keystore
+*.jks

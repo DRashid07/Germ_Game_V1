@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <!-- Atılmış mikrob topu. Sprite AĞ-BOZDUR: rəngi kodda `modulate` ilə
+       sahibinin rənginə boyanır, beləcə 10 rəng üçün TƏK tekstura bəs edir
+       və hamısı bir çəkiliş çağırışında toplanır. -->
+  <defs>
+    <radialGradient id="shot" cx="38%" cy="34%" r="70%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="48%" stop-color="#E8F4F2"/>
+      <stop offset="100%" stop-color="#8FA8A6"/>
+    </radialGradient>
+  </defs>
+  <circle cx="18" cy="18" r="15" fill="#FFFFFF" opacity="0.14"/>
+  <circle cx="18" cy="18" r="11" fill="#04090B" opacity="0.6"/>
+  <circle cx="18" cy="18" r="9.6" fill="url(#shot)"/>
+  <circle cx="14.6" cy="14.4" r="2.6" fill="#FFFFFF" opacity="0.9"/>
+</svg>

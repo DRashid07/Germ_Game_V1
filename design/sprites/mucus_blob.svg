@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Selik ləkəsi (maneə). Radiusu 120-dir (256/2 − 8 haşiyə):
+       kodda `scale = radius / 120` ilə hər ölçüyə uyğunlaşdırılır. -->
+  <defs>
+    <radialGradient id="mucus" cx="42%" cy="38%" r="66%">
+      <stop offset="0%" stop-color="#1D4450"/>
+      <stop offset="70%" stop-color="#16333B"/>
+      <stop offset="100%" stop-color="#102830"/>
+    </radialGradient>
+  </defs>
+  <circle cx="128" cy="128" r="120" fill="url(#mucus)" stroke="#245562" stroke-width="5"/>
+  <g fill="#245562" opacity="0.35">
+    <circle cx="92" cy="96" r="15"/>
+    <circle cx="160" cy="118" r="11"/>
+    <circle cx="112" cy="158" r="13"/>
+    <circle cx="168" cy="172" r="8"/>
+    <circle cx="74" cy="140" r="7"/>
+  </g>
+</svg>

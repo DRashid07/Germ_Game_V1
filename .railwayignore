@@ -1,0 +1,11 @@
+# Railway-ə yalnız serverin işi üçün lazım olanlar gedir.
+# Oyun mənbəyi, dizayn faylları və APK burada lazım deyil.
+design/
+docs/
+game/
+build/GermArena.apk
+build/GermArena.apk.idsig
+*.md
+build/GermArena-release.apk
+build/GermArena-release.apk.idsig
+web/

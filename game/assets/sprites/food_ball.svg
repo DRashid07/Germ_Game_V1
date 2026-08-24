@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Yerdəki sərbəst top (qida). Kodda modulate EDİLMİR — həmişə eyni rəngdədir,
+       çünki qida heç kimə aid deyil. -->
+  <defs>
+    <radialGradient id="food" cx="38%" cy="34%" r="72%">
+      <stop offset="0%" stop-color="#F6FFEE"/>
+      <stop offset="55%" stop-color="#D9FFC0"/>
+      <stop offset="100%" stop-color="#7FC96B"/>
+    </radialGradient>
+  </defs>
+  <circle cx="16" cy="16" r="13" fill="#0A1A12" opacity="0.55"/>
+  <circle cx="16" cy="16" r="11.5" fill="url(#food)"/>
+  <circle cx="12.4" cy="12.0" r="3.1" fill="#FFFFFF" opacity="0.75"/>
+</svg>

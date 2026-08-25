@@ -60,14 +60,15 @@ func has_room() -> bool:
 
 
 ## Oyunçunu dünyaya salır və mikrobunu doğurur.
-func add_player(peer: int, player_name: String) -> Sim.GermState:
+func add_player(peer: int, player_name: String,
+		species := Const.Species.CILIATE) -> Sim.GermState:
 	# İnsan gələndə bot yerini ona verir — dünya heç vaxt hədddən çox olmur.
 	if sim.germs.size() >= Const.WORLD_CAPACITY:
 		_remove_one_bot()
 	peers.append(peer)
 	_last_seq[peer] = 0
 	tokens[peer] = _new_token()
-	return sim.add_germ(peer, player_name, _free_color())
+	return sim.add_germ(peer, player_name, _free_color(), false, species)
 
 
 ## Dünyaya girəndə oyunçuya göndərilən məlumat.
@@ -77,6 +78,9 @@ func join_info_for(peer: int) -> Dictionary:
 		"world": id,
 		"you": peer,
 		"color": g.color if g != null else 0,
+		# Növ serverdən geri qaytarılır: yenidən qoşulanda oyunçu köhnə mikrobuna
+		# qayıdır və onun növü serverdəki qeyddir, menyudakı seçim deyil.
+		"species": int(g.species) if g != null else int(Const.Species.CILIATE),
 		"name": g.name if g != null else "",
 		"tick_rate": Const.TICK_RATE,
 		"token": str(tokens.get(peer, "")),
@@ -108,7 +112,11 @@ func _add_bot() -> void:
 	# Çətinlik təsadüfidir: dünyada həm asan, həm təhlükəli mikroblar olsun.
 	var bot := Bot.new(bid, randf_range(0.7, 1.3))
 	_bots[bid] = bot
-	sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true)
+	# Botların növü təsadüfidir ki, dünyada hər iki növ görünsün.
+	var species := Const.Species.CILIATE
+	if randi() % 2 == 1:
+		species = Const.Species.HELIOZOAN
+	sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true, species)
 
 
 func _remove_one_bot() -> void:
@@ -202,7 +210,7 @@ func _build_frame() -> void:
 			g.pos.x, g.pos.y,
 			g.vel.x, g.vel.y,
 			g.aim, g.balls, g.capacity,
-			1 if g.safe_t > 0.0 else 0,
+			_flags_of(g),
 			int(_last_seq.get(g.id, 0)),
 			g.cooldown,
 		]])
@@ -230,6 +238,16 @@ func _build_frame() -> void:
 		_frame_events.append([pos, [kind, pos.x, pos.y, float(e["arg"]), int(e["color"])]])
 
 	_frame_board = sim.leaderboard(5)
+
+
+## Mikrobun bayraqları bir ədəddə (bax [enum Const.GFlag]).
+static func _flags_of(g: Sim.GermState) -> int:
+	var f := 0
+	if g.safe_t > 0.0:
+		f |= Const.GFlag.SAFE
+	if g.species == Const.Species.HELIOZOAN:
+		f |= Const.GFlag.HELIOZOAN
+	return f
 
 
 func snapshot_for(peer: int) -> Array:

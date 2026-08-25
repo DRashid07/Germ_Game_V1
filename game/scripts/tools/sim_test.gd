@@ -34,12 +34,16 @@ static func run() -> int:
 	_test_food_ignored_when_full()
 	_test_burst_scatters_food()
 	_test_dish_confines()
+	_test_fluid_glide()
+	_test_current_field()
 	_test_leaderboard()
 	_test_world_flow()
 	_test_world_view_filter()
 	_test_world_keeps_population()
 	_test_address_parsing()
 	_test_fire_button()
+	_test_germ_species()
+	_test_heliozoan_gait()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 
@@ -204,6 +208,93 @@ static func _test_dish_confines() -> void:
 		"qabın kənarı saxlayır (məsafə %.1f, hədd %.1f)" % [g.pos.length(), limit])
 
 
+## Maye hərəkəti: barmaq qalxandan sonra mikrob dərhal dayanmır, sürüşür.
+## Bu, oyunun "su" hissinin əsasıdır — sınsa, idarəetmə kərpic kimi olur.
+static func _test_fluid_glide() -> void:
+	var s := Sim.new()
+	var g := s.add_germ(A_ID, "A", 0)
+	g.safe_t = 0.0
+	g.pos = Vector2(0.0, LANE_Y)
+
+	# Bir saniyə itələ — sürət hədəfə çatsın.
+	for i in Const.TICK_RATE:
+		s.step({A_ID: Sim.PlayerInput.make(i + 1, Vector2.RIGHT, 0.0, false)}, Const.TICK_DELTA)
+	var moving := g.vel.length()
+	_check(moving > Const.germ_speed(g.capacity) * 0.85,
+		"itələmə hədəf sürətə çatır (%.0f / %.0f px/s)" % [moving, Const.germ_speed(g.capacity)])
+
+	# İndi burax — yarım saniyəyə hələ də hərəkətdə olmalıdır, amma yavaşımalıdır.
+	#
+	# Sürüşmə SUYA NİSBƏTƏN ölçülür: xam mövqe fərqinə axının apardığı yol da
+	# daxildir və o, mikrobun harada dayandığından asılıdır. Axın gücləndirildikdə
+	# bu ölçü 49 px-dən 31-ə düşdü — mikrob pisləşmədi, sadəcə həmin nöqtədə axın
+	# ona qarşı idi. Axının payını eyni üsulla (Sim ilə üzbəüz) çıxırıq.
+	var at_release := g.pos
+	var drift := Vector2.ZERO
+	for i in int(Const.TICK_RATE * 0.5):
+		drift += Const.current_at(g.pos) * Const.TICK_DELTA
+		s.step({}, Const.TICK_DELTA)
+	var glided := (g.pos - at_release - drift).length()
+	_check(glided > 30.0 and g.vel.length() < moving * 0.5,
+		"buraxandan sonra sürüşür (%.0f px, sürət %.0f → %.0f)" % [glided, moving, g.vel.length()])
+
+
+## Axın sahəsi: sabit, sərhəddə sıfır və divergensiyasız.
+##
+## Divergensiya vacibdir — sıfır olmasa sərbəst qida burulğanın mərkəzinə
+## yığılıb ilişər və dünyanın bir hissəsi qidasız qalar.
+static func _test_current_field() -> void:
+	var probe := Vector2(180.0, -240.0)
+	_check(Const.current_at(probe) == Const.current_at(probe),
+		"axın sahəsi sabitdir (eyni nöqtə → eyni sürət)")
+
+	var at_glass := Const.current_at(Vector2(Const.WORLD_RADIUS - 2.0, 0.0))
+	_check(at_glass.length() < 0.5, "şüşənin dibində axın dayanır (%.3f px/s)" % at_glass.length())
+
+	var cap := Const.CURRENT_STRENGTH * 2.0 + Const.CURRENT_SWIRL * 2.0
+	var peak := 0.0
+	var worst_div := 0.0
+	var total := 0.0
+	var inside := 0
+	var h := 4.0
+	for i in 60:
+		for j in 60:
+			var p := Vector2(float(i) - 29.5, float(j) - 29.5) * 38.0
+			var speed := Const.current_at(p).length()
+			peak = maxf(peak, speed)
+			if p.length() <= Const.WORLD_RADIUS:
+				total += speed
+				inside += 1
+			# ∂vx/∂x + ∂vy/∂y — mərkəzi fərqlə hesablanır.
+			var dvx := Const.current_at(p + Vector2(h, 0)).x - Const.current_at(p - Vector2(h, 0)).x
+			var dvy := Const.current_at(p + Vector2(0, h)).y - Const.current_at(p - Vector2(0, h)).y
+			worst_div = maxf(worst_div, absf((dvx + dvy) / (2.0 * h)))
+
+	_check(peak <= cap, "axın sürəti həddi aşmır (%.1f ≤ %.1f px/s)" % [peak, cap])
+
+	# ── Aşağıdakı iki yoxlama axının HİSS OLUNMASINI qoruyur ──
+	#
+	# İlk versiya riyazi olaraq tamamilə düzgün idi (sabit, divergensiyasız,
+	# şüşədə dayanan) və buna baxmayaraq oyunda GÖRÜNMÜRDÜ: orta sürət
+	# BASE_SPEED-in cəmi 6.7%-i idi və bir burulğan ekrana sığmırdı.
+	# "Düzgün işləyir" ilə "hiss olunur" ayrı şeylərdir — ikincisi də
+	# ölçülməlidir, əks halda növbəti tənzimləmə onu yenidən söndürər.
+
+	var mean := total / float(maxi(inside, 1))
+	var floor_speed := Const.BASE_SPEED * 0.09
+	_check(mean >= floor_speed,
+		"axın hiss olunacaq qədər güclüdür (orta %.1f ≥ %.1f px/s, sürətin %.1f%%-i)"
+			% [mean, floor_speed, 100.0 * mean / Const.BASE_SPEED])
+
+	# Bir burulğan ekrana SIĞMALIDIR. Sığmasa ekrandakı bütün zərrəciklər eyni
+	# tərəfə baxır və oyunçu fırlanmanı görmür — yalnız izahsız sürüşmə qalır.
+	_check(Const.CURRENT_SCALE < Const.VIEW_WIDTH_BASE,
+		"burulğan ekrana sığır (dalğa uzunluğu %.0f < ekran %.0f px)"
+			% [Const.CURRENT_SCALE, Const.VIEW_WIDTH_BASE])
+	_check(worst_div < 0.02,
+		"axın divergensiyasız — qida burulğanda ilişmir (ən pis %.4f 1/s)" % worst_div)
+
+
 static func _test_leaderboard() -> void:
 	var s := Sim.new()
 	for i in 3:
@@ -347,20 +438,133 @@ static func _fresh() -> Sim:
 	return s
 
 
-## Bir dəfə atəş açır və topun uçuşunu izləyir. Atıcı yerində saxlanılır,
-## çünki geri təpmə onu sürüşdürər və hədəf xəttindən çıxarardı.
+## Bir dəfə atəş açır və topun uçuşunu izləyir.
+##
+## BÜTÜN mikroblar yerində saxlanılır: atıcını geri təpmə, hədəfi isə mayenin
+## axını ([method Const.current_at]) hədəf xəttindən çıxarardı. Bu testlərin
+## mövzusu topun yolu, hərəkət deyil — hərəkət ayrıca yoxlanılır
+## (bax [method _test_fluid_glide]).
 static func _fire_once(s: Sim, shooter: Sim.GermState, aim: float, ticks: int) -> Array:
 	var bursts := []
-	var pos := shooter.pos
+	var anchor := {}
+	for id in s.germs:
+		anchor[id] = (s.germs[id] as Sim.GermState).pos
 	for i in ticks:
-		shooter.pos = pos
-		shooter.vel = Vector2.ZERO
+		for id in anchor:
+			if s.germs.has(id):
+				var g: Sim.GermState = s.germs[id]
+				g.pos = anchor[id]
+				g.vel = Vector2.ZERO
 		var inputs := {}
 		if i == 0:
 			inputs[shooter.id] = Sim.PlayerInput.make(1, Vector2.ZERO, aim, true)
 		s.step(inputs, Const.TICK_DELTA)
 		bursts.append_array(s.burst_log)
 	return bursts
+
+
+## Oyunçunun seçdiyi növ dünyaya girib snapshot-la geri qayıtmalıdır.
+##
+## Növ AYRICA sahə kimi göndərilmir — toxunulmazlıq bayrağının boş bitinə
+## yerləşdirilib ([enum Const.GFlag]). Ona görə iki dəyər BİR ədədə yığılır
+## və səhv paketlənsə nəticə səssiz olur: ya rəqib yanlış növdə görünər,
+## ya da doğuş qalxanı işləməz. İkisi də burada yoxlanılır.
+static func _test_germ_species() -> void:
+	var world := World.new(9)
+	world._seeded = true                  # botlar qarışmasın
+	var walker := world.add_player(A_ID, "Ayaqlı", Const.Species.HELIOZOAN)
+	var swimmer := world.add_player(B_ID, "Kirpikli", Const.Species.CILIATE)
+
+	_check(walker.species == Const.Species.HELIOZOAN
+			and swimmer.species == Const.Species.CILIATE,
+		"seçilən növ mikroba yazılır")
+
+	# Doğuş qalxanı ilə növ EYNİ ədədin içindədir — birlikdə yoxlanılır.
+	walker.safe_t = Const.SPAWN_SAFE_TIME
+	swimmer.safe_t = 0.0
+	world._build_frame()
+	var rows := {}
+	for e in world.snapshot_for(A_ID)[Const.Snap.GERMS]:
+		rows[int(e[Const.GF.ID])] = int(e[Const.GF.FLAGS])
+
+	var wf: int = rows.get(A_ID, 0)
+	var sf: int = rows.get(B_ID, 0)
+	_check(wf & Const.GFlag.HELIOZOAN and not (sf & Const.GFlag.HELIOZOAN),
+		"növ snapshot-dan düzgün oxunur (bayraqlar %d / %d)" % [wf, sf])
+	_check(wf & Const.GFlag.SAFE and not (sf & Const.GFlag.SAFE),
+		"toxunulmazlıq eyni ədəddə növü pozmur")
+
+	# Növ üç ayrı ETİBARSIZ mənbədən gəlir: client-in paketi, serverin cavabı
+	# və diskdəki ayar faylı. Üçü də eyni funksiyadan keçir, ona görə yad
+	# dəyərin nəticəsi bir yerdə yoxlanılır.
+	_check(Const.species_from(99) == Const.Species.CILIATE
+			and Const.species_from(-3) == Const.Species.CILIATE
+			and Const.species_from(1) == Const.Species.HELIOZOAN,
+		"yad növ dəyəri kirpikliyə düşür")
+
+
+## Ayaqlı mikrobun yerişi.
+##
+## Ekran görüntüsü bunu yoxlaya bilmir — kadr donuqdur, yeriş isə zamanla
+## yaşayır. Üç xassə var və hər biri pozulanda hərəkət "yeriş" olmaqdan çıxır:
+##   1. dayanan mikrob ayaqlarını tərpətməməlidir (yoxsa yerində titrəyir);
+##   2. ayaqlar sonsuz dartılmamalıdır (yoxsa gövdədən qopmuş görünür);
+##   3. ayaqların çoxu HƏR AN yerdə olmalıdır (yoxsa yeriş yox, sıçrayışdır).
+static func _test_heliozoan_gait() -> void:
+	var g := GermVisual.new()
+	g.setup(1, "Ayaqlı", false, Const.Species.HELIOZOAN)
+	_check(g.species == Const.Species.HELIOZOAN, "ayaqlı növ quraşdırılır")
+
+	var dt := 1.0 / 60.0
+	var cap := Const.START_CAPACITY
+	var r := Const.germ_radius(cap)
+	var pos := Vector2(0.0, LANE_Y)
+
+	# ---- 1. Dayanan mikrob addımlamır ----
+	for i in 40:
+		_gait_step(g, pos, cap, dt)
+	var resting := g._foot.duplicate()
+	for i in 40:
+		_gait_step(g, pos, cap, dt)
+	var drift := 0.0
+	for i in g._legs:
+		drift = maxf(drift, resting[i].distance_to(g._foot[i]))
+	_check(drift < 0.5, "dayanan mikrob ayaqlarını tərpətmir (%.2f px sürüşmə)" % drift)
+
+	# ---- 2 və 3. Yeriş ----
+	var worst_reach := 0.0
+	var worst_lifted := 0
+	var stepped := {}
+	for i in 300:
+		pos += Vector2.RIGHT * Const.BASE_SPEED * dt
+		_gait_step(g, pos, cap, dt)
+		var lifted := 0
+		for j in g._legs:
+			worst_reach = maxf(worst_reach, pos.distance_to(g._foot[j]))
+			if g._step[j] < 1.0:
+				lifted += 1
+				stepped[j] = true
+		worst_lifted = maxi(worst_lifted, lifted)
+
+	# Ayaq ən çox "normal uzaqlıq + bir addım" qədər uzana bilər.
+	var limit := r * (GermVisual.LEG_REACH + GermVisual.LEG_STRIDE + 0.6)
+	_check(worst_reach <= limit,
+		"ayaqlar dartılıb qopmur (ən uzağı %.0f ≤ %.0f px)" % [worst_reach, limit])
+	_check(worst_lifted * 2 < g._legs,
+		"hər an ayaqların yarıdan çoxu yerdədir (ən pis hal: %d / %d havada)"
+			% [worst_lifted, g._legs])
+	_check(stepped.size() == g._legs,
+		"bütün ayaqlar addımda iştirak edir (%d / %d)" % [stepped.size(), g._legs])
+
+	g.free()
+
+
+## Bir kadrlıq yeriş addımı. [method GermVisual._process] səhnə ağacı istəyir,
+## ona görə testdə iki iş görən metodu birbaşa çağırırıq.
+static func _gait_step(g: GermVisual, pos: Vector2, cap: int, dt: float) -> void:
+	g.apply(pos, 0.0, 6, cap, false, true)
+	g._track_motion(dt)
+	g._walk(dt)
 
 
 static func _touch(index: int, pressed: bool) -> InputEventScreenTouch:

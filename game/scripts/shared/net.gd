@@ -24,6 +24,9 @@ signal server_message(text: String)
 var is_server := false
 var local_id := 0
 var nickname := "Mikrob"
+## Oyunçunun seçdiyi mikrob növü (bax [enum Const.Species]). Menyuda seçilir,
+## dünyaya girərkən bir dəfə serverə göndərilir və oradan hamıya yayılır.
+var species := Const.Species.CILIATE
 
 var _peer: MultiplayerPeer = null
 ## Serverdə lobby-ni saxlayır; client-də həmişə null.
@@ -154,10 +157,10 @@ func _on_peer_disconnected(id: int) -> void:
 
 ## Dünyaya girmək. Növbə yoxdur — yer varsa oyunçu dərhal doğulur.
 @rpc("any_peer", "call_remote", "reliable")
-func request_join(player_name: String) -> void:
+func request_join(player_name: String, species: int) -> void:
 	if not is_server or lobby == null:
 		return
-	lobby.join(multiplayer.get_remote_sender_id(), player_name)
+	lobby.join(multiplayer.get_remote_sender_id(), player_name, species)
 
 
 ## Bağlantı kəsildikdən sonra öz mikrobuna qayıtmaq. Nişan dünyaya girəndə

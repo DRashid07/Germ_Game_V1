@@ -45,8 +45,47 @@ const RADIUS_PER_CAPACITY := 1.15
 ## 3 saniyəyə keçir. Sürətli hərəkət bu oyuna uyğun deyil: nişan almaq yoxdur,
 ## ona görə dəymə bacarığı MÖVQE tutmaqdan asılıdır, mövqe isə vaxt istəyir.
 const BASE_SPEED := 190.0       ## piksel/saniyə
-## Sürətlənmə də yumşaqdır — mikrob dayanan kimi dayanmır, azca sürüşür.
-const ACCEL := 1200.0
+
+# ---------- Maye (qabın içindəki su) ----------
+## Mikrob qatı bir mayenin içində üzür. Bu, yalnız görünüş deyil — hərəkətin
+## ÖZÜ maye modelidir və simulyasiyanın bir hissəsidir (bax [method Sim._step_germs]).
+##
+## Sürətlənmə və sönmə QƏSDƏN iki ayrı əmsaldır:
+##   • [constant FLUID_THRUST] — barmağını basanda nə qədər tez cavab verir (idarəetmə)
+##   • [constant FLUID_DRAG]   — barmağını qaldıranda nə qədər sürüşür (maye hissi)
+## Bir əmsal olsaydı, ikisindən biri həmişə yanlış olardı: tez cavab verən
+## mikrob dərhal da dayanır, yumşaq sürüşən isə idarəolunmaz olur.
+##
+## Hər ikisi eksponensial sönmədir (`exp(-k·dt)`), addım ölçüsündən asılı deyil —
+## server 30 Hz, client isə dəyişkən kadr sürəti ilə EYNİ nəticəni alır.
+## Prediction üçün bu məcburidir.
+const FLUID_THRUST := 5.5       ## 1/saniyə — hədəf sürətə yaxınlaşma tempi
+const FLUID_DRAG := 2.6         ## 1/saniyə — itələmə kəsiləndə sönmə tempi
+
+## Qabın içindəki axın. Su tam sakit deyil — yavaş burulğanlar var və
+## hər şey (mikroblar, sərbəst qida) onlarla birlikdə sürüşür.
+##
+## Sahə YALNIZ MÖVQEDƏN asılıdır, vaxtdan yox. Bu, təsadüfi seçim deyil:
+## client-in proqnoz [Sim]-i ilə serverin [Sim]-i ayrı tick sayğacları saxlayır,
+## ona görə vaxtdan asılı axın iki tərəfdə fərqli çıxar və proqnoz titrəyərdi.
+## Mövqedən asılı sahə isə hər iki tərəfdə eynidir.
+const CURRENT_STRENGTH := 38.0  ## piksel/saniyə — burulğanın ən güclü nöqtəsi
+## Burulğanın dalğa uzunluğu (piksel).
+##
+## Bu rəqəm EKRANIN ENİ ilə müqayisədə seçilir, dünyanın ölçüsü ilə yox.
+## Əvvəl 760 idi — başlanğıc ekranından (620 px) BÖYÜK. Nəticədə ekrandakı
+## bütün zərrəciklər eyni tərəfə baxırdı və oyunçu burulğanı heç vaxt görmürdü;
+## axın "hiss olunmayan yüngül sürüşmə" kimi qalırdı.
+##
+## 430 px-də ekrana təxminən 1.5 burulğan sığır: zərrəciklərin cizgiləri
+## əyilir, fırlanma gözlə oxunur. Daha kiçik etmək olmaz — mikrob saniyədə
+## bir neçə burulğan keçər və axın nizam yox, səs-küy kimi görünər.
+const CURRENT_SCALE := 430.0
+const CURRENT_SWIRL := 18.0     ## piksel/saniyə — qabın ümumi fırlanması
+## Şüşəyə yaxın maye dayanır (yapışma qatı). Bu, həm fizikadır, həm zərurət:
+## kənarda sıfırlanmasa axın hər şeyi divara sıxardı.
+## Zolaq geniş saxlanılır — dar keçid sərhəddə güclü yan axın yaradır.
+const CURRENT_EDGE := 0.70      ## bu nisbətdən sonra axın sıfıra enməyə başlayır
 ## Doğulanda toxunulmazlıq (atəş açanda dərhal bitir). Uzun olmalıdır:
 ## 10 nəfərlik dünyada oyunçu izdihamın ortasında doğula bilər.
 const SPAWN_SAFE_TIME := 4.0
@@ -101,13 +140,39 @@ const FOOD_ARM_TIME := 0.7
 
 enum EvKind { FIRE = 0, ABSORB = 1, HIT = 2, BURST = 3 }
 
+## Mikrobun növü. YALNIZ görüntüdür — sürət, radius, ölüm qaydaları eynidir
+## (bax [GermVisual]). Buna baxmayaraq [Sim]-də saxlanılır, çünki oyunçunun
+## seçimidir və bütün client-lərə eyni çatmalıdır: hər kəs eyni mikrobu eyni
+## növdə görməlidir.
+enum Species { CILIATE = 0, HELIOZOAN = 1 }
+
+
+## Xam ədədi növə çevirir; tanınmayan hər şey kirpikliyə düşür.
+##
+## Bu funksiya BİR yerdədir və üç ayrı giriş nöqtəsi onu işlədir: serverdə
+## client-in göndərdiyi dəyər ([method Lobby.join]), client-də serverin
+## qaytardığı dəyər ([method Arena._species_from]) və diskdən oxunan ayar.
+## Üçü də ETİBARSIZ ola bilər — client mesaj uydura bilər, ayar faylı isə
+## əl ilə redaktə oluna bilər. Çevirmə bir yerdə olanda "yad dəyər gələndə
+## nə olur" sualının bir cavabı olur.
+static func species_from(value: int) -> Species:
+	return Species.HELIOZOAN if value == int(Species.HELIOZOAN) else Species.CILIATE
+
 # ---------- Snapshot sahə indeksləri ----------
 ## Snapshot Dictionary yox, Array-dir — 30 Hz-də hər bayt sayılır.
 ## Bu enum-lar həmin massivlərə ad verir ki, kod oxunaqlı qalsın.
 ## Server tərəfdə [method World.snapshot_for] eyni sıranı qurur.
 
 enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP }
-enum GF { ID, NAME, COLOR, X, Y, VX, VY, AIM, BALLS, CAP, SAFE, ACK, CD }
+enum GF { ID, NAME, COLOR, X, Y, VX, VY, AIM, BALLS, CAP, FLAGS, ACK, CD }
+
+## [constant GF.FLAGS] sahəsinin bitləri.
+##
+## Növ AYRICA sahə kimi göndərilmir: bu sətir hər mikrob üçün saniyədə
+## 30 dəfə gedir və Variant massivində hər ədəd 9 bayt tutur. Toxunulmazlıq
+## onsuz da 0/1 idi, yəni sahənin qalan bitləri boş yatırdı — növ oraya
+## girir və şəbəkəyə SIFIR bayt əlavə olunur.
+enum GFlag { SAFE = 1, HELIOZOAN = 2 }
 enum SF { ID, COLOR, X, Y, DX, DY }
 enum EF { KIND, X, Y, ARG, COLOR }
 ## Liderlər cədvəlinin bir sətri.
@@ -135,6 +200,56 @@ static func aoi_radius(capacity: int) -> float:
 ## isə mövcud sayı — ona görə radius top sayından ASILI DEYİL.
 static func germ_radius(capacity: int) -> float:
 	return BASE_RADIUS + float(capacity - START_CAPACITY) * RADIUS_PER_CAPACITY
+
+
+## Verilmiş nöqtədə mayenin axın sürəti (piksel/saniyə).
+##
+## İki qat üst-üstə düşür:
+##   1. BURULĞANLAR — `ψ = A·sin(kx)·sin(ky)` axın funksiyasının qradiyenti.
+##      Sahə bu formada qurulur ki, DİVERGENSİYASI SIFIR olsun: maye heç bir
+##      nöqtədə yığılmır və heç bir nöqtədən yox olmur. Praktik nəticəsi budur —
+##      sərbəst qida burulğanın mərkəzinə toplanıb ora ilişmir, dövr edir.
+##   2. FIRLANMA — qabın ümumi hərəkəti. Mərkəzdə və şüşədə sıfır, aralıqda ən güclü.
+##
+## Vaxt parametri YOXDUR: sahə sabitdir. Client və server ayrı tick sayğacları
+## saxlayır, ona görə vaxtdan asılı axın proqnozu pozardı (bax [constant CURRENT_STRENGTH]).
+static func current_at(pos: Vector2) -> Vector2:
+	var d := pos.length()
+	var q := d / WORLD_RADIUS
+
+	# Şüşəyə yaxın yapışma qatı. `u` zolağın içindəki mövqedir: 1 = sərbəst maye,
+	# 0 = şüşənin dibi. Yumşaq keçid (`smoothstep`) seçilib ki, kənarda
+	# sürətdə pillə olmasın.
+	var u := clampf((1.0 - q) / (1.0 - CURRENT_EDGE), 0.0, 1.0)
+	if u <= 0.0:
+		return Vector2.ZERO
+	var fade := u * u * (3.0 - 2.0 * u)
+
+	var k := TAU / CURRENT_SCALE
+	var sx := sin(pos.x * k)
+	var cx := cos(pos.x * k)
+	var sy := sin(pos.y * k)
+	var cy := cos(pos.y * k)
+
+	# Burulğanlar sönmənin İÇİNƏ salınır, üstünə vurulmur.
+	# Fərq incə, amma həlledicidir: hazır sürəti bir əmsala vursaq, divergensiya
+	# sıfır olmaqdan çıxır və qida sönmə zolağında yığılıb ilişər. Ona görə
+	# əmsal axın funksiyasına (ψ = fade · A·sin(kx)·sin(ky)) tətbiq olunur və
+	# sürət ONUN qradiyentindən alınır — nəticədə sərhəd zolağında maye
+	# sıxılmır, şüşə boyunca yan keçidə dönür.
+	var flow := Vector2(sx * cy, -cx * sy) * (CURRENT_STRENGTH * fade)
+
+	if d > 1.0:
+		var n := pos / d
+		# ψ-nin radial törəməsindən gələn hədd — sərhəd boyu qayıdan axın.
+		var d_fade := 6.0 * u * (1.0 - u) / ((CURRENT_EDGE - 1.0) * WORLD_RADIUS)
+		flow += Vector2(n.y, -n.x) * (d_fade * (CURRENT_STRENGTH / k) * sx * sy)
+
+		# Qabın ümumi fırlanması. Yalnız radiusdan asılı olduğuna görə
+		# divergensiyası onsuz da sıfırdır — sönməyə birbaşa vurulur.
+		flow += Vector2(-n.y, n.x) * (CURRENT_SWIRL * sin(PI * q) * fade)
+
+	return flow
 
 
 ## Tutuma görə sürət. Böyük mikrob ağırdır — böyümənin qiyməti budur.

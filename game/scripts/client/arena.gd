@@ -68,6 +68,7 @@ var _food_layer: Node2D
 var _shot_layer: Node2D
 var _entities: Node2D
 var _fx: Node2D
+var _motes: WaterMotes
 var _hud: Hud
 
 var _visuals := {}                  ## germ id -> {"node": GermVisual, "seen": float}
@@ -86,7 +87,17 @@ func configure_online(info: Dictionary) -> void:
 	practice = false
 	my_id = int(info["you"])
 	my_color = int(info.get("color", 0))
+	Net.species = _species_from(info)
 	_token = str(info.get("token", ""))
+
+
+## Serverin təsdiqlədiyi növ.
+##
+## Menyudakı seçim TƏKLİFDİR, son söz serverindir: yenidən qoşulanda oyunçu
+## köhnə mikrobuna qayıdır və onun növü artıq dünyada qeydə alınıb.
+## Etibarsız dəyər gəlsə kirpikliyə düşür.
+static func _species_from(info: Dictionary) -> Const.Species:
+	return Const.species_from(int(info.get("species", 0)))
 
 
 ## Şəbəkəsiz məşq. Eyni [World] və [Sim] kodu yerli işləyir — fərq yalnız
@@ -95,7 +106,7 @@ func configure_practice() -> void:
 	practice = true
 	my_id = 1000
 	_local_world = World.new(1)
-	var g := _local_world.add_player(my_id, Net.nickname)
+	var g := _local_world.add_player(my_id, Net.nickname, Net.species)
 	my_color = g.color
 
 
@@ -141,6 +152,12 @@ func _build_world() -> void:
 	_blobs = Node2D.new()
 	add_child(_blobs)
 	_spawn_obstacles()
+
+	# Suda asılı zərrəciklər — qabın döşəməsi ilə oyun obyektləri arasındakı
+	# "su" qatı. Sırası MƏHZ buradadır: bu node-un öz `_draw`-ı (döşəmə) və
+	# maneələr artıq çəkilib, qida ilə mikroblar isə sonra əlavə olunur.
+	_motes = WaterMotes.new()
+	add_child(_motes)
 
 	_food_layer = Node2D.new()
 	add_child(_food_layer)
@@ -384,7 +401,7 @@ func _reconcile(entry: Array) -> void:
 	me.vel = Vector2(float(entry[Const.GF.VX]), float(entry[Const.GF.VY]))
 	me.aim = float(entry[Const.GF.AIM])
 	me.cooldown = float(entry[Const.GF.CD])
-	me.safe_t = 1.0 if int(entry[Const.GF.SAFE]) == 1 else 0.0
+	me.safe_t = 1.0 if int(entry[Const.GF.FLAGS]) & Const.GFlag.SAFE else 0.0
 
 	var balls_before := me.balls
 	var cap_before := me.capacity
@@ -419,6 +436,8 @@ func _on_you_burst(result: Dictionary) -> void:
 	_finished = true
 	_hud.release_sticks()
 	_hud.show_result(result)
+	# Öz partlayışın daha böyük çəkilir — kamera onun üstündədir və oyun bitir.
+	_explode(me.pos, Const.germ_radius(me.capacity), my_color, true)
 	Sfx.play("you_burst")
 	_add_shake(18.0)
 	get_tree().create_timer(4.0).timeout.connect(_return_to_menu)
@@ -474,6 +493,9 @@ func _on_rejoin_accepted(info: Dictionary) -> void:
 
 	my_id = int(info["you"])
 	my_color = int(info.get("color", my_color))
+	# Yenidən qoşulanda köhnə mikrobuna qayıdırsan — onun növü serverdəki
+	# qeyddir, menyudakı seçim yox.
+	Net.species = _species_from(info)
 	_token = str(info.get("token", _token))
 
 	# Proqnoz sıfırdan qurulur; ilk snapshot onu dərhal serverin sözünə çəkəcək.
@@ -538,6 +560,11 @@ func _update_camera(delta: float) -> void:
 		shake = Vector2(randf_range(-_shake, _shake), randf_range(-_shake, _shake))
 	_cam.position = me.pos + shake
 
+	# Zərrəciklər kameranı izləyir: dünyanın hamısını doldurmaq əvəzinə
+	# yalnız görünən sahədə saxlanılır (bax [WaterMotes]).
+	_motes.focus = me.pos
+	_motes.span = _view_w
+
 
 func _add_shake(amount: float) -> void:
 	_shake = minf(_shake + amount, 20.0)
@@ -557,7 +584,7 @@ func _update_minimap() -> void:
 
 func _render_germs(render_time: float) -> void:
 	# Öz mikrobun proqnozdan gəlir — gecikmə olmadan.
-	var mine := _ensure_germ(my_id, Net.nickname, my_color)
+	var mine := _ensure_germ(my_id, Net.nickname, my_color, Net.species)
 	mine.apply(me.pos, me.aim, me.balls, me.capacity, me.safe_t > 0.0, true)
 	_visuals[my_id]["seen"] = _clock
 
@@ -573,22 +600,27 @@ func _render_germs(render_time: float) -> void:
 			continue
 		var n: Array = newer[gid]
 		var o: Array = older.get(gid, n)
-		var v := _ensure_germ(gid, String(n[Const.GF.NAME]), int(n[Const.GF.COLOR]))
+		# Növ bayraq bitindən gəlir — ayrıca sahə göndərilmir (bax [enum Const.GFlag]).
+		var kind := Const.Species.HELIOZOAN \
+			if int(n[Const.GF.FLAGS]) & Const.GFlag.HELIOZOAN \
+			else Const.Species.CILIATE
+		var v := _ensure_germ(gid, String(n[Const.GF.NAME]), int(n[Const.GF.COLOR]), kind)
 
 		var pos := Vector2(float(o[Const.GF.X]), float(o[Const.GF.Y])).lerp(
 			Vector2(float(n[Const.GF.X]), float(n[Const.GF.Y])), alpha)
 		var aim := lerp_angle(float(o[Const.GF.AIM]), float(n[Const.GF.AIM]), alpha)
 		v.apply(pos, aim, int(n[Const.GF.BALLS]), int(n[Const.GF.CAP]),
-			int(n[Const.GF.SAFE]) == 1, true)
+			(int(n[Const.GF.FLAGS]) & Const.GFlag.SAFE) != 0, true)
 		_visuals[gid]["seen"] = _clock
 
 
-func _ensure_germ(gid: int, germ_name: String, color: int) -> GermVisual:
+func _ensure_germ(gid: int, germ_name: String, color: int,
+		species: Const.Species) -> GermVisual:
 	var entry: Dictionary = _visuals.get(gid, {})
 	if not entry.is_empty():
 		return entry["node"]
 	var v := GermVisual.new()
-	v.setup(color, germ_name, gid == my_id)
+	v.setup(color, germ_name, gid == my_id, species)
 	_entities.add_child(v)
 	_visuals[gid] = {"node": v, "seen": _clock}
 	return v
@@ -699,14 +731,23 @@ func _sweep_views() -> void:
 func _queue_events(list: Array, at: float) -> void:
 	for e in list:
 		var kind := int(e[Const.EF.KIND])
-		# Öz atəşimi artıq proqnozda oynatmışam — ikinci dəfə göstərmirəm.
-		if kind == Const.EvKind.FIRE and int(e[Const.EF.COLOR]) == my_color:
+		# Öz hadisələrimi artıq oynatmışam, ikinci dəfə göstərmirəm:
+		#   • ATƏŞ    — proqnozda, gecikmə olmadan (bax [method _do_tick]);
+		#   • PARTLAMA — serverin "sən partladın" mesajında (bax [method _on_you_burst]).
+		# Partlama filtri xüsusilə vacibdir: keçsəydi, öz ölümün İKİ dəfə
+		# çəkilər (biri böyük, biri normal ölçüdə) və `you_burst` ilə `burst`
+		# səsləri üst-üstə düşərdi.
+		if int(e[Const.EF.COLOR]) == my_color \
+				and (kind == Const.EvKind.FIRE or kind == Const.EvKind.BURST):
 			continue
 		_fx_queue.append({
 			"at": at,
 			"kind": kind,
 			"pos": Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y])),
 			"arg": float(e[Const.EF.ARG]),
+			# Xam indeks də saxlanılır: partlayışda mikrobun görüntüsünü
+			# tapmaq üçün lazımdır (bax [method _explode]).
+			"ci": int(e[Const.EF.COLOR]),
 			"color": Palette.germ_color(int(e[Const.EF.COLOR])),
 		})
 
@@ -734,12 +775,39 @@ func _flush_fx(render_time: float) -> void:
 				_spawn_fx("spark", pos, 0.55, col)
 				Sfx.play("hit", 0.05)
 			Const.EvKind.BURST:
-				var scale := maxf(float(e["arg"]) / 40.0, 0.7)
-				_spawn_fx("burst", pos, scale, col)
-				Sfx.play("burst")
+				_explode(pos, maxf(float(e["arg"]), 12.0), int(e["ci"]), false)
+				Sfx.play("burst", 0.05)
 				if pos.distance_to(me.pos) < 500.0:
 					_add_shake(10.0)
 		_fx_queue.remove_at(i)
+
+
+## Partlayan mikrobun görüntüsünü partlayışla ƏVƏZ edir.
+##
+## Mikrobun özünü DƏRHAL susdurmaq şərtdir: server onu artıq göndərmir, amma
+## görüntüsü [constant VIEW_GRACE] müddətincə saxlanılır (bax [method _sweep_views]) —
+## susdurmasaq partlayışın ortasında sağ-salamat mikrob dayanardı.
+##
+## Mikrob RƏNGƏ görə tapılır. Bir dünyada iki eyni rəngli mikrob olmur
+## ([method World._free_color] bunu təmin edir), ona görə rəng mikrobun
+## kimliyidir və partlama hadisəsinə ayrıca id sahəsi əlavə etmək lazım deyil —
+## snapshot-da hər bayt sayılır.
+func _explode(pos: Vector2, radius: float, color_index: int, mine: bool) -> void:
+	var balls := -1
+	for gid in _visuals:
+		var v: GermVisual = _visuals[gid]["node"]
+		if v.burst or v.color_index != color_index:
+			continue
+		# Son bilinən top sayı səpilən damcıların sayını təyin edir: dolu
+		# mikrob partlayanda ekran daha çox dağılır.
+		balls = v.balls
+		v.kill()
+		break
+
+	var fx := BurstFx.new()
+	fx.position = pos
+	fx.setup(Palette.germ_color(color_index), radius, balls, mine, _tex["burst"])
+	_fx.add_child(fx)
 
 
 func _spawn_fx(kind: String, pos: Vector2, scale: float, color: Color) -> void:

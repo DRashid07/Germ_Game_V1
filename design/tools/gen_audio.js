@@ -18,11 +18,11 @@ const SOUND_SPECS = [
   { file: 'eject.wav', duration: 0.105, limit: 0.130, strictLimit: true, peakDb: -6.5, create: createEject },
   { file: 'absorb.wav', duration: 0.090, limit: 0.110, peakDb: -8.0, create: createAbsorb },
   { file: 'hit.wav', duration: 0.145, limit: 0.170, peakDb: -4.5, create: createHit },
-  { file: 'burst.wav', duration: 0.560, limit: 0.620, peakDb: -1.5, create: createBurst },
+  { file: 'burst.wav', duration: 0.700, limit: 0.780, peakDb: -1.5, create: createBurst },
   { file: 'spawn.wav', duration: 0.420, limit: 0.470, peakDb: -4.0, create: createSpawn },
   { file: 'danger.wav', duration: 0.240, limit: 0.280, peakDb: -5.0, create: createDanger },
   { file: 'level_up.wav', duration: 0.480, limit: 0.540, peakDb: -3.0, create: createLevelUp },
-  { file: 'you_burst.wav', duration: 1.020, limit: 1.150, peakDb: -2.0, create: createYouBurst },
+  { file: 'you_burst.wav', duration: 1.180, limit: 1.300, peakDb: -2.0, create: createYouBurst },
   { file: 'ui_click.wav', duration: 0.055, limit: 0.070, peakDb: -8.0, create: createUiClick },
 ];
 
@@ -287,43 +287,81 @@ function createHit(spec) {
   return finishSound(sound, spec.peakDb, { drive: 1.35 });
 }
 
-// Mikrob partladı — dünyanın ən vacib səsi. Sıçrama + alt tezlikli gurultu.
+// Mikrob partladı — dünyanın ən vacib səsi və oyunun yeganə ÖLÜM səsi.
+//
+// Beş qat, hər biri ayrı bir zaman miqyasında. Səbəb budur: partlayış ekranda
+// bir anlıq hadisədir, amma qulaq onu üç fazada oxuyur — nə oldu (transient),
+// nə qədər böyük idi (sub), nədən ibarət idi (damcılar). Tək bir "boom"
+// hadisəni bildirir, amma onun MAYE olduğunu demir; bu oyunda isə partlayan
+// şey bir su kisəsidir (bax AUDIO_BIBLE §1 — heç bir səs metal deyil).
 function createBurst(spec) {
   const sound = blankSound(spec.duration);
 
-  // Membranın cırılması.
+  // 1. Qopma anı — membranın cırıldığı ilk 8 ms. Çox qısadır, amma
+  //    partlayışa "zərbə" hissini verən yeganə qatdır.
   addFilteredNoise(sound, {
-    duration: 0.180,
+    duration: 0.030,
+    amplitude: 1.00,
+    lowCut: 900,
+    highCut: 9000,
+    attack: 0.0006,
+    decayTime: 0.006,
+    seed: 0x1d77,
+  });
+
+  // 2. Membranın cırılması.
+  addFilteredNoise(sound, {
+    duration: 0.190,
     amplitude: 0.85,
-    lowCut: 320,
-    highCut: 5200,
-    decayTime: 0.055,
+    lowCut: 300,
+    highCut: 5400,
+    decayTime: 0.052,
     seed: 0x7b05,
   });
 
-  // Yayılan maye.
+  // 3. Yayılan maye — yaş, dolğun gövdə.
   addFilteredNoise(sound, {
-    start: 0.030,
-    duration: 0.480,
-    amplitude: 0.50,
-    lowCut: 90,
-    highCut: 1400,
-    decayTime: 0.150,
+    start: 0.025,
+    duration: 0.520,
+    amplitude: 0.55,
+    lowCut: 85,
+    highCut: 1500,
+    decayTime: 0.155,
     seed: 0x2c19,
   });
 
-  // Alt tezlik — partlayışın ağırlığı.
+  // 4. Alt tezlik — partlayışın ağırlığı. Dünyada BAŞQA heç bir klip bura
+  //    enmir, ona görə telefonun kiçik dinamikində belə seçilir.
   addTone(sound, {
-    duration: 0.420,
-    frequencyStart: 190,
-    frequencyEnd: 38,
-    amplitude: 0.90,
-    decayTime: 0.170,
-    glideCurve: 0.5,
+    duration: 0.440,
+    frequencyStart: 240,
+    frequencyEnd: 34,
+    amplitude: 0.95,
+    decayTime: 0.165,
+    glideCurve: 0.45,
     harmonics: [[1, 1], [2, 0.25]],
   });
 
-  return finishSound(sound, spec.peakDb, { drive: 1.5 });
+  // 5. Damcı quyruğu — səpilən topların suya düşməsi. Üç qalxan qabarcıq,
+  //    `absorb` ilə eyni dildə: partlayış həm ölümdür, həm də yerdə qalan
+  //    qidadır, quyruq elə həmin təklifi səsləndirir.
+  for (const [start, from, to, level] of [[0.180, 300, 700, 0.20],
+                                          [0.270, 240, 560, 0.16],
+                                          [0.380, 190, 430, 0.12]]) {
+    addTone(sound, {
+      start,
+      duration: 0.090,
+      frequencyStart: from,
+      frequencyEnd: to,
+      amplitude: level,
+      attack: 0.005,
+      decayTime: 0.040,
+      glideCurve: 0.7,
+      waveform: 'triangle',
+    });
+  }
+
+  return finishSound(sound, spec.peakDb, { drive: 1.7 });
 }
 
 // Doğuş — üç qalxan qabarcıq. "Sən yenidən dünyadasan" mesajı.
@@ -408,53 +446,70 @@ function createLevelUp(spec) {
   return finishSound(sound, spec.peakDb);
 }
 
-// SƏNİN mikrobun partladı. Partlayış + enən "sönmə" — oyunun sonu.
+// SƏNİN mikrobun partladı — oyunun sonu.
+//
+// `burst` ilə eyni dildədir (eyni hadisə baş verir), amma üç fərqi var:
+// daha aşağı enir (44 Hz əvəzinə 30), daha uzun sürür, və sonunda SÖNƏN
+// NƏFƏS var. Qulaq ilk iki fərqi "böyük" kimi, üçüncüsünü isə "bitdi" kimi
+// oxuyur — nəticə ekranı görünməmişdən əvvəl oyunçu artıq bilir.
 function createYouBurst(spec) {
   const sound = blankSound(spec.duration);
 
+  // Qopma anı.
   addFilteredNoise(sound, {
-    duration: 0.220,
-    amplitude: 0.80,
-    lowCut: 260,
+    duration: 0.035,
+    amplitude: 1.00,
+    lowCut: 800,
+    highCut: 8600,
+    attack: 0.0006,
+    decayTime: 0.008,
+    seed: 0x5ab1,
+  });
+
+  addFilteredNoise(sound, {
+    duration: 0.240,
+    amplitude: 0.82,
+    lowCut: 250,
     highCut: 4800,
-    decayTime: 0.070,
+    decayTime: 0.072,
     seed: 0x3f52,
   });
 
   addTone(sound, {
-    duration: 0.520,
-    frequencyStart: 210,
-    frequencyEnd: 44,
-    amplitude: 0.85,
-    decayTime: 0.190,
-    glideCurve: 0.5,
+    duration: 0.560,
+    frequencyStart: 230,
+    frequencyEnd: 30,
+    amplitude: 0.90,
+    decayTime: 0.200,
+    glideCurve: 0.45,
     harmonics: [[1, 1], [2, 0.22]],
   });
 
-  // Sönən nəfəs — mağlubiyyətin quyruğu.
+  // Sönən nəfəs — məğlubiyyətin quyruğu.
   addTone(sound, {
-    start: 0.300,
-    duration: 0.660,
+    start: 0.320,
+    duration: 0.720,
     frequencyStart: 392,
-    frequencyEnd: 131,
+    frequencyEnd: 118,
     amplitude: 0.30,
     attack: 0.030,
-    decayTime: 0.320,
+    decayTime: 0.330,
     glideCurve: 0.8,
     waveform: 'triangle',
   });
 
+  // Uzun maye quyruğu — dağılan sitoplazma.
   addFilteredNoise(sound, {
-    start: 0.180,
-    duration: 0.620,
-    amplitude: 0.22,
-    lowCut: 70,
-    highCut: 900,
-    decayTime: 0.230,
+    start: 0.170,
+    duration: 0.720,
+    amplitude: 0.24,
+    lowCut: 65,
+    highCut: 950,
+    decayTime: 0.250,
     seed: 0x6d84,
   });
 
-  return finishSound(sound, spec.peakDb, { drive: 1.4 });
+  return finishSound(sound, spec.peakDb, { drive: 1.5 });
 }
 
 // Menyu toxunuşu — ən qısa klip, sadəcə təsdiq.

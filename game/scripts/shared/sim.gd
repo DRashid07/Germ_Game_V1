@@ -34,6 +34,11 @@ class GermState:
 	var age := 0.0              ## Neçə saniyədir yaşayır
 	var is_bot := false
 	var alive := true           ## false = bu tick partladı, indi silinəcək
+	## Görüntü növü — oyunçunun menyuda seçdiyi (bax [enum Const.Species]).
+	## Simulyasiyaya TƏSİR ETMİR: sürət, radius, ölüm qaydaları hər iki növdə
+	## eynidir. Buna baxmayaraq burada saxlanılır, çünki bütün client-lər eyni
+	## mikrobu eyni növdə görməlidir — bu, görüntü qatının öz işi ola bilməz.
+	var species := Const.Species.CILIATE
 
 	func radius() -> float:
 		return Const.germ_radius(capacity)
@@ -52,6 +57,7 @@ class GermState:
 		c.balls = balls; c.capacity = capacity
 		c.cooldown = cooldown; c.safe_t = safe_t; c.drain_t = drain_t
 		c.pops = pops; c.age = age; c.is_bot = is_bot; c.alive = alive
+		c.species = species
 		return c
 
 
@@ -129,12 +135,14 @@ func _init() -> void:
 
 # ---------------------------------------------------------------- mikroblar
 
-func add_germ(id: int, germ_name: String, color: int, bot := false) -> GermState:
+func add_germ(id: int, germ_name: String, color: int, bot := false,
+		species := Const.Species.CILIATE) -> GermState:
 	var g := GermState.new()
 	g.id = id
 	g.name = germ_name
 	g.color = color
 	g.is_bot = bot
+	g.species = species
 	g.balls = Const.START_BALLS
 	g.capacity = Const.START_CAPACITY
 	g.safe_t = Const.SPAWN_SAFE_TIME
@@ -262,8 +270,22 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 			wish = inp.move
 			g.aim = inp.aim
 
-		g.vel = g.vel.move_toward(wish * g.speed(), Const.ACCEL * dt)
-		g.pos += g.vel * dt
+		# ── Maye hərəkəti ────────────────────────────────────────────────
+		# Mikrob suyu itələyərək gedir, ona görə sürət birbaşa təyin olunmur:
+		# itələmə var → hədəf sürətə yaxınlaşır, itələmə yox → müqavimət söndürür.
+		# Sönmə eksponensialdır, yəni addım ölçüsündən asılı deyil — 30 Hz server
+		# ilə dəyişkən kadrlı client eyni nəticəni alır (prediction üçün şərtdir).
+		#
+		# Sürət SUYA NİSBƏTƏN saxlanılır: axın ayrıca əlavə olunur. Belə olanda
+		# axına qarşı üzmək onu tam ləğv etmir — mikrob yenə də sürüklənir,
+		# maye hissi məhz buradan gəlir.
+		if wish.length_squared() > 0.0001:
+			var target := wish * g.speed()
+			g.vel = g.vel.lerp(target, 1.0 - exp(-Const.FLUID_THRUST * dt))
+		else:
+			g.vel *= exp(-Const.FLUID_DRAG * dt)
+
+		g.pos += (g.vel + Const.current_at(g.pos)) * dt
 		_confine(g)
 
 		g.age += dt
@@ -493,9 +515,19 @@ func _step_food(dt: float) -> void:
 
 	for f in food:
 		f.lock_t = maxf(0.0, f.lock_t - dt)
+
+		# Sərbəst top suda asılıdır: öz sürəti sönür, amma su onu heç vaxt
+		# buraxmır — sakit qida da axınla birlikdə sürüşür. Ekranda 50-dən çox
+		# qida topu var və hamısının eyni burulğanda süzülməsi "bu, mayedir"
+		# mesajını hər şeydən yaxşı verir.
 		if f.vel.length_squared() > 1.0:
 			f.vel *= damp
-			f.pos += f.vel * dt
+		elif f.vel != Vector2.ZERO:
+			f.vel = Vector2.ZERO
+
+		var flow := Const.current_at(f.pos)
+		if f.vel != Vector2.ZERO or flow != Vector2.ZERO:
+			f.pos += (f.vel + flow) * dt
 			var limit := Const.WORLD_RADIUS - Const.FOOD_RADIUS
 			if f.pos.length() > limit:
 				var n := f.pos.normalized()

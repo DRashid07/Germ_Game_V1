@@ -46,7 +46,7 @@ func _on_connected() -> void:
 		_log("yenidən qoşuldu (id=%d), nişanla qayıdır" % Net.local_id)
 		return
 	_log("qoşuldu (id=%d), dünyaya girir" % Net.local_id)
-	Net.request_join.rpc_id(1, label)
+	Net.request_join.rpc_id(1, label, int(Const.Species.CILIATE))
 
 
 func _on_world_joined(info: Dictionary) -> void:

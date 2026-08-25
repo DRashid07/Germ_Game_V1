@@ -54,13 +54,14 @@ func _process(delta: float) -> void:
 
 # ---------------------------------------------------------------- giriş/çıxış
 
-func join(peer: int, player_name: String) -> void:
+func join(peer: int, player_name: String, species := 0) -> void:
 	if peer_world.has(peer):
 		return                      # artıq dünyadadır
 	names[peer] = _sanitize(player_name)
 
 	var world := _open_world()
-	world.add_player(peer, names[peer])
+	# Növ client-dən gəlir, yəni ETİBARSIZ ola bilər (bax [method Const.species_from]).
+	world.add_player(peer, names[peer], Const.species_from(species))
 	peer_world[peer] = world.id
 	Net.on_world_join.rpc_id(peer, world.join_info_for(peer))
 	print("[lobby] %s dünya #%d-ə girdi (%d insan)" % [

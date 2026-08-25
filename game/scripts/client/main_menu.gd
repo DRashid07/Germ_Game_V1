@@ -16,6 +16,7 @@ var _addr: LineEdit
 var _status: Label
 var _buttons: VBoxContainer
 var _cancel: Button
+var _species_btn: Button
 
 var _joining := false
 
@@ -58,6 +59,11 @@ func _build() -> void:
 
 	_addr = _make_field("Server", Const.DEFAULT_SERVER)
 	col.add_child(_addr)
+
+	# Növ seçimi. Düymənin öz mətni seçimi göstərir — ayrıca "seçilib" nişanı
+	# lazım deyil və menyuda bir sətir yer tutur.
+	_species_btn = _make_button(_species_text(), false, _toggle_species)
+	col.add_child(_species_btn)
 
 	_buttons = VBoxContainer.new()
 	_buttons.add_theme_constant_override("separation", 14)
@@ -188,6 +194,27 @@ static func _make_button(text: String, primary: bool, on_press: Callable) -> But
 	return b
 
 
+# ---------------------------------------------------------------- növ seçimi
+
+## İki növ arasında keçir. Yalnız GÖRÜNTÜ dəyişir — sürət, ölçü və ölüm
+## qaydaları hər ikisində eynidir, ona görə seçim balansa toxunmur və
+## "hansı daha güclüdür" sualı yaranmır.
+func _toggle_species() -> void:
+	Net.species = Const.Species.CILIATE \
+		if Net.species == Const.Species.HELIOZOAN \
+		else Const.Species.HELIOZOAN
+	_species_btn.text = _species_text()
+	_save_settings()
+
+
+## Düymənin mətni. Növün adı ilə yanaşı NƏ ETDİYİ də yazılır — oyunçu
+## seçməzdən əvvəl fərqi bilməlidir.
+static func _species_text() -> String:
+	if Net.species == Const.Species.HELIOZOAN:
+		return "NÖV: AYAQLI — dibdə yeriyir"
+	return "NÖV: KİRPİKLİ — suda üzür"
+
+
 # ---------------------------------------------------------------- axın
 
 func _play() -> void:
@@ -197,7 +224,7 @@ func _play() -> void:
 	_save_settings()
 
 	if Net.is_connected_to_server():
-		Net.request_join.rpc_id(1, Net.nickname)
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species))
 		_set_busy(true, "Dünyaya girilir...")
 		return
 
@@ -222,7 +249,7 @@ func _cancel_join() -> void:
 
 func _on_connected() -> void:
 	if _joining:
-		Net.request_join.rpc_id(1, Net.nickname)
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species))
 		_status.text = "Dünyaya girilir..."
 
 
@@ -295,11 +322,15 @@ func _load_settings() -> void:
 	if cfg.load(SETTINGS_PATH) != OK:
 		return
 	_nick.text = str(cfg.get_value("player", "nickname", _nick.text))
+	# Ayar faylı əl ilə redaktə oluna bilər — dəyər çərçivəyə salınır.
+	Net.species = Const.species_from(int(cfg.get_value("player", "species", 0)))
+	_species_btn.text = _species_text()
 	_addr.text = str(cfg.get_value("net", "address", _addr.text))
 
 
 func _save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("player", "nickname", _clean_nick())
+	cfg.set_value("player", "species", int(Net.species))
 	cfg.set_value("net", "address", _addr.text.strip_edges())
 	cfg.save(SETTINGS_PATH)

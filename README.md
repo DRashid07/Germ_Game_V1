@@ -44,6 +44,28 @@ Mikrobun içindəki top sayı həm **sursat**, həm **candır**:
 Böyüməyin qiyməti var: tutum artdıqca mikrob **böyüyür** (iri hədəf),
 **yavaşlayır** və **daha tez acır**. Lider sonsuz böyüyə bilmir.
 
+### Qab su ilə doludur
+
+Mikrob quru döşəmədə sürüşmür — **maye içində üzür**, və bu, görüntü deyil,
+simulyasiyanın bir hissəsidir:
+
+| | Nə edir |
+|---|---|
+| **İtələmə / müqavimət** | Barmağını qaldıranda mikrob dərhal dayanmır, ~1 saniyə sürüşür. Geri təpmə də ona görə əsl manevr vasitəsidir. |
+| **Axın** | Qabda yavaş burulğanlar var. Hər şey — mikroblar da, yerdəki qida da — onlarla birlikdə sürüşür. |
+| **Yapışma qatı** | Şüşəyə yaxın maye dayanır, ona görə axın heç nəyi divara sıxmır. |
+
+Axın sahəsi YALNIZ mövqedən asılıdır (vaxtdan yox) və **divergensiyasızdır**:
+bu iki xassə təsadüfi deyil — birincisi olmasa client-in proqnozu serverlə
+uyuşmazdı, ikincisi olmasa qida burulğanların mərkəzinə yığılıb ilişərdi.
+Kod: [`Const.current_at`](game/scripts/shared/constants.gd).
+
+Üçüncü xassə isə tamamilə **qavrayışla** bağlıdır: burulğanın dalğa uzunluğu
+(430 px) ekranın enindən (620 px) KİÇİK olmalıdır. Böyük olsa ekrandakı bütün
+zərrəciklər eyni tərəfə baxır və oyunçu fırlanmanı görmür — riyaziyyat düzgün
+işləsə də effekt yox olur. İlk versiyada məhz belə idi (760 px, orta sürət
+BASE_SPEED-in 6.7%-i); indi orta sürət 11%-dir və testlə qorunur.
+
 ## Ekranlar
 
 [Baş menyu](docs/screenshot_menu.png) · [Oyun ekranı](docs/screenshot_world.png)
@@ -132,13 +154,15 @@ game/                    Godot layihəsi
       arena.gd           ★ Oyun ekranı: prediction, interpolyasiya, kamera, reconnect
       main_menu.gd       Menyu, qoşulma, qaydaların izahı
       hud.gd             Doluluq göstəricisi, liderlər, xəbərdarlıqlar, nəticə
-      germ_visual.gd     Bir mikrobun görüntüsü (membran + içindəki toplar)
+      germ_visual.gd     Bir mikrobun görüntüsü — İKİ NÖV (kirpikli üzür, ayaqlı yeriyir)
+      burst_fx.gd        Partlayaraq ölmə effekti (dalğa, damcı, membran parçaları)
+      water_motes.gd     Suda asılı zərrəciklər — axını gözlə görünən edir
       minimap.gd         Petri qabının kiçik xəritəsi
       touch_stick.gd     Üzən virtual joystick (hərəkət)
       fire_button.gd     Top atma düyməsi (basılı saxlananda davamlı atəş)
       sfx.gd             Səs effektləri (autoload: Sfx)
     tools/
-      sim_test.gd        28 headless test
+      sim_test.gd        45 headless test
       auto_client.gd     Şəbəkə testi üçün insansız client
       screenshot.gd      Redaktorsuz ekran görüntüsü
       perf_probe.gd      Kadr vaxtı və çəkiliş çağırışı ölçmə
@@ -183,7 +207,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (28 test)
+# Simulyasiya + World testləri (45 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -197,6 +221,17 @@ GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label
 
 Testlər oyunun HƏR İKİ ölüm qaydasını ayrıca yoxlayır: tutumu aşıb partlamaq
 və acından partlamaq. Bunlar oyunun bütün balansının dayandığı iki qaydadır.
+
+Ayaqlı mikrobun **yerişi** də buradadır — ekran görüntüsü ilə yoxlana bilməyən
+üç xassə: dayanan mikrob ayaqlarını tərpətməməli, ayaqlar sonsuz dartılmamalı,
+və hər an ayaqların çoxu yerdə qalmalıdır. Sonuncu məhz bu testlə tapıldı:
+mikrob yerindən tərpənəndə bütün ayaqlar bir anda qalxırdı, yəni yerimirdi,
+sıçrayırdı — bir kadrlıq hadisə olduğuna görə gözlə görünmürdü.
+
+Maye modeli də buradadır: mikrobun buraxandan sonra sürüşdüyü, axının hər
+nöqtədə eyni qaldığı, şüşənin dibində dayandığı və **divergensiyasız** olduğu
+ayrıca yoxlanılır. Sonuncu ədədi testdir (mərkəzi fərqlə `∂vx/∂x + ∂vy/∂y`) —
+pozulsa qida burulğanlarda ilişər və dünyanın bir hissəsi acından qırılar.
 
 ### Performans ölçmək
 ```bash
@@ -393,9 +428,30 @@ UDP 27015 portu açıq olmalıdır.
 > Loqodakı "GERM ARENA" yazısı məhz buna görə SVG-də yox, Godot `Label`-ı ilə
 > çəkilir (`main_menu.gd → _make_logo`).
 
-Mikrobun özü sprite DEYİL: ölçüsü tutumdan, içindəki topların sayı isə mövcud
+Dünyada **iki mikrob növü** var və ikisi də tamamilə kodla çəkilir:
+
+- **Kirpikli** — paramesium modeli. Kirpikləri metaxronal dalğa ilə döyünür,
+  arxasında qamçı var, suda **üzür**.
+- **Ayaqlı** — "günəş heyvancığı". Şüa kimi çıxan aksopodiyaları növbə ilə
+  yığılıb-uzanır, dibdə **yeriyir**; sitoplazması öndəki ayağa axır.
+
+Növü **menyudan sən seçirsən** (NÖV düyməsi). Seçim oyuna təsir etmir — iki
+mikrob eyni sürətlə gedir, eyni qaydalarla ölür — və şəbəkəyə bir bayt da
+əlavə etmir: toxunulmazlıq bayrağının boş bitində daşınır.
+
+Mikrobun ətrafında **halqa yoxdur**. Əvvəl iki halqa vardı (doluluq və fokus);
+ikisi də çıxarıldı, çünki mikrobu konsentrik dairələrin içinə salırdı. Doluluq
+indi membranın öz gərginliyindən oxunur, "bu, mənəm" sualına isə kamera cavab
+verir — öz mikrobun həmişə ekranın mərkəzindədir.
+
+Mikrob sprite DEYİL: ölçüsü tutumdan, içindəki topların sayı isə mövcud
 saydan asılıdır, ikisi də oyun boyu dəyişir. Tam kodla çəkilir —
-[`germ_visual.gd`](game/scripts/client/germ_visual.gd).
+[`germ_visual.gd`](game/scripts/client/germ_visual.gd). Eyni səbəbdən partlayış
+([`burst_fx.gd`](game/scripts/client/burst_fx.gd)) da kodla çəkilir: dalğaların
+ölçüsü partlayan mikrobun radiusundan, damcıların sayı isə içindəki top
+sayından asılıdır.
+
+Təfərrüat: [`design/ART_BIBLE.md`](design/ART_BIBLE.md).
 
 ## Səslər
 

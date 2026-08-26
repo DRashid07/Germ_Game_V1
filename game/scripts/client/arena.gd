@@ -33,6 +33,13 @@ const FOOD_SCALE := 0.85
 ## paket obyekti yanıb-söndürməsin.
 const VIEW_GRACE := Const.INTERP_DELAY + Const.TICK_DELTA
 
+## Yerli doğuş nöqtəsi bu qədər saniyə gözləyir (bax [method _remember_muzzle]).
+##
+## Atəş fasiləsindən (FIRE_COOLDOWN = 1 s) KİÇİK olmalıdır: belə olanda
+## növbədə heç vaxt iki gözləyən atəş qalmır, yəni səhv uyğunlaşma mümkün
+## deyil. Serverin qəbul etmədiyi atəş isə özü düşüb gedir.
+const MUZZLE_GRACE := 0.6
+
 # ---------------------------------------------------------------- vəziyyət
 
 var my_id := 0
@@ -74,6 +81,9 @@ var _hud: Hud
 var _visuals := {}                  ## germ id -> {"node": GermVisual, "seen": float}
 var _food_views := {}               ## food id -> {"node": Sprite2D, "seen": float}
 var _shot_views := {}               ## shot id -> Dictionary
+## Öz atəşlərinin doğuş nöqtələri — serverin topu təsdiqləməsini gözləyir
+## (bax [method _remember_muzzle]).
+var _muzzles: Array[Dictionary] = []
 var _fx_queue: Array[Dictionary] = []
 var _tex := {}
 var _view_w := Const.VIEW_WIDTH_BASE
@@ -253,6 +263,8 @@ func _do_tick() -> void:
 		if e.get("t") == "fire":
 			_spawn_fx("spark", e["pos"], 0.5, Palette.germ_color(my_color))
 			Sfx.play("eject", 0.06)
+			_eject_from(my_color, float(e["arg"]))
+			_remember_muzzle(Vector2(e["pos"]), float(e["arg"]))
 
 	_hud.set_fire_state(me.cooldown / Const.FIRE_COOLDOWN, me.balls >= Const.FIRE_MIN_BALLS)
 	_hud.update_gauge(me.balls, me.capacity)
@@ -600,10 +612,9 @@ func _render_germs(render_time: float) -> void:
 			continue
 		var n: Array = newer[gid]
 		var o: Array = older.get(gid, n)
-		# Növ bayraq bitindən gəlir — ayrıca sahə göndərilmir (bax [enum Const.GFlag]).
-		var kind := Const.Species.HELIOZOAN \
-			if int(n[Const.GF.FLAGS]) & Const.GFlag.HELIOZOAN \
-			else Const.Species.CILIATE
+		# Növ bayraq bitlərindən gəlir — ayrıca sahə göndərilmir (bax [enum Const.GFlag]).
+		var kind := Const.species_from(
+			(int(n[Const.GF.FLAGS]) & Const.GFlag.SPECIES_MASK) >> Const.GFlag.SPECIES_SHIFT)
 		var v := _ensure_germ(gid, String(n[Const.GF.NAME]), int(n[Const.GF.COLOR]), kind)
 
 		var pos := Vector2(float(o[Const.GF.X]), float(o[Const.GF.Y])).lerp(
@@ -621,9 +632,38 @@ func _ensure_germ(gid: int, germ_name: String, color: int,
 		return entry["node"]
 	var v := GermVisual.new()
 	v.setup(color, germ_name, gid == my_id, species)
+	# "Blunk" atəş anında yox, topun membranı YARDIĞI anda çalınır. Gecikmə
+	# mikrobun ölçüsündən asılıdır, ona görə vaxtı görüntü node-u özü bilir.
+	v.broke_through.connect(_on_broke_through)
 	_entities.add_child(v)
 	_visuals[gid] = {"node": v, "seen": _clock}
 	return v
+
+
+## Top gövdəni tərk etdi. Öz mikrobun tam səslə, başqaları sönük eşidilir —
+## eyni qayda [method _flush_fx]-dəki `eject` üçün də keçərlidir.
+func _on_broke_through(local: bool) -> void:
+	Sfx.play("blunk", 0.05, 0.0 if local else -6.0)
+
+
+## Rənginə görə mikrobun görüntüsünü tapır. Bir dünyada iki eyni rəngli mikrob
+## olmur ([method World._free_color]), ona görə rəng kimlikdir — hadisələrdə
+## ayrıca id sahəsi göndərilmir.
+## Mikrobun gövdəsini atəş istiqamətində dartır — top içəridən zorlayaraq
+## çıxır (bax [method GermVisual.eject]). "Blunk" səsi buradan YOX, gövdə
+## pərdəni yaranda siqnalla gəlir.
+func _eject_from(color_index: int, angle: float) -> void:
+	var v := _germ_by_color(color_index)
+	if v != null:
+		v.eject(angle)
+
+
+func _germ_by_color(color_index: int) -> GermVisual:
+	for gid in _visuals:
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.burst and v.color_index == color_index:
+			return v
+	return null
 
 
 ## Render vaxtını əhatə edən iki snapshot-u tapır.
@@ -655,6 +695,31 @@ static func _index_germs(snap: Array) -> Dictionary:
 ## Atılan toplar düz xətlə sabit sürətlə gedir, ona görə interpolyasiya
 ## əvəzinə sonuncu məlum nöqtədən hesablanır — nəticə tamamilə hamardır.
 ## Sıçrayanda server yeni istiqamət göndərir və hesablama sıfırlanır.
+##
+## ── Öz topun BAŞQA zaman xəttindədir ─────────────────────────────────────
+## Bu faylın başındakı üç zaman xətti burada toqquşur. Rəqiblər 100 ms geridə
+## çəkilir, ÖZ mikrobun isə proqnozdan — yəni İNDİ. Top da rəqiblərlə eyni
+## gecikməyə salınsaydı (və salınırdı), öz atdığın top mikrobunun 100 ms
+## əvvəlki yerində doğulardı: sürəti 420 px/s olduğuna görə bu, 42 piksel,
+## yəni mikrobun radiusundan (28 px) BÖYÜK bir məsafədir. Şəbəkə gecikməsi
+## də üstünə gəlir.
+##
+## Nəticə gözlə belə görünürdü: top mikrobun ARXASINDA peyda olur, gövdənin
+## içindən keçir və qabaqdan çıxır — sanki kənardan atılıb. Halbuki oyunun
+## qaydası budur ki, mikrob ÖZ İÇİNDƏKİ topu atır (bax README, "Oyunun
+## qaydası"), və [method Sim._fire] onu düz mərkəzdə doğurur.
+##
+## Ona görə öz topun serverin sözünü GÖZLƏMİR: atəş açılan andakı doğuş
+## nöqtəsindən uçur (bax [method _remember_muzzle]) — pinq nə olursa olsun
+## mərkəzdən başlayır və membranı yararaq çıxır. Sıçrayan kimi serverin
+## xəttinə qaytarılır: sıçrayışı proqnoz bilmir, onu yalnız server deyir.
+##
+## Qalan hər şey (rəqib topları, qida) gecikməli xəttdə qalır — onların
+## sahibi də oradadır.
+##
+## Sahib RƏNGDƏN tanınır: bir dünyada iki eyni rəngli mikrob olmur
+## ([method World._free_color]), ona görə snapshot-a sahib sahəsi əlavə
+## etməyə ehtiyac yoxdur — eyni üsul [method _explode]-da da işlənir.
 func _render_shots(render_time: float) -> void:
 	if _last_snap.is_empty():
 		return
@@ -666,7 +731,13 @@ func _render_shots(render_time: float) -> void:
 			spr.texture = _tex["shot"]
 			spr.modulate = Palette.germ_color(int(e[Const.SF.COLOR]))
 			_shot_layer.add_child(spr)
-			view = {"node": spr}
+			var mine := int(e[Const.SF.COLOR]) == my_color
+			view = {"node": spr, "mine": mine}
+			if mine:
+				var muzzle := _claim_muzzle(
+					Vector2(float(e[Const.SF.DX]), float(e[Const.SF.DY])))
+				if not muzzle.is_empty():
+					view["muzzle"] = muzzle
 			_shot_views[sid] = view
 		view["base"] = Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
 		view["dir"] = Vector2(float(e[Const.SF.DX]), float(e[Const.SF.DY]))
@@ -677,7 +748,55 @@ func _render_shots(render_time: float) -> void:
 		var view: Dictionary = _shot_views[sid]
 		var spr: Sprite2D = view["node"]
 		var dir: Vector2 = view["dir"]
-		spr.position = Vector2(view["base"]) + dir * Const.SHOT_SPEED * (render_time - float(view["t"]))
+
+		var muzzle: Dictionary = view.get("muzzle", {})
+		if not muzzle.is_empty():
+			if Vector2(muzzle["dir"]).dot(dir) > 0.995:
+				spr.position = Vector2(muzzle["pos"]) \
+					+ dir * Const.SHOT_SPEED * (_clock - float(muzzle["t"]))
+				continue
+			# İstiqamət dəyişdi — top divardan sıçradı. Proqnozun sözü bitdi.
+			view.erase("muzzle")
+
+		var at: float = _clock if view.get("mine", false) else render_time
+		spr.position = Vector2(view["base"]) + dir * Const.SHOT_SPEED * (at - float(view["t"]))
+
+
+## Öz atəşinin doğuş nöqtəsini yadda saxlayır — top serverdən gələnə qədər.
+##
+## [param membrane] atəş hadisəsindəki nöqtədir: membranın deşildiyi yer,
+## yəni mərkəzdən düz bir radius aralıda. [method Sim._fire] həm onu, həm
+## topun özünü eyni `g.pos`-dan qurur, ona görə mərkəzi geri hesablamaq olur.
+func _remember_muzzle(membrane: Vector2, aim: float) -> void:
+	_prune_muzzles()
+	var dir := Vector2.from_angle(aim)
+	_muzzles.append({
+		"pos": membrane - dir * Const.germ_radius(me.capacity),
+		"dir": dir,
+		"t": _clock,
+	})
+
+
+## Serverin təsdiqləmədiyi köhnə doğuş nöqtələrini atır.
+func _prune_muzzles() -> void:
+	while not _muzzles.is_empty() and _clock - float(_muzzles[0]["t"]) > MUZZLE_GRACE:
+		_muzzles.pop_front()
+
+
+## Yeni gələn öz topunu gözləyən doğuş nöqtəsi ilə uyğunlaşdırır.
+##
+## Atəşlər növbə ilə açıldığına görə sıra kifayətdir; istiqamət isə yoxlama
+## rolunu oynayır. Server atəşi qəbul etməyibsə (məsələn, düzəlişdən sonra
+## soyuma fərqi) nöqtə [constant MUZZLE_GRACE] sonra özü düşür — belə olanda
+## bir buraxılmış atəş bütün ardıcıllığı sürüşdürmür.
+func _claim_muzzle(dir: Vector2) -> Dictionary:
+	while not _muzzles.is_empty():
+		var m: Dictionary = _muzzles.pop_front()
+		if _clock - float(m["t"]) > MUZZLE_GRACE:
+			continue
+		if Vector2(m["dir"]).dot(dir) > 0.995:
+			return m
+	return {}
 
 
 # ---------------------------------------------------------------- qida
@@ -739,6 +858,21 @@ func _queue_events(list: Array, at: float) -> void:
 		# səsləri üst-üstə düşərdi.
 		if int(e[Const.EF.COLOR]) == my_color \
 				and (kind == Const.EvKind.FIRE or kind == Const.EvKind.BURST):
+			# Atəşi proqnoz HƏMİŞƏ oynatmır. Məşq rejimində yerli dünyanın
+			# tick-i proqnozdan ƏVVƏL işləyir və soyuma sayğacını düzəldir,
+			# ona görə proqnoz öz atəşini heç görmür — qığılcım da, səs də,
+			# topun doğuş nöqtəsi də itir.
+			#
+			# Gözləyən doğuş nöqtəsi elə bu sualın cavabıdır: varsa, atəş
+			# proqnozda oynadılıb; yoxdursa, yalnız server bilir və burada
+			# oynadılmalıdır.
+			_prune_muzzles()
+			if kind == Const.EvKind.FIRE and _muzzles.is_empty():
+				var at_pos := Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y]))
+				_remember_muzzle(at_pos, float(e[Const.EF.ARG]))
+				_spawn_fx("spark", at_pos, 0.5, Palette.germ_color(my_color))
+				Sfx.play("eject", 0.06)
+				_eject_from(my_color, float(e[Const.EF.ARG]))
 			continue
 		_fx_queue.append({
 			"at": at,
@@ -765,6 +899,7 @@ func _flush_fx(render_time: float) -> void:
 			Const.EvKind.FIRE:
 				_spawn_fx("spark", pos, 0.4, col)
 				Sfx.play("eject", 0.06, -6.0)
+				_eject_from(int(e["ci"]), float(e["arg"]))
 			Const.EvKind.ABSORB:
 				_spawn_fx("spark", pos, 0.28, Palette.FOOD)
 				# Yalnız ÖZ udmağın eşidilir: 10 mikrobun hamısının səsi

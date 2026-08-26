@@ -18,6 +18,8 @@ func _ready() -> void:
 		_start_practice(args)
 	elif args.has("--autoclient"):
 		_start_auto_client(args)
+	elif args.has("--preview"):
+		_start_preview(args)
 	else:
 		# `_ready` icra olunarkən ağac hələ məşğuldur — səhnə dəyişimi
 		# növbəti kadra təxirə salınmalıdır.
@@ -28,6 +30,16 @@ func _ready() -> void:
 ## Menyunu keçib birbaşa botlarla dolu yerli dünyaya düşür.
 ## Həm cihazda sürətli sınaq, həm də bütün oyun axınının inteqrasiya testidir.
 func _start_practice(args: PackedStringArray) -> void:
+	# `--species <0|1|2>` — məşq rejimində mikrob növünü seçir.
+	#
+	# Menyu keçilib birbaşa dünyaya düşüldüyü üçün `settings.cfg` oxunmur,
+	# yəni növü yalnız buradan vermək olar. Bu, hər növün görüntüsünü
+	# redaktoru açmadan, təkrarlana bilən şəkildə yoxlamağa imkan verir
+	# (`--shot` ilə birlikdə).
+	var kind := _arg_value(args, "--species", "")
+	if not kind.is_empty():
+		Net.species = Const.species_from(int(kind))
+
 	var arena: Arena = load("res://scenes/game/arena.tscn").instantiate()
 	arena.configure_practice()
 	arena.auto_input = args.has("--shot")   # görüntü üçün mikrob hərəkətdə olsun
@@ -37,6 +49,20 @@ func _start_practice(args: PackedStringArray) -> void:
 
 	_setup_screenshot(args)
 	_setup_perf(args)
+
+
+## Növün görüntü stendi — oyun məntiqi olmadan tək mikrob (bax [SpeciesPreview]).
+func _start_preview(args: PackedStringArray) -> void:
+	var stand := SpeciesPreview.new()
+	stand.species = Const.species_from(int(_arg_value(args, "--preview-species", "2")))
+	stand.balls = int(_arg_value(args, "--preview-balls", "9"))
+	stand.capacity = int(_arg_value(args, "--preview-cap", "16"))
+	stand.fire_every = float(_arg_value(args, "--preview-fire", "0"))
+	stand.speed_scale = float(_arg_value(args, "--preview-speed", "1"))
+	var tree := get_tree()
+	tree.root.add_child.call_deferred(stand)
+	tree.set_deferred("current_scene", stand)
+	_setup_screenshot(args)
 
 
 ## `--perf <saniyə>` verilibsə, kadr vaxtlarını ölçüb hesabat yazır.

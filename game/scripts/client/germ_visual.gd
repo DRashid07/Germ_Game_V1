@@ -1,6 +1,11 @@
 class_name GermVisual
 extends Node2D
-## Ekranda bir mikrob. İKİ NÖV var — hər ikisi eyni gövdəni bölüşür,
+
+## Top membranı YARDI. Səs məhz bu anda çalınmalıdır, atəş anında yox —
+## gecikmə mikrobun ölçüsündən asılıdır (bax [method eject]).
+signal broke_through(local: bool)
+
+## Ekranda bir mikrob. ÜÇ NÖV var — hamısı eyni gövdəni bölüşür,
 ## fərq yalnız HƏRƏKƏT ORQANINDADIR.
 ##
 ## Burada heç bir oyun məntiqi yoxdur — yalnız verilən vəziyyəti çəkir.
@@ -13,7 +18,7 @@ extends Node2D
 ## uyğun deyil. Növlər də hazır kadr ardıcıllığı ilə çəkilə bilməzdi: ayaqların
 ## addımı mikrobun HƏQİQİ sürətindən özü çıxır (bax [method _walk]).
 ##
-## ── İki növ ──────────────────────────────────────────────────────────────
+## ── Üç növ ───────────────────────────────────────────────────────────────
 ##
 ## **CILIATE — kirpikli** (paramesium modeli). Bədəni yumşaq kisədir, suda
 ## ÜZÜR: perimetr boyu kirpiklər metaxronal dalğa ilə döyünür, arxada qamçı
@@ -27,8 +32,14 @@ extends Node2D
 ## ÖNƏ AXIR (*fəvvarə axını*): sitoplazma öndəki ayağa tökülür və gövdəni
 ## dalınca çəkir.
 ##
-## Daxili axının istiqaməti iki növdə QƏSDƏN əksdir: biri sürüklənir,
-## digəri özünü çəkir. Ən incə, amma ən güclü fərqləndirici işarə budur.
+## **AMOEBA — sürünən**. Sabit forması YOXDUR: kənarın özü hərəkət orqanıdır.
+## İki qatlı gövdə (jel qabıq + axıcı iç) ön tərəfə uzanır, arxadan yığılır və
+## sahəsini saxlayaraq irəli axır (bax [method _crawl_body]). Nə kirpiyi var,
+## nə ayağı — yalnız kənarı.
+##
+## Daxili axının istiqaməti QƏSDƏN fərqlidir: kirpikli sürüklənir, ayaqlı
+## özünü çəkir, amöbdə isə axının özü hərəkətin mexanizmidir. Ən incə,
+## amma ən güclü fərqləndirici işarə budur.
 ##
 ## Növ RƏNGDƏN çıxarılır (bax [method species_of]) — snapshot-a bir bayt da
 ## əlavə olunmur.
@@ -88,25 +99,208 @@ const LEGS_MAX := 13
 ## Ayağın normal uzaqlığı (radiusa nisbətdə).
 ##
 ## Halqalardan (ən uzağı r + 25) KƏNARDA olmalıdır — ilk versiyada 1.55 idi
-## və kiçik mikrobda pəncələr düz halqaların üstünə düşürdü, ayaq da,
-## halqa da oxunmurdu. Real heliozoada aksopodlar bədən diametri boyda olur,
-## yəni 2.15 həm düzgün, həm oxunaqlıdır.
-const LEG_REACH := 2.15
+## və kiçik mikrobda pəncələr düz halqaların üstünə düşürdü.
+##
+## 2.15 də çox oldu: ayaqlar qonşu mikrobun üstünə uzanırdı (mikroblar
+## bir-birindən yalnız radiusları qədər aralanır) və "başqasına ilişmiş"
+## kimi görünürdü. 1.75 həm gövdədən aydın kənardadır, həm qonşuya çatmır.
+const LEG_REACH := 1.75
+## Bir ayaq ən çox bu qədər saniyə yerində qala bilər.
+##
+## Bu olmadan yavaş gedən (və ya dayanan) mikrobun ayaqları HEÇ VAXT
+## addımlamırdı: gövdə addım məsafəsini keçmirdi, ayaqlar isə donmuş ulduz
+## kimi qalırdı. Real aksopod fasiləsiz yenidən qurulur — dayanan heliozoa da
+## ayaqlarını dəyişir. Hədd keçiləndə ayaq növbəyə düşür, təzədən basılır.
+const LEG_HOLD_MAX := 1.1
+## Yerə basılı ayağın ortasındakı yüngül əyilmə (radiusa nisbətdə).
+## Pəncə TƏRPƏNMİR — yalnız ayağın gövdəsi dalğalanır, ona görə bu, sürüşmə
+## yaratmır, sadəcə donmuş çubuq təsirini aradan qaldırır.
+const LEG_SWAY := 0.07
 ## Pəncə "ev" nöqtəsindən bu qədər (radiusa nisbətdə) uzaqlaşanda yeni addım
 ## atılır. Kiçik olsa mikrob titrəyir, böyük olsa ayaqlar dartılıb qopmuş görünür.
 const LEG_STRIDE := 0.85
-## Havadakı ayağın sürəti (1/saniyə).
+## Havadakı ayağın sürəti — mikrobun TEMPİNƏ görə (1 / gedilən radius).
 ##
-## [constant LEG_STRIDE] ilə BİRLİKDƏ tənzimlənməlidir — ikisi yerişin
-## "yük dövrünü" (duty cycle) təyin edir: ayaq nə qədər müddət yerdə,
-## nə qədər havada olur. Addım uzun və yellənmə sürətli olmalıdır ki, hər an
-## ayaqların çoxu YERDƏ qalsın. Əks halda mikrob yerimir, sıçrayır —
-## `_test_heliozoan_gait` məhz bunu qoruyur.
-const LEG_SWING := 12.0
+## ── Niyə saniyə ilə ölçülə bilməz ────────────────────────────────────────
+## Əvvəl sabit 12 / saniyə idi və böyük mikrobda yeriş donurdu. Səbəb: addımın
+## uzunluğu radiusla böyüyür, yellənmənin müddəti isə sabit qalırdı. Tutum
+## 60-da hər ayaq vaxtının **91%-ni yerdə** keçirirdi və qalan 9%-də 73 pikseli
+## bir göz qırpımında qət edirdi — ekranda donmuş ulduz, arada bir çırpınma.
+##
+## Templə ölçüləndə yük dövrü (duty cycle) ölçüdən ASILI OLMUR: hər ayaq həm
+## kiçik, həm böyük mikrobda vaxtının təxminən 40%-ni havada keçirir.
+## Qoruyucu: `SimTest._check_gait` (hər ayağın ayrıca yük dövrünü ölçür).
+const LEG_SWING_PACE := 3.3
+## Dayanan mikrobda temp sıfırdır — yellənmə bu sürətlə tamamlanır (1/saniyə).
+const LEG_SWING := 4.0
 ## Addımın ortasında ayaq bu nisbətdə YIĞILIR. Heliozoa məhz belə yeriyir:
 ## aksopod qısalır, yeni yerə uzanır. Yana əyilmə DEYİL, uzunluq dəyişməsi —
 ## üstdən baxışda "sürünmə" yox, "addım" oxunur.
 const LEG_TUCK := 0.55
+
+# ---------------------------------------------------------------- AMOEBA
+## Amöbin konturunun nöqtə sayı. Digər növlərdən İKİ DƏFƏ ÇOXDUR və bu,
+## səliqə məsələsi deyil: onlarda kənar yalnız yüngül titrəyir, burada isə
+## kənarın ÖZÜ hərəkət orqanıdır — 24 nöqtə ilə ön uc kəsik-kəsik uzanır və
+## gövdə yumşaq kisə yox, çoxbucaqlı daş kimi oxunur. Referansdakı silueti
+## verən şey məhz kənarın hamarlığıdır.
+const CRAWL_POINTS := 44
+## Ləçəklərin dərinliyi. Böyük olsa gövdə ulduza dönür, kiçik olsa dairəyə.
+const CRAWL_LOBE := 0.115
+## Kənar boyunca ARXADAN ÖNƏ qaçan dalğanın dərinliyi və perimetr boyu
+## neçə dalğa yerləşdiyi.
+##
+## Bu, sürünmənin gözlə görünən hissəsidir: ön ucun uzanması hərəkəti yaradır,
+## bu dalğa isə onu oxunaqlı edir — kənar "yaxıla-yaxıla" irəli axır. Olmasa
+## amöb sadəcə uzanıb-yığılan ləkədir.
+const CRAWL_FLOW_DEPTH := 0.10
+const CRAWL_WAVES := 2.5
+## Nişan istiqamətindəki daimi çıxıntı (psevdopodiya). Sürətdən ASILI DEYİL:
+## amöb atəş açacağı tərəfə həmişə bir ayaqcıq uzadır, ona görə hədəf
+## istiqaməti dayananda da oxunur.
+##
+## Bu çıxıntı gövdənin ÖZ silueti ilə verilir, kənarda ayrıca nöqtə ilə yox:
+## digər iki növdə istiqaməti göstərən parlaq düymə var, amöbdə isə o düymə
+## gövdədən qopmuş ləkə kimi oxunurdu (referansda belə bir şey yoxdur).
+const CRAWL_AIM_BULGE := 0.10
+## Tam sürətdə saniyədə neçə sürünmə dövrü tamamlanır.
+## Bir addım ≈ 1 saniyə: amöb tələsmir, uzanma-yığılma gözlə izlənə bilməlidir.
+const CRAWL_RATE := 0.75
+## Dövr dayananda nə qədər yavaşıyır və gedəndə nə qədər sürətlənir
+## (bax [member _crawl_t]). Dayanan amöb tam donmur — sitoplazma axmaqda
+## davam edir — amma dövr hərəkətin sürətindən çıxır.
+const CRAWL_IDLE_RATE := 0.35
+const CRAWL_MOVE_RATE := 1.0
+## Arxa uc (uropod) yerə basılandan sonra gövdə ondan nə qədər uzaqlaşanda
+## buraxılır — RADİUSA nisbətdə. Bir sürünmə addımının uzunluğu budur.
+##
+## ── Bütün məsələnin düyünü buradadır ─────────────────────────────────────
+## Dövr əvvəl VAXTLA sürülürdü (saniyədə ~1 dövr). Mikrob isə saniyədə 3.4
+## gövdə uzunluğu qət edir — yəni bir "addımda" 3.4 gövdə boyu sürüşürdü.
+## Forma nə qədər düzgün deformasiya etsə də nəticə sürünmə yox, SÜRÜŞMƏ
+## oxunurdu: deformasiya yerdəyişmə ilə sinxron deyildi.
+##
+## Animasiyada bunun adı var — *foot sliding*. Ayaqlı növdə həmin nasazlıq
+## həndəsə ilə həll olunub (bax [method _walk]): pəncə yerə basılır və gövdə
+## ondan uzaqlaşana qədər tərpənmir, ona görə addımın tezliyi HƏQİQİ sürətdən
+## özü çıxır. Amöbdə də eyni prinsip işlədilir: uropod yerə basılır, gövdə
+## ondan bu qədər uzaqlaşanda buraxılır. Nəticədə dövrün tezliyi heç yerdə
+## yazılmır — sürətdən özü çıxır.
+## Qoruyucu: `SimTest._test_amoeba_crawl`.
+const CRAWL_RELEASE := 2.30
+## Buraxılandan sonra uropod gövdənin bu qədər arxasına basılır.
+const CRAWL_SEAT := 0.30
+## Psevdopodiyanın uzanması dartılmanı nə qədər tez izləyir və buraxılanda nə
+## qədər tez yığılır — vahid **1 / gedilən radius**, saniyə YOX.
+##
+## Yığılma uzanmadan XEYLİ TEZ olmalıdır: uzanma bütün dövrə yayılır, yığılma
+## isə bir anda baş verir. Gözlə görünən "atılma" məhz bu fərqdir — bərabər
+## olsaydı dövr sinusa çevrilərdi, sinus isə həmişə nəfəs alma kimi oxunur.
+##
+## ── Niyə saniyə ilə ölçülmür ─────────────────────────────────────────────
+## Sürünmədə qalan SON vaxt sabiti bunlar idi və ölçüləndə üzə çıxdı: böyük
+## mikrob yavaş gedir, həndəsə isə sabit templə dəyişirdi, yəni forma
+## yerdəyişmədən tez dəyişirdi. Nəticədə buraxılış anında gövdə bir kadrda
+## azacıq GERİ sürüşürdü (−0.11 px). Gözlə görünmürdü, amma sürünən heç nə
+## geri getməməlidir. Qoruyucu: `SimTest._check_crawl`.
+const CRAWL_PUSH := 0.45
+const CRAWL_PULL := 1.6
+## Dayanan mikrobda temp sıfırdır — forma bu ən aşağı sürətlə sakitləşir.
+const CRAWL_SETTLE := 0.8
+## Sürətə uyğunlaşma templəri — dayanan amöb yerində addımlamamalıdır.
+const CRAWL_FLOW_RATE := 5.0
+## Ön psevdopodiyanın və arxa ucun (uropod) gövdə mərkəzindən ən çox
+## uzaqlaşması — radiusa nisbətdə. Disklərin ARASINDAKI məsafədir,
+## kənarın deformasiyası deyil (bax [method _crawl_body]).
+const CRAWL_REACH := 0.88
+const CRAWL_DRAG := 0.58
+## Disklərin əsas radiusları (gövdə radiusuna nisbətdə): ön, orta, arxa.
+## Orta disk ƏN BÖYÜKDÜR — kontur ondan çəkilir, ona görə mərkəz həmişə
+## gövdənin içində qalmalıdır.
+const CRAWL_HEAD := 0.86
+const CRAWL_BODY := 0.94
+const CRAWL_TAIL := 0.86
+## Diskləri ayıranda hər birinin radiusu bu nisbətdə kiçilir.
+##
+## Sahənin qorunması buradan gəlir: ayrılan disklər birləşəndə gövdə uzanır,
+## uzanan gövdə isə eyni sahəni saxlamaq üçün NAZİLMƏLİDİR. Rəqəm gözlə
+## seçilmir, testlə tapılır — `SimTest._test_amoeba_crawl` sahə dəyişməsini
+## ölçür.
+const CRAWL_SLIM := 0.25
+## Dövr boyu arxa diskdən ön diskə keçən kütlə (radiusa nisbətdə).
+## Sitoplazma axını budur: ön uc dolur, arxa uc boşalır.
+const CRAWL_MASS := 0.13
+## Disklərin birləşmə tikişi neçə dəfə hamarlanır. İki dairənin birləşməsi
+## kəskin künc verir, canlı hüceyrədə isə belə künc olmur.
+const CRAWL_SMOOTH := 3
+## Uzananda gövdə getdiyi ox boyunca bu qədər dartılır və ona DİK istiqamətdə
+## eyni əmsalla yastılaşır (sahə qorunur).
+##
+## ── Niyə lazımdır ────────────────────────────────────────────────────────
+## Disklərin hərəkəti düzgün RİTM verir, amma tək başına düzgün SİLUET vermir:
+## oyunda ölçdükdə gövdə ən çox uzananda belə eninə görə cəmi 1.6 dəfə uzun
+## idi — yəni armud, sürünən hüceyrə yox. Diskləri daha da uzağa atmaq həlli
+## deyildi: gövdə mərkəzdən (toqquşma dairəsindən) həddən artıq qopurdu.
+##
+## Dartılma isə eni AZALDIR, ona görə nisbəti ödəyir, mərkəzi qorumur —
+## sadə miqyaslamadır. Bu, animasiyanın öz prinsipidir (*squash & stretch*);
+## kirpikli növ onu artıq işlədir ([constant STRETCH_MAX]).
+## Qoruyucu: `SimTest._check_crawl` (siluetin en/boy nisbətini ölçür).
+const CRAWL_STRETCH := 0.24
+## Gövdənin kütlə mərkəzi node-a nə qədər bərk bağlanır (0 = sərbəst, 1 = tam).
+##
+## ── Niyə lazımdır: kamera öz mikrobunu MİSMARLAYIR ───────────────────────
+## Rəqiblər ekranda hərəkət edir, ona görə gövdənin salınması onların
+## yerdəyişməsinə qarışır və sürünmə kimi oxunur. Öz mikrobun isə kameranın
+## tam mərkəzindədir — onun ekranda YERDƏYİŞMƏSİ YOXDUR. Deməli görünən
+## yeganə hərəkət gövdənin öz salınmasıdır.
+##
+## Ölçüldükdə mərkəz radiusun **60%-i** qədər (böyük mikrobda 49 piksel)
+## irəli-geri sürüşürdü. Nəticə: mikrob irəli getmirdi, yerində ora-bura
+## sürüşürdü — ekranda məhz "ilişib qalmaq" kimi. Səhv botlarda görünmürdü,
+## ona görə uzun müddət gizli qaldı.
+##
+## Forma sərbəst qalır (siluetin en/boy nisbəti dəyişmir), yalnız mərkəz
+## sabitlənir: sürünmə artıq gövdənin UCLARININ hərəkəti ilə oxunur — ön uc
+## irəli atılır, arxa uc dartılır — kökün silkələnməsi ilə yox. Personaj
+## animasiyasında qayda budur: kamera izləyəndə kök sakit, uclar işləkdir.
+## Qoruyucu: `SimTest._check_crawl`.
+const CRAWL_ANCHOR := 0.78
+## Xarici jel zolağının (plazmagel) ENİ — radiusa nisbətdə, ən azı piksellə.
+##
+## En, nisbət deyil. Fərq gözlə görünür: daxili konturu sadəcə `r × 0.78` ilə
+## çəkəndə zolaq ön ucda qalınlaşır, arxada nazilir (radius orada böyük,
+## burada kiçikdir) və nəticə "qalınlığı gəzən haşiyə" olur. Referansdakı
+## sarı zolaq isə hər yerdə eyni enlidədir — ona görə daxili kontur hər
+## nöqtənin ÖZ normalı boyunca sürüşdürülür (bax [method _inset]).
+const CRAWL_BAND := 0.24
+const CRAWL_BAND_MIN := 6.5
+## Orqanellaların yerləşdiyi dairənin radiusu (gövdəyə nisbətdə). Jel
+## zolağının altından çıxmamalıdır — çıxan ulduz "içindəki top" oxunuşunu itirir.
+const CRAWL_CORE := 0.56
+## Qatların tünd konturu radiusa nisbətdə bu qədər qalındır (ən azı piksellə).
+## Referansın oxunuşu bu xəttdən asılıdır: onsuz iki qat bir-birinə keçir.
+const CRAWL_EDGE := 0.085
+const CRAWL_EDGE_MIN := 2.6
+## Ulduz orqanellaların uc sayı, iç radiusu və hansı saya qədər çəkilməsi.
+## Hədd çəkiliş çağırışına görədir: hər ulduz konturu ilə birlikdə İKİ ayrıca
+## çoxbucaqlıdır, dairələr isə bir yığına düşür.
+# ---------------------------------------------------------------- ATƏŞ
+## Topun membranı yardığı yerdə gövdənin nə qədər qabarması (radiusa nisbətdə).
+const EJECT_DEPTH := 0.34
+## Qabarmanın DARLIĞI: üstlük böyüdükcə çıxıntı daralır.
+##
+## Dar olmalıdır — topun ölçüsündə. Geniş olsa gövdə bütövlükdə şişir və
+## "içəridən zorlayıb çıxarır" oxunuşu itir: ekranda sadəcə nəfəs alan mikrob
+## görünür.
+const EJECT_NARROW := 12.0
+## Pərdə yarıldıqdan sonra sakitləşmə müddəti (saniyə). Qısadır: buraxılan
+## gərilmiş pərdə uzun titrəmir.
+const EJECT_SNAP := 0.17
+
+const STAR_POINTS := 7
+const STAR_INNER := 0.50
+const STAR_MAX := 14
 
 var color_index := 0
 var germ_name := ""
@@ -140,6 +334,34 @@ var _vel := Vector2.ZERO
 var _has_pos := false
 ## Daxili mayenin sürüşməsi. İstiqaməti NÖVDƏN asılıdır (bax [method _track_motion]).
 var _core := Vector2.ZERO
+## Sürünmə dövrünün öz saatı (yalnız AMOEBA).
+##
+## [member _t]-dən AYRIDIR, çünki o, divar saatıdır — sabit templə axır.
+## Yalnız KƏNARIN öz dalğalanmasını sürür — sürünmə dövrünü YOX.
+## Sürünmənin saatı həndəsədədir (bax [member _uropod]).
+var _crawl_t := 0.0
+
+## Arxa ucun (uropod) yerə basıldığı nöqtə — VALİDEYN fəzasında, ayaqlı növün
+## pəncələri kimi (bax [member _foot]). Sürünmə dövrünün saatı elə budur:
+## gövdə ondan [constant CRAWL_RELEASE] qədər uzaqlaşanda addım tamamlanır.
+##
+## Yerli koordinatda saxlansaydı gövdə ilə birlikdə sürüşərdi və dövr
+## məsafəyə yox, vaxta bağlanardı — bütün problem məhz o idi.
+## Atəşin yaşı (saniyə); mənfi = atəş yoxdur. [member _eject_span] topun
+## mərkəzdən membrana qədər getdiyi ƏSL vaxtdır (bax [method eject]).
+var _eject_t := -1.0
+var _eject_span := 0.0
+var _eject_dir := 0.0
+
+var _uropod := Vector2.ZERO
+var _uropod_set := false
+## Uropodun istiqaməti, yumşaldılmış — buraxılış anında sıçramasın deyə.
+var _tail_dir := Vector2.LEFT
+## Psevdopodiyanın uzanması, 0..1. Dartılmanı yavaş izləyir, buraxılanda
+## isə TEZ yığılır (bax [constant CRAWL_PUSH], [constant CRAWL_PULL]).
+var _reach_out := 0.0
+## Yumşaldılmış sürət, 0..1 — dayanan amöbin gövdəsi yumru qalsın deyə.
+var _flow := 0.0
 
 # ---------- ayaqların vəziyyəti (yalnız HELIOZOAN) ----------
 ## Pəncələr VALİDEYN fəzasında saxlanılır — [member Node2D.position] ilə eyni
@@ -152,6 +374,8 @@ var _swing_from := PackedVector2Array()
 var _swing_to := PackedVector2Array()
 ## 1.0 = yerə basılıb, 0..1 = havadadır.
 var _step := PackedFloat32Array()
+## Ayaq neçə saniyədir yerində durur (bax [constant LEG_HOLD_MAX]).
+var _hold := PackedFloat32Array()
 var _legs := LEGS_MIN
 var _planted := false
 
@@ -189,6 +413,7 @@ func setup(p_color: int, p_name: String, p_is_local: bool,
 		_swing_from.resize(LEGS_MAX)
 		_swing_to.resize(LEGS_MAX)
 		_step.resize(LEGS_MAX)
+		_hold.resize(LEGS_MAX)
 
 	_label = Label.new()
 	_label.text = p_name
@@ -229,6 +454,59 @@ func apply(p_pos: Vector2, p_aim: float, p_balls: int, p_capacity: int,
 	_place_label()
 
 
+## Mikrob atəş açdı: top gövdənin İÇİNDƏN doğulur ([method Sim._fire]) və
+## membranı yararaq çıxır. Burada həmin keçidin görüntüsü başlayır.
+##
+## Müddət uydurma deyil, topun mərkəzdən divara qədər getdiyi ƏSL vaxtdır.
+## Sabit müddət qoyulsaydı, böyük mikrobda pərdə top hələ yolun yarısındaykən
+## buraxılardı — böyük mikrobda bu, 200 ms fərq deməkdir.
+func eject(angle: float) -> void:
+	_eject_dir = angle
+	_eject_span = maxf(Const.germ_radius(capacity) / Const.SHOT_SPEED, 0.04)
+	_eject_t = 0.0
+
+
+## Membranın dartılması: top divara çatana qədər qabarır, keçəndən sonra
+## buraxılıb bir dəfə içəri çırpılır və sakitləşir.
+##
+## Qabarma topun YOLUNUN yalnız son hissəsində başlayır — mərkəzdəki top
+## hələ membrana toxunmur, ona görə divarı da dartmamalıdır.
+func _eject_strain() -> float:
+	if _eject_t < 0.0:
+		return 0.0
+	if _eject_t < _eject_span:
+		return smoothstep(0.35, 1.0, _eject_t / _eject_span)
+	# Buraxılan gərilmiş pərdə — sönən rəqs.
+	var w := (_eject_t - _eject_span) / EJECT_SNAP
+	return exp(-3.5 * w) * cos(w * PI * 1.6)
+
+
+## Konturu topun çıxdığı nöqtədə bayıra dartır.
+##
+## Hazır konturun ÜZƏRİNDƏ işləyir, ona görə hər üç növ üçün eynidir: kirpikli
+## və ayaqlının membranı da, amöbin iki qatı da eyni cür qabarır (daxili qat
+## bayırdan [method _inset] ilə çıxarıldığına görə dartılmanı özü daşıyır).
+func _strain(ring: PackedVector2Array) -> PackedVector2Array:
+	var amp := _eject_strain()
+	if absf(amp) < 0.002:
+		return ring
+	var axis := Vector2.from_angle(_eject_dir)
+	# Gövdənin öz mərkəzindən ölçülür — amöbdə kontur node-un üstündə oturmur.
+	var mid := _ring_centre(ring)
+	var out := PackedVector2Array()
+	out.resize(ring.size())
+	for i in ring.size():
+		var v := ring[i] - mid
+		var d := v.length()
+		if d < 0.001:
+			out[i] = ring[i]
+			continue
+		# Yalnız çıxış istiqamətindəki dar pəncərə dartılır.
+		var t := maxf(v.dot(axis) / d, 0.0)
+		out[i] = mid + v * (1.0 + EJECT_DEPTH * amp * pow(t, EJECT_NARROW))
+	return out
+
+
 func _place_label() -> void:
 	if _label == null:
 		return
@@ -241,8 +519,20 @@ func _process(delta: float) -> void:
 		return
 	_t += delta
 	_track_motion(delta)
-	if species == Const.Species.HELIOZOAN:
-		_walk(delta)
+	match species:
+		Const.Species.HELIOZOAN:
+			_walk(delta)
+		Const.Species.AMOEBA:
+			_crawl(delta)
+
+	if _eject_t >= 0.0:
+		var before := _eject_t
+		_eject_t += delta
+		# Pərdənin yarıldığı KADR — səs siqnalı buradan gedir.
+		if before < _eject_span and _eject_t >= _eject_span:
+			broke_through.emit(is_local)
+		if _eject_t > _eject_span + EJECT_SNAP:
+			_eject_t = -1.0
 
 	var target := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
 	_shown_fill = move_toward(_shown_fill, target, delta * 2.5)
@@ -271,11 +561,12 @@ func _track_motion(delta: float) -> void:
 	var raw := (position - _last_pos) / delta
 	_last_pos = position
 	# Doğuş və yenidən qoşulma mövqeyi bir kadrda dəyişir — o sıçrayış sürət
-	# deyil, ona görə atılır. Ayaqlı mikrob üçün eyni siqnal pəncələri də
-	# sıfırlayır: gövdə teleport olunanda ayaqlar köhnə yerdə qalmamalıdır.
+	# deyil, ona görə atılır. Eyni siqnal yerə basılmış nöqtələri də sıfırlayır:
+	# gövdə teleport olunanda nə pəncələr, nə də uropod köhnə yerdə qalmamalıdır.
 	if raw.length() > Const.BASE_SPEED * 4.0:
 		raw = Vector2.ZERO
 		_planted = false
+		_uropod_set = false
 	_vel = _vel.lerp(raw, clampf(delta * 9.0, 0.0, 1.0))
 
 	# Daxili mayenin sürüşməsi — İKİ NÖVDƏ ƏKS İSTİQAMƏTDƏ:
@@ -283,10 +574,51 @@ func _track_motion(delta: float) -> void:
 	#     qalır — üzən yumşaq kisənin ətaləti.
 	#   • ayaqlı (mənfi): irəli axır. Sitoplazma öndəki aksopoda tökülür və
 	#     gövdəni dalınca çəkir — heliozoa hərəkətinin *fəvvarə axını*.
+	#   • kirpikli (müsbət): geri qalır — üzən yumşaq kisənin ətaləti.
+	#   • ayaqlı:  irəli axır — öndəki aksopoda tökülür.
+	#   • amöb:    ƏN ÇOX irəli axır. Onda bu, yan təsir deyil, hərəkətin
+	#     mexanizminin özüdür: plazmazol önə axmasa amöb yerindən tərpənməz.
 	var r := Const.germ_radius(capacity)
-	var pull := 0.16 if species == Const.Species.CILIATE else -0.20
-	var lag := -_vel / Const.BASE_SPEED * (r * pull)
+	var pull := 0.16
+	match species:
+		Const.Species.HELIOZOAN:
+			pull = -0.20
+		Const.Species.AMOEBA:
+			pull = -0.30
+	var lag := -_vel / maxf(Const.germ_speed(capacity), 1.0) * (r * pull)
 	_core = _core.lerp(lag.limit_length(r * 0.22), clampf(delta * 6.0, 0.0, 1.0))
+
+
+## Mikrobun ÖZ maksimal sürətinə görə nə qədər sürətlə getdiyi, 0..1.
+##
+## Ölçü [constant Const.BASE_SPEED] OLA BİLMƏZ və bu, incə, amma ağır səhv idi.
+## Mikrob böyüdükcə onun tavan sürəti düşür ([method Const.germ_speed]):
+## tutum 60-da 190 yerinə 115 piksel/saniyə. Mütləq ölçü ilə hesablananda
+## SONA QƏDƏR sürən böyük mikrob 0.61 "səy" göstərirdi — halbuki o, tam
+## qazdadır. Nəticədə bütün sürətə bağlı animasiya (sürünmə, dartılma, kirpik
+## döyüntüsü) mikrob böyüdükcə sönürdü.
+##
+## Səhv məhz belə tapıldı: BOTLAR düzgün sürünürdü, oyunçunun mikrobu yox —
+## çünki botlar kiçik qalır, oyunçu isə böyüyür.
+## Qoruyucu: `SimTest._test_amoeba_crawl` (ən böyük tutumda da yoxlayır).
+func _rush() -> float:
+	return clampf(_vel.length() / maxf(Const.germ_speed(capacity), 1.0), 0.0, 1.0)
+
+
+## Sürünmə SAATININ miqyası — gövdə radiusundan yavaş böyüyür.
+##
+## Addımın uzunluğu birbaşa radiusa bağlansaydı, böyük mikrobda dövr çökərdi:
+## radius 3 dəfə artır, tavan sürət isə 1.7 dəfə AZALIR — yəni tezlik 5 dəfə
+## düşür (3.4 → 0.67 Hz) və sürünmə yenidən sürüşmə kimi oxunur.
+##
+## Kvadrat kök uydurma rəqəm deyil, rəqqas qanunudur (f ∝ 1/√L) — təbiətdə iri
+## canlılar da məhz belə, uzun və seyrək addımlayır. Onunla tezlik 5 dəfə yox,
+## 2.9 dəfə düşür: böyük amöb ağır, amma hələ də oxunaqlı sürünür.
+##
+## Yalnız SAATA aiddir. Uzanmanın və dartılmanın ölçüsü gövdənin öz nisbətidir,
+## ona görə onlar radiusla birlikdə böyüyür.
+func _gait_radius() -> float:
+	return sqrt(Const.germ_radius(capacity) * Const.BASE_RADIUS)
 
 
 # ================================================================ ayaqlar
@@ -310,7 +642,14 @@ func _walk(delta: float) -> void:
 
 	var dir := Vector2.from_angle(_heading())
 	var reach := r * LEG_REACH
-	var stride := r * LEG_STRIDE
+	# Ayağın UZANMASI gövdə ilə birlikdə böyüyür (yuxarıdakı `reach`), ADDIMIN
+	# uzunluğu isə daha yavaş — rəqqas qanunu (bax [method _gait_radius]).
+	# Birbaşa radiusa bağlı olsaydı, böyük mikrob saniyədə cəmi bir dəfə
+	# addımlayardı və yeriş donardı.
+	var gait := _gait_radius()
+	var stride := gait * LEG_STRIDE
+	# Yellənmənin sürəti də templə ölçülür — bax [constant LEG_SWING_PACE].
+	var swing := maxf(LEG_SWING, _vel.length() / gait * LEG_SWING_PACE)
 
 	if not _planted:
 		_planted = true
@@ -331,8 +670,9 @@ func _walk(delta: float) -> void:
 	var lifted := 0
 	for i in _legs:
 		if _step[i] >= 1.0:
+			_hold[i] += delta
 			continue
-		_step[i] = minf(1.0, _step[i] + delta * LEG_SWING)
+		_step[i] = minf(1.0, _step[i] + delta * swing)
 		var k: float = _step[i]
 		_foot[i] = _swing_from[i].lerp(_swing_to[i], k * k * (3.0 - 2.0 * k))
 		if _step[i] < 1.0:
@@ -352,6 +692,11 @@ func _walk(delta: float) -> void:
 			if _step[i] < 1.0:
 				continue
 			var over := _foot[i].distance_to(_leg_home(i, r, dir)) - _leg_trip(i, stride)
+			# Çoxdan tərpənməyən ayaq da növbəyə düşür: gövdə yerindən
+			# tərpənməsə belə aksopod yenilənməlidir, yoxsa mikrob donmuş
+			# ulduza dönür (bax [constant LEG_HOLD_MAX]).
+			if _hold[i] > LEG_HOLD_MAX:
+				over = maxf(over, (_hold[i] - LEG_HOLD_MAX) * stride)
 			if over > worst_over:
 				worst_over = over
 				worst = i
@@ -359,6 +704,7 @@ func _walk(delta: float) -> void:
 			break                       # gecikmiş ayaq yoxdur
 
 		_step[worst] = 0.0
+		_hold[worst] = 0.0
 		_swing_from[worst] = _foot[worst]
 		# Yeni yer evdən bir az İRƏLİDƏ seçilir: ayaq gövdəni qabaqlayır,
 		# növbəti addıma qədər isə gövdə ona çatır.
@@ -368,10 +714,14 @@ func _walk(delta: float) -> void:
 
 ## Ayağın olmaq İSTƏDİYİ yer: gövdənin ətrafında, amma getdiyi tərəfə
 ## sürüşmüş, çünki mikrob ayağı irəliyə uzadır, geriyə yox.
+## Ayağın uzanması gövdə ilə böyüyür (`r`), getdiyi tərəfə sürüşməsi isə
+## ADDIMLA (bax [method _gait_radius]). Sürüşmə də radiusa bağlı olsaydı, böyük
+## mikrobda o sabit meyl addımın uzunluğunu keçərdi — ayaqlar dayanan mikrobda
+## da fasiləsiz addımlayardı, yəni pəncə yerdə sürüşərdi.
 func _leg_home(i: int, r: float, dir: Vector2) -> Vector2:
 	return position \
 		+ Vector2.from_angle(TAU * float(i) / float(_legs)) * (r * LEG_REACH) \
-		+ dir * (r * 0.35)
+		+ dir * (_gait_radius() * 0.35)
 
 
 ## Ayağın "evindən" bu qədər uzaqlaşması yeni addım tələb edir.
@@ -411,7 +761,12 @@ func _draw_legs(r: float) -> void:
 		if tip == Vector2.ZERO:
 			continue
 		var root := tip.normalized() * (r * 0.94)
-		var mid := root.lerp(tip, 0.5)
+		# Ayağın ORTASI yüngül dalğalanır — pəncə yerindən tərpənmir, ona görə
+		# bu, sürüşmə yaratmır. Olmasa basılı ayaq tam düz çubuqdur və mikrob
+		# canlı yox, sxem kimi görünür.
+		var side := Vector2(-tip.y, tip.x).normalized()
+		var mid := root.lerp(tip, 0.5) \
+			+ side * (sin(_t * 2.4 + float(i) * 1.7) * r * LEG_SWAY)
 		var col: Color = planted if _step[i] >= 1.0 else lifted
 		pts.push_back(root); pts.push_back(mid)
 		cols.push_back(col)
@@ -451,52 +806,101 @@ func _draw() -> void:
 	# Dolduqca membran daha çox gərilir — partlamağa yaxın olduğu buradan görünür.
 	var strain := clampf((fill - 0.6) / 0.4, 0.0, 1.0)
 	# Sürət 0..1 — dartılma, kirpik döyüntüsü və quyruq bundan asılıdır.
-	var rush := clampf(_vel.length() / Const.BASE_SPEED, 0.0, 1.0)
+	var rush := _rush()
 	var heading := _heading()
 	var rigid := species == Const.Species.HELIOZOAN
+	var crawler := species == Const.Species.AMOEBA
 
 	# Ayaqlı mikrobun gövdəsi BƏRKDİR (mineral skeleti var): daha az və daha
 	# yavaş titrəyir, sürətdə demək olar dartılmır. Kirpiklininki isə yumşaq
-	# kisədir. Forma dili eynidir, yalnız rəqəmlər fərqlənir — belə olanda iki
-	# növ bir dünyanın canlısı kimi görünür, iki ayrı oyundan gəlmiş kimi yox.
-	var ring := _membrane(r,
+	# kisədir. Amöbin forması tamamilə ayrı qanunla qurulur (bax [method _crawl_body]).
+	# Forma dili hər üçündə eynidir, yalnız rəqəmlər fərqlənir — belə olanda
+	# növlər bir dünyanın canlısı kimi görünür, ayrı oyunlardan gəlmiş kimi yox.
+	var ring := _crawl_body(r, heading, rush, 1.0) if crawler else _membrane(r,
 		(0.018 if rigid else 0.030) + (0.030 if rigid else 0.055) * strain,
 		(1.6 if rigid else 2.2) + (2.4 if rigid else 3.4) * strain,
 		heading, rush * (0.3 if rigid else 1.0))
+	# Atəş anında gövdə topun çıxdığı yerdə dartılır — növdən ASILI OLMAYARAQ,
+	# çünki hazır konturun üzərində işləyir (bax [method _strain]).
+	ring = _strain(ring)
 	var skin := Color(_base.lerp(Palette.DANGER, strain * 0.45), 0.30)
 
 	# ---- dolu formalar ----
-	# Kölgə — mikrob döşəmədən qopuq görünsün.
-	draw_circle(Vector2(0, 4), r * 1.02, Color(Palette.OUTLINE, 0.35))
+	# Kölgə — mikrob döşəmədən qopuq görünsün. Amöbdə dairə YARAMIR: gövdə
+	# dairə deyil və kölgə ön ucun yanından çıxıb ayrıca ləkə kimi görünür,
+	# ona görə orada gövdənin öz silueti aşağı sürüşdürülüb çəkilir.
+	if crawler:
+		draw_colored_polygon(_shift(ring, Vector2(0, 5)), Color(Palette.OUTLINE, 0.45))
+	else:
+		draw_circle(Vector2(0, 4), r * 1.02, Color(Palette.OUTLINE, 0.35))
 	# Bioluminessensiya halosu: suyun içində işıq yayılır (bax ART_BIBLE §1).
 	draw_circle(Vector2.ZERO, r + SHIELD_GAP + 6.0, Color(_base, 0.055 + 0.05 * strain))
-	if not rigid:
+	if species == Const.Species.CILIATE:
 		# Quyruq "əvvəlcə formalar, sonra xətlər" qaydasının YEGANƏ istisnasıdır:
 		# xətdir, amma bədənin ARXASINDA olmalıdır ki, dibi membranın altında qalsın.
 		# Bir çəkiliş çağırışına dəyər — quyruq olmadan mikrob üzmür, sürüşür.
 		_draw_tail(r, heading, rush)
-	# İrəli baxan çıxıntı (psevdopodiya) — hansı tərəfə atacağını göstərir.
-	# HƏR İKİ növdə var: bu, bəzək deyil, atəş istiqamətinin göstəricisidir.
-	draw_circle(Vector2.from_angle(aim) * (r + 5.0), maxf(r * 0.22, 5.0), Color(_light, 0.85))
-	draw_colored_polygon(ring, skin)
-	_draw_core(r, strain)
+	# İrəli baxan çıxıntı — hansı tərəfə atacağını göstərir.
+	#
+	# Amöbdə YOXDUR və bu, unudulma deyil: onun istiqaməti gövdənin ÖZ
+	# silueti ilə verilir ([constant CRAWL_AIM_BULGE]). Kənarda ayrıca parlaq
+	# düymə çəkiləndə gövdədən qopmuş bir ləkə kimi oxunurdu — referansda
+	# belə bir şey yoxdur, üstəlik istəmədən "ayaq" təsiri yaradırdı.
+	if not crawler:
+		draw_circle(Vector2.from_angle(aim) * (r + 5.0), maxf(r * 0.18, 4.5),
+			Color(_light, 0.85))
+
+	if crawler:
+		# İki qat: kənarda jel (plazmagel), içəridə axıcı maye (plazmazol).
+		# Amöbin hərəkəti məhz bu iki halın çevrilməsidir, ona görə qatlar
+		# bəzək deyil — mexanizmin özüdür (bax [method _crawl_body]).
+		#
+		# Qatlar TAM TUTQUNDUR (digər növlərdə 0.30). Şəffaf çəkiləndə ikisi
+		# bir-birini bulandırır və nəticə iki material yox, bir palçıq ləkəsi
+		# olur.
+		#
+		# Rəng fərqi də QƏSDƏN böyükdür: zolaq oyunçunun rənginin AÇIQ,
+		# iç isə TÜND variantıdır. Əvvəl ikisi də əsas rəngə yaxın idi və
+		# gövdə tək rəngli ləkə kimi oxunurdu — referansdakı oxunuş (qalın
+		# açıq zolaq + dolğun tünd iç) məhz bu addımdan asılıdır.
+		draw_colored_polygon(ring, _light.lerp(Palette.DANGER, strain * 0.40))
+		draw_colored_polygon(_inset(ring, maxf(r * CRAWL_BAND, CRAWL_BAND_MIN)),
+			_base.lerp(Palette.OUTLINE, 0.24).lerp(Palette.DANGER, strain * 0.45))
+	else:
+		draw_colored_polygon(ring, skin)
+	# Daxili kölgə həcm üçündür, amöbdə isə həcmi ARTIQ iki qat verir —
+	# üçüncü ləkə onların sərhədini bulandırır və "qalın zolaq + dolğun iç"
+	# oxunuşunu itirir. Ona görə yalnız digər növlərdə çəkilir.
+	if not crawler:
+		_draw_core(r, strain)
 	_draw_inner_balls(r)
 
 	# ---- xətlər ----
 	if rigid:
 		_draw_legs(r)
-		# Mineral skelet — bərk gövdənin daxili konturu. Kirpiklidə yoxdur,
-		# çünki onun gövdəsi yumşaqdır və belə bir sərhədi olmazdı.
+		# Mineral skelet — bərk gövdənin daxili konturu. Yumşaq gövdələrdə
+		# yoxdur, çünki onlarda belə bir sərhəd olmazdı.
 		draw_arc(Vector2.ZERO, r * 0.72, 0.0, TAU, 28, Color(_light, 0.30), 1.6, true)
-	else:
+	elif not crawler:
 		_draw_cilia(r, rush, heading)
 
-	var edge := PackedVector2Array(ring)
-	edge.push_back(ring[0])
-	draw_polyline(edge, Color(_light, 0.95), 3.0, true)
-	# Yaş səth: sol-yuxarıdan gələn işıq parıltısı. Yalnız bir qövsdür,
-	# amma "bu, mayedir" mesajını bütün halodan güclü verir.
-	draw_arc(Vector2.ZERO, r * 0.80, PI * 1.05, PI * 1.55, 12, Color(Palette.TEXT, 0.35), 2.5, true)
+	if crawler:
+		# Amöbin konturu TÜNDDÜR və qalındır — həm bayırda, həm iki qatın
+		# arasında. Bu xətt olmasa parlaq zolaq fona, iç isə zolağa qarışır.
+		# Digər növlərdəki açıq membran xətti burada ÇƏKİLMİR: parlaq jel
+		# zolağı onsuz da işıqlı haşiyə işini görür, üstünə ikinci açıq xətt
+		# qoyulanda kənar ikiqat olur.
+		var edge_w := maxf(r * CRAWL_EDGE, CRAWL_EDGE_MIN)
+		draw_polyline(_closed(ring), Color(Palette.OUTLINE, 0.95), edge_w, true)
+		draw_polyline(_closed(_inset(ring, maxf(r * CRAWL_BAND, CRAWL_BAND_MIN))),
+			Color(Palette.OUTLINE, 0.95), edge_w * 0.7, true)
+	else:
+		draw_polyline(_closed(ring), Color(_light, 0.95), 3.0, true)
+		# Yaş səth: sol-yuxarıdan gələn işıq parıltısı. Yalnız bir qövsdür,
+		# amma "bu, mayedir" mesajını bütün halodan güclü verir. Amöbdə
+		# çəkilmir — tutqun gövdənin üstündə cızıq kimi oxunur.
+		draw_arc(Vector2.ZERO, r * 0.80, PI * 1.05, PI * 1.55, 12,
+			Color(Palette.TEXT, 0.35), 2.5, true)
 
 	if safe:
 		# Doğuş qalxanı — fırlanan kəsik halqa. Atəş açan kimi sönür.
@@ -504,6 +908,263 @@ func _draw() -> void:
 			Color(Palette.TEXT, 0.55), 3.0, true)
 
 
+## Konturu qapayır — [method CanvasItem.draw_polyline] halqanı özü bağlamır.
+static func _closed(ring: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array(ring)
+	out.push_back(ring[0])
+	return out
+
+
+## Konturu bərabər ENDƏ içəri çəkir: hər nöqtənin radiusundan EYNİ ədəd çıxılır.
+##
+## Niyə nisbətlə (`r × 0.78`) olmur — bax [constant CRAWL_BAND].
+##
+## Niyə normal boyunca da olmur: həqiqi ofset çökək yerlərdə qonşu nöqtələri
+## bir-birindən KEÇİRİR, kontur özünü kəsir və Godot çoxbucaqlını üçbucaqlara
+## böləbilmir ("Invalid polygon data") — gövdə o kadrda yoxa çıxır. Bucağa görə
+## düzəliş (`1 / cos φ`) də kömək etmir: o, kiçik bir çuxuru dərin çapığa
+## çevirir, çünki düzəliş məhz orada ən böyükdür.
+##
+## Radiusdan sabit çıxmaq isə bucaq sırasını olduğu kimi saxlayır — nəticə
+## həmişə sadə çoxbucaqlıdır və içəri kontur bayırın hamar surətidir.
+## Dik en `width × cos φ` olur; bu gövdədə φ heç vaxt böyük deyil, yəni
+## fərq 15%-i keçmir və gözlə seçilmir.
+static func _inset(ring: PackedVector2Array, width: float) -> PackedVector2Array:
+	# Konturun ÖZ mərkəzinə doğru çəkilir, node-un mərkəzinə yox: amöbin gövdəsi
+	# kök sabitləndikdən sonra node-un üstündə OTURMUR (bax [constant CRAWL_ANCHOR]),
+	# ona görə sıfır nöqtəsi işlədilsəydi zolaq bir tərəfdə qalınlaşardı.
+	var mid := _ring_centre(ring)
+	var out := PackedVector2Array()
+	out.resize(ring.size())
+	for i in ring.size():
+		var v := ring[i] - mid
+		var d := v.length()
+		if d < 0.001:
+			out[i] = ring[i]
+			continue
+		# Hədd yalnız nəzəri haldır (zolaq gövdədən enli olsa) — çoxbucaqlı
+		# heç vaxt içəri çevrilməməlidir.
+		out[i] = mid + v / d * maxf(d - width, d * 0.18)
+	return out
+
+
+## Bütün nöqtələri sürüşdürür (kölgə üçün).
+static func _shift(ring: PackedVector2Array, by: Vector2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	out.resize(ring.size())
+	for i in ring.size():
+		out[i] = ring[i] + by
+	return out
+
+
+
+
+## Amöbin gövdəsi — POLAR DEYİL, HƏRƏKƏT EDƏN DİSKLƏRDƏN qurulur.
+##
+## ── Niyə əvvəlki model heç cür sürünmürdü ────────────────────────────────
+## Digər iki növ dairədən başlayır və üstünə titrəyiş əlavə edir:
+## `nöqtə = mərkəz + istiqamət(a) × radius(a)`. Amöb də əvvəl belə qurulmuşdu
+## və NƏ QƏDƏR TƏNZİMLƏNSƏ DƏ sürünmürdü. Səbəb düsturun özündədir: orada
+## mərkəz SABİTDİR, sürünmə isə kütlənin mərkəzinin yerdəyişməsidir. Radiusu
+## nə qədər dəyişsən, nəticə yerində nəfəs alan ləkə olur — amplitudanı
+## artırmaq da kömək etmir, sadəcə daha güclü nəfəs alır.
+##
+## İkinci məhdudiyyət: polar düsturda bir bucağa yalnız BİR radius düşür,
+## yəni boynu olan çıxıntı — psevdopodiyanın tərifi — ifadə oluna bilmir.
+##
+## ── İndiki model ─────────────────────────────────────────────────────────
+## Gövdə üç diskin BİRLƏŞMƏSİDİR: ön psevdopodiya, orta kütlə, arxa uropod.
+## Sürünmə kənarın bəzədilməsi yox, disklərin ÖZ hərəkətidir:
+##   1. ön disk irəli atılır — protruziya (tez, dövrün ~3-də biri);
+##   2. sitoplazma ona axır: ön disk dolur, arxa boşalır;
+##   3. arxa uc yığılıb gövdəyə qovuşur — retraksiya (yavaş).
+##
+## Kontur hər bucaq üçün şüanın disklərdən ƏN UZAQ çıxış nöqtəsidir
+## (bax [method _reach]); nəticə dövrün ortasında boynu olan damcı, sonunda
+## isə yumru gövdədir. Gövdənin kütlə mərkəzi bu dövr boyu irəli-geri sürüşür —
+## "yaxıla-yaxıla getmək" elə budur və ölçülə bilən əlaməti də məhz odur.
+## Qoruyucu: `SimTest._test_amoeba_crawl`.
+##
+## Sahə qorunur: disklər ayrılanda gövdə uzanır, ona görə radiusları
+## [constant CRAWL_SLIM] nisbətində kiçilir — uzanan hüceyrə nazilir.
+##
+## [param scale] konturun ümumi miqyası (1.0 = xarici jel qatı).
+## Sürünmə dövrü — MƏSAFƏ ilə sürülür, vaxtla yox.
+##
+## Bu funksiya animasiya oxutmur, sadəcə bir həndəsi sual verir: gövdə yerə
+## basılmış arxa ucdan nə qədər uzaqlaşıb? Cavab addımın harasında olduğumuzu
+## deyir. Ona görə sürünmənin tezliyi heç bir yerdə yazılmayıb — mikrob sürətlə
+## gedəndə tez, yavaş gedəndə yavaş sürünür, dayananda isə ümumiyyətlə sürünmür.
+##
+## Vaxtla sürülən dövrün nəyə görə işləmədiyi [constant CRAWL_RELEASE]-də yazılıb.
+func _crawl(delta: float) -> void:
+	# Addımın uzunluğu gövdə radiusundan YAVAŞ böyüyür (bax [method _gait_radius]).
+	var gait := _gait_radius()
+	var axis := Vector2.from_angle(_heading())
+
+	if not _uropod_set:
+		_uropod = position - axis * (gait * CRAWL_SEAT)
+		_tail_dir = -axis
+		_uropod_set = true
+
+	var lag := _uropod - position
+	# Gövdə yetərincə uzaqlaşıb: arxa uc buraxılır və önə, gövdənin dibinə
+	# basılır. Dövrün YEGANƏ hadisəsi budur; qalan hər şey ondan çıxır.
+	if lag.length() > gait * CRAWL_RELEASE:
+		_uropod = position - axis * (gait * CRAWL_SEAT)
+		lag = _uropod - position
+
+	var span := maxf(CRAWL_RELEASE - CRAWL_SEAT, 0.001)
+	var stretch := clampf((lag.length() / gait - CRAWL_SEAT) / span, 0.0, 1.0)
+	# Uzanma bütün dövrə yayılır, yığılma isə bir anda olur — "atılma" hissi
+	# məhz bu asimmetriyadandır. Templə ölçülür ki, forma yerdəyişmədən tez
+	# dəyişməsin (bax [constant CRAWL_PULL]).
+	var pace := _vel.length() / gait
+	var rate := pace * (CRAWL_PUSH if stretch > _reach_out else CRAWL_PULL)
+	_reach_out = move_toward(_reach_out, stretch, delta * maxf(rate, CRAWL_SETTLE))
+
+	if lag.length_squared() > 0.0001:
+		_tail_dir = _tail_dir.lerp(lag.normalized(),
+			clampf(delta * 8.0, 0.0, 1.0)).normalized()
+
+	var rush := _rush()
+	_flow = move_toward(_flow, rush, delta * CRAWL_FLOW_RATE)
+	# Kənarın öz dalğalanması — sürünmədən ayrı, dayananda da davam edir.
+	_crawl_t += delta * CRAWL_RATE * (CRAWL_IDLE_RATE + CRAWL_MOVE_RATE * rush)
+
+
+func _crawl_body(r: float, heading: float, rush: float, scale: float) -> PackedVector2Array:
+	var axis := Vector2.from_angle(heading)
+	# Addımın harasındayıq — cavab [method _crawl]-dan, yəni HƏNDƏSƏDƏN gəlir.
+	# Uzanma həm də sürətlə süzülür: dayanan amöb yerində addımlamamalıdır,
+	# onu canlı saxlayan şey aşağıdakı ləçəklər və axın dalğasıdır.
+	# ── Fazalar ƏKSDİR və bu, məcburidir ────────────────────────────────────
+	# Psevdopodiya addımın ƏVVƏLİNDƏ atılır, sonra gövdə ona doğru axdıqca
+	# yerli koordinatda kiçilir — yəni ucu dünyada demək olar YERİNDƏ QALIR,
+	# gövdə isə ona çatır. Arxa uc bunun tam əksidir: dövr boyu dala dartılır,
+	# buraxılanda önə qovuşur.
+	#
+	# Əvvəl ikisi də EYNİ fazada idi (uzanma sonda, yığılma buraxılışda) və
+	# nəticə görünən qüsur verirdi: buraxılış anında gövdə bir kadrda GERİ
+	# sıçrayırdı (böyük mikrobda kadr başına −5.6 piksel). Sürünən heç bir şey
+	# geri sıçramır. İndi hər iki uc buraxılışda ÖNƏ gedir, ona görə sıçrayış
+	# irəlidir — sürünmənin özü elə odur.
+	# Qoruyucu: `SimTest._check_crawl` (geri sıçrayışı ayrıca yoxlayır).
+	var thrown := (1.0 - _reach_out) * _flow   # psevdopodiya nə qədər öndədir
+	var hauled := _reach_out * _flow           # arxa uc nə qədər dala dartılıb
+
+	var lead := r * CRAWL_REACH * thrown
+	var drag := r * CRAWL_DRAG * hauled
+	# Ümumi uzanma — həm gövdənin nazilməsini, həm dartılmasını sürür.
+	# Keçid anında hər ikisi kiçik olur və gövdə yumrulanır: siluetin
+	# "uzanır → yumrulanır → uzanır" dövrü elə buradan çıxır.
+	var spread := (lead + drag) / r
+	var rad := r * scale * (1.0 - CRAWL_SLIM * spread)
+	var pull := 1.0 + CRAWL_STRETCH * spread
+	var squash := 1.0 / pull
+	var side := Vector2(-axis.y, axis.x)
+	# Sitoplazmanın axını — atılan psevdopodiya əvvəlcə nazikdir, sonra dolur.
+	var mass := CRAWL_MASS * hauled
+
+	var head_c := axis * lead
+	# Arxa uc yerə basılmış nöqtəyə DOĞRU dartılır — istiqamət dünyadan gəlir,
+	# uzunluq isə gövdənin sərhədləri daxilində saxlanılır.
+	var tail_c := _tail_dir * drag
+	var head_r := rad * (CRAWL_HEAD + mass)
+	var body_r := rad * CRAWL_BODY
+	var tail_r := rad * (CRAWL_TAIL - mass)
+
+	# ---- disklərin birləşməsi ----
+	# Orta disk mərkəzdə olduğu üçün onun çıxış məsafəsi elə öz radiusudur;
+	# bu həm də mərkəzin HƏMİŞƏ gövdənin içində qalmasına zəmanət verir, yəni
+	# kontur bucaq sırası ilə çəkilə bilir.
+	var rays := PackedFloat32Array()
+	rays.resize(CRAWL_POINTS)
+	for i in CRAWL_POINTS:
+		var dir := Vector2.from_angle(TAU * float(i) / float(CRAWL_POINTS))
+		rays[i] = maxf(body_r, maxf(_reach(dir, head_c, head_r),
+			_reach(dir, tail_c, tail_r)))
+	# İki dairənin kəsişməsi kəskin künc verir, canlı hüceyrədə isə belə künc
+	# olmur — tikiş hamarlanır.
+	rays = _smooth_ring(rays, CRAWL_SMOOTH)
+
+	# ---- kənarın öz həyatı ----
+	# Perimetr dalğasının ORTA dəyəri fazadan asılıdır və çıxarılmasa gövdə
+	# dövr boyu bütövlükdə şişib-büzülür. Aşağıdakı ifadə həmin ortanın dəqiq
+	# həllidir: (1/PI)·∫₀^PI sin(u·k + p) du = [cos(p) − cos(PI·k + p)] / (PI·k)
+	var phase := _crawl_t * TAU * 1.4
+	var flow := CRAWL_FLOW_DEPTH * (0.35 + 0.65 * rush)
+	var flow_mean := (cos(phase) - cos(PI * CRAWL_WAVES + phase)) / (PI * CRAWL_WAVES)
+
+	var pts := PackedVector2Array()
+	pts.resize(CRAWL_POINTS)
+	for i in CRAWL_POINTS:
+		var a := TAU * float(i) / float(CRAWL_POINTS)
+		# Ləçəklər — kənar heç vaxt tam dairə olmur, amöb dayananda da canlıdır.
+		var m := 1.0 \
+			+ CRAWL_LOBE * sin(a * 3.0 + _crawl_t * 4.7) \
+			+ CRAWL_LOBE * 0.20 * sin(a * 5.0 - _crawl_t * 3.1)
+
+		# Kənar boyunca ARXADAN ÖNƏ qaçan dalğa. `u` ön uca qədər olan bucaq
+		# məsafəsidir (0 öndə, PI arxada); faza artdıqca dalğa kiçilən `u`-ya,
+		# yəni önə sürüşür. Dalğa YANLARDA ən güclüdür (`sin u`), uclarda isə
+		# sönür — orada disklərin hərəkəti onsuz da işləyir və dalğa onunla
+		# toqquşub kənarda diş açırdı.
+		var u := absf(wrapf(a - heading, -PI, PI))
+		m += flow * (0.30 + 0.70 * sin(u)) * (sin(u * CRAWL_WAVES + phase) - flow_mean)
+
+		# Nişan tərəfindəki daimi ayaqcıq. Dar saxlanılır (dördüncü dərəcə):
+		# geniş olsa sürünmə deformasiyası ilə qarışar və istiqamət itər.
+		var t := maxf(cos(a - aim), 0.0)
+		m += CRAWL_AIM_BULGE * t * t * t * t
+
+		var v := Vector2.from_angle(a) * (rays[i] * m)
+		# Ox boyunca dartılır, ona dik istiqamətdə yastılaşır — sahə qorunur.
+		pts[i] = axis * (v.dot(axis) * pull) + side * (v.dot(side) * squash)
+
+	# Kök sabitlənir: forma dəyişməyə davam edir, kütlə mərkəzi isə node-un
+	# üstündə qalır (bax [constant CRAWL_ANCHOR]).
+	var drift := _ring_centre(pts) * CRAWL_ANCHOR
+	for i in CRAWL_POINTS:
+		pts[i] -= drift
+	return pts
+
+
+## Çoxbucaqlının kütlə mərkəzi — bərabər sıxlıqlı lövhə kimi.
+## Nöqtələrin sadə ortası YARAMAZ: o, nöqtə sıxlığından asılıdır, sahədən yox.
+static func _ring_centre(pts: PackedVector2Array) -> Vector2:
+	var twice_area := 0.0
+	var acc := Vector2.ZERO
+	for i in pts.size():
+		var a := pts[i]
+		var b := pts[(i + 1) % pts.size()]
+		var cross := a.x * b.y - b.x * a.y
+		twice_area += cross
+		acc += (a + b) * cross
+	if absf(twice_area) < 0.0001:
+		return Vector2.ZERO
+	return acc / (3.0 * twice_area)
+
+
+## Sıfır nöqtəsindən [param dir] boyunca gedən şüanın diskdən ÇIXMA məsafəsi.
+## Şüa diski kəsmirsə 0 — belə halda bu disk birləşmədə söz demir.
+static func _reach(dir: Vector2, centre: Vector2, radius: float) -> float:
+	var b := dir.dot(centre)
+	var h := radius * radius - (centre.length_squared() - b * b)
+	return b + sqrt(h) if h > 0.0 else 0.0
+
+
+## Halqa boyunca radiusları hamarlayır — dövri, [0.25 0.5 0.25] nüvəsi ilə.
+static func _smooth_ring(rays: PackedFloat32Array, passes: int) -> PackedFloat32Array:
+	var n := rays.size()
+	var src := rays
+	for _p in passes:
+		var out := PackedFloat32Array()
+		out.resize(n)
+		for i in n:
+			out[i] = src[(i - 1 + n) % n] * 0.25 + src[i] * 0.5 + src[(i + 1) % n] * 0.25
+		src = out
+	return src
 
 
 ## Titrəyən membran konturu.
@@ -626,21 +1287,60 @@ func _draw_inner_balls(r: float) -> void:
 	var n := clampi(balls, 0, 40)
 	if n <= 0:
 		return
-	var inner := r * 0.66
-	var dot := clampf(inner / sqrt(float(n)) * 0.72, 2.2, 7.0)
+	# Amöbin orqanellaları ulduz formasındadır (referans şəkli). Yalnız say
+	# az olanda: çoxaldıqca nöqtələr xırdalanır, ulduzun uçları onsuz da
+	# görünmür, hər biri isə ayrıca çəkiliş çağırışı olardı.
+	#
+	# Onlar həm də TÜND İÇ QATIN içində qalmalıdır ([constant CRAWL_CORE]):
+	# jel zolağının üstünə düşən ulduz "içindəki top" oxunuşunu itirir.
+	# Digər növlərdə belə bir sərhəd yoxdur — orada gövdə tək qatdır.
+	var starry := species == Const.Species.AMOEBA and n <= STAR_MAX
+	var inner := (r * CRAWL_CORE) if species == Const.Species.AMOEBA else (r * 0.66)
+	# Ulduz eyni "radiusda" dairədən enli görünür (uclar kənara çıxır), ona
+	# görə daha seyrək yığılır — yoxsa qonşu uclar bir-birinə keçib ağ ləkəyə
+	# dönür və topları saymaq mümkün olmur.
+	var dot := clampf(inner / sqrt(float(n)) * (0.50 if starry else 0.72), 2.0, 7.0)
 
 	# İşıq nöqtəsi yalnız top kifayət qədər böyükdürsə çəkilir: kiçik topda
 	# onsuz da görünmür, çəkiliş çağırışını isə iki dəfə artırır.
 	var lit := dot >= 4.0
+	# Ulduzlar İKİ tonda növbələşir (referansda çəhrayı və sarı orqanellalar).
+	# Tək tonda çəkiləndə iç bir ovuc eyni ləkəyə dönür; iki ton isə sayı
+	# gözlə saymağı asanlaşdırır — say oyunun əsas göstəricisidir.
+	var tint := _base.lerp(Palette.TEXT, 0.25)
+	# Toplar daxili axınla birlikdə sürüşür. Amöbdə sürüşmə TAM götürülür:
+	# orada gövdənin özü önə uzanır, yəni görünən için mərkəzi də irəli
+	# sürüşür. Yarısı götürüləndə ulduzlar arxada qalıb tünd qatın kənarından
+	# çıxırdı — parlaq zolağın üstündəki ulduz "içindəki top" oxunmur.
+	var drift := 1.0 if species == Const.Species.AMOEBA else 0.6
 	for i in n:
 		var a := float(i) * 2.39996 + _t * 0.35
 		var d := inner * sqrt((float(i) + 0.5) / float(n))
 		var jitter := Vector2.from_angle(_t * 1.8 + float(i)) * (dot * 0.18)
 		# Toplar da daxili kölgə ilə birlikdə sürüşür — bütün daxili maye
 		# bir yerdə axır.
-		var p := Vector2.from_angle(a) * d + jitter + _core * 0.6
+		var p := Vector2.from_angle(a) * d + jitter + _core * drift
+		if starry:
+			# Tünd kontur ulduzun BÖYÜDÜLMÜŞ nüsxəsi ilə verilir, xətlə yox:
+			# dolğun forma kənar yumşaltmadan da təmiz çıxır və çəkiliş
+			# çağırışı baxımından xətdən ucuzdur.
+			draw_colored_polygon(_star(p, dot * 1.58, a), Palette.OUTLINE)
+			draw_colored_polygon(_star(p, dot * 1.25, a), tint if i % 2 == 0 else _light)
+			continue
 		draw_circle(p, dot, Color(_light, 0.95))
 		if lit:
 			draw_circle(p - Vector2(dot * 0.3, dot * 0.3), dot * 0.35, Color(Palette.TEXT, 0.8))
+
+
+## Sivri uclu orqanella. Uc sayı tək deyil, CÜTDÜR (14 nöqtə = 7 uc) və
+## hər biri öz bucağından başlayır — eyni istiqamətə baxan ulduzlar sıra
+## kimi görünür, təsadüfi dönmüş olanlar isə canlı.
+func _star(centre: Vector2, size: float, turn: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in STAR_POINTS * 2:
+		var a := turn + PI * float(i) / float(STAR_POINTS)
+		var rr := size if i % 2 == 0 else size * STAR_INNER
+		pts.push_back(centre + Vector2.from_angle(a) * rr)
+	return pts
 
 

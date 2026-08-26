@@ -40,7 +40,8 @@ nəticə fasiləsiz xışıltı olardı. Ona görə səslər üç səviyyəyə b
 
 | Fayl | Müddət | Pik | Nədir |
 |---|---|---|---|
-| `eject.wav` | 105 ms | −6.5 dB | Membrandan bir top çıxır — qısa "püf" |
+| `eject.wav` | 105 ms | −6.5 dB | Təzyiq — mikrob topu içindən sıxır, qısa "püf" |
+| `blunk.wav` | 115 ms | −7.0 dB | Top pərdəni **yarıb çıxdı** — enən "blunk" |
 | `absorb.wav` | 90 ms | −8.0 dB | Qida udulur — qalxan "blup" |
 | `hit.wav` | 145 ms | −4.5 dB | Top rəqibin içinə keçdi — yaş "çırt" |
 | `burst.wav` | 700 ms | −1.5 dB | **Mikrob öldü** — qopma + cırılma + alt gurultu + damcılar |
@@ -55,6 +56,17 @@ nəticə fasiləsiz xışıltı olardı. Ona görə səslər üç səviyyəyə b
 ---
 
 ## 3. Tezlik sahələri — niyə belədir
+
+**`eject` və `blunk` bir cütdür, bir səs deyil.**
+
+Atəş İKİ hadisədir və oyunçu ikisini də eşitməlidir: mikrob topu sıxır
+(`eject`, atəş anında), sonra top pərdəni yarıb çıxır (`blunk`). Aradakı
+gecikmə uydurma deyil — topun mərkəzdən membrana qədər getdiyi əsl vaxtdır
+(`radius / SHOT_SPEED`): kiçik mikrobda 67 ms, ən böyüyündə 204 ms. Ona görə
+böyük mikrobun atəşi "ağır" eşidilir, kiçikdə isə iki səs demək olar birləşir.
+
+Vaxtı `Arena` yox, görüntü node-u bilir: `GermVisual` pərdəni yardığı kadrda
+`broke_through` siqnalını göndərir, səs ona bağlanır.
 
 **`eject` və `hit` qəsdən ayrı sahələrdədir.**
 

@@ -127,7 +127,6 @@ const SHOT_RADIUS := 9.0
 const SHOT_LIFETIME := 2.2       ## × sürət ≈ 920 px məsafə (ekran eninin 1.5 misli)
 const SHOT_BOUNCES := 2         ## Divardan/maneədən neçə dəfə sıçraya bilər
 const SHOT_RECOIL := 90.0       ## Top atanda mikrobun geri təpməsi (sürətə nisbətdə hiss olunur)
-const MUZZLE_GAP := 6.0         ## Top membrandan bu qədər kənarda doğulur
 
 # ---------- Qida ----------
 const FOOD_RADIUS := 10.0
@@ -144,7 +143,9 @@ enum EvKind { FIRE = 0, ABSORB = 1, HIT = 2, BURST = 3 }
 ## (bax [GermVisual]). Buna baxmayaraq [Sim]-də saxlanılır, çünki oyunçunun
 ## seçimidir və bütün client-lərə eyni çatmalıdır: hər kəs eyni mikrobu eyni
 ## növdə görməlidir.
-enum Species { CILIATE = 0, HELIOZOAN = 1 }
+enum Species { CILIATE = 0, HELIOZOAN = 1, AMOEBA = 2 }
+## Növ snapshot-da neçə bit tutur — [enum GFlag] bunu istifadə edir.
+const SPECIES_COUNT := 3
 
 
 ## Xam ədədi növə çevirir; tanınmayan hər şey kirpikliyə düşür.
@@ -156,7 +157,9 @@ enum Species { CILIATE = 0, HELIOZOAN = 1 }
 ## əl ilə redaktə oluna bilər. Çevirmə bir yerdə olanda "yad dəyər gələndə
 ## nə olur" sualının bir cavabı olur.
 static func species_from(value: int) -> Species:
-	return Species.HELIOZOAN if value == int(Species.HELIOZOAN) else Species.CILIATE
+	if value < 0 or value >= SPECIES_COUNT:
+		return Species.CILIATE
+	return value as Species
 
 # ---------- Snapshot sahə indeksləri ----------
 ## Snapshot Dictionary yox, Array-dir — 30 Hz-də hər bayt sayılır.
@@ -172,7 +175,13 @@ enum GF { ID, NAME, COLOR, X, Y, VX, VY, AIM, BALLS, CAP, FLAGS, ACK, CD }
 ## 30 dəfə gedir və Variant massivində hər ədəd 9 bayt tutur. Toxunulmazlıq
 ## onsuz da 0/1 idi, yəni sahənin qalan bitləri boş yatırdı — növ oraya
 ## girir və şəbəkəyə SIFIR bayt əlavə olunur.
-enum GFlag { SAFE = 1, HELIOZOAN = 2 }
+##
+##   bit 0      → doğuş qalxanı
+##   bit 1-2    → növün nömrəsi (0..3)
+##
+## Növə İKİ bit ayrılıb, biri yox: üçüncü növ (amöb) əlavə olunanda bir bit
+## çatmadı. İki bit dördüncü növə də yer saxlayır.
+enum GFlag { SAFE = 1, SPECIES_SHIFT = 1, SPECIES_MASK = 6 }
 enum SF { ID, COLOR, X, Y, DX, DY }
 enum EF { KIND, X, Y, ARG, COLOR }
 ## Liderlər cədvəlinin bir sətri.

@@ -13,7 +13,7 @@ extends Node
 const POOL_SIZE := 14
 
 const CLIPS := [
-	"eject", "absorb", "hit", "burst", "spawn",
+	"eject", "blunk", "absorb", "hit", "burst", "spawn",
 	"danger", "level_up", "you_burst", "ui_click",
 ]
 

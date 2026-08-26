@@ -361,7 +361,20 @@ func _fire(g: GermState) -> void:
 	_next_shot_id += 1
 	s.owner_id = g.id
 	s.color = g.color
-	s.pos = g.pos + dir * (g.radius() + Const.SHOT_RADIUS + Const.MUZZLE_GAP)
+	# Top mikrobun İÇİNDƏN doğulur və membranı yararaq çıxır.
+	#
+	# Əvvəl membranın kənarında, bir neçə piksel ARALIDA
+	# doğulurdu — top mikrobun yanında birdən peyda olurdu, sanki kənardan
+	# atılmışdı. Halbuki oyunun qaydası budur ki, mikrob öz içindəki topu atır
+	# (bax README, "Oyunun qaydası"), ona görə top orada da başlamalıdır.
+	#
+	# Görüntü qatı bunu pulsuz düzgün çəkir: toplar mikroblardan ƏVVƏLKİ
+	# qatdadır ([method Arena._build_world]), yəni gövdənin içindəki top
+	# görünmür və membrandan keçəndə üzə çıxır.
+	#
+	# Toqquşmaya təsiri yoxdur: [method _step_shots] atıcının özünü onsuz da
+	# keçir, başqa mikroblar isə bir-birinin içinə girə bilmir ([method _separate_germs]).
+	s.pos = g.pos
 	s.dir = dir
 	s.life = Const.SHOT_LIFETIME
 	shots.append(s)
@@ -373,7 +386,14 @@ func _fire(g: GermState) -> void:
 	# Atəş açan toxunulmazlığını itirir — doğuş qorunması hücum qalxanı deyil.
 	g.safe_t = 0.0
 
-	events.append({"t": "fire", "pos": s.pos, "arg": g.aim, "color": g.color})
+	# Qığılcım topun doğulduğu yerdə YOX, membranı yardığı yerdə çıxır —
+	# mərkəzdə çəkilsə gövdənin altında qalıb heç görünməzdi.
+	events.append({
+		"t": "fire",
+		"pos": g.pos + dir * g.radius(),
+		"arg": g.aim,
+		"color": g.color,
+	})
 
 
 func _step_shots(dt: float) -> void:

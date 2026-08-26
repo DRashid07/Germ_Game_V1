@@ -27,6 +27,7 @@ Mikrobun içindəki top sayı həm **sursat**, həm **candır**:
 | Hadisə | Nəticə |
 |---|---|
 | **Top atırsan** | səndə −1, dəydiyi rəqibdə **+2** (top içəridə bölünür) |
+| **Top haradan çıxır** | mikrobun **öz içindən** — membranı yararaq |
 | **Rəqibin sayı tutumu aşır** | rəqib **partlayır**, sən **+5 tutum** alırsan |
 | **Sənin sayın 2-dən aşağı düşür** | **acından partlayırsan** — heç kim hesab almır |
 | **Qida yeyirsən** | +1 (tutumun doludursa yemirsən) |
@@ -162,9 +163,10 @@ game/                    Godot layihəsi
       fire_button.gd     Top atma düyməsi (basılı saxlananda davamlı atəş)
       sfx.gd             Səs effektləri (autoload: Sfx)
     tools/
-      sim_test.gd        45 headless test
+      sim_test.gd        54 headless test
       auto_client.gd     Şəbəkə testi üçün insansız client
       screenshot.gd      Redaktorsuz ekran görüntüsü
+      species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       perf_probe.gd      Kadr vaxtı və çəkiliş çağırışı ölçmə
   assets/                SVG sprite-lar, UI, WAV səslər
   web/shell.html         Brauzer versiyasının HTML qabığı
@@ -193,9 +195,16 @@ GODOT --path game                 # oyunu işə sal (menyudan)
 ### Məşq rejimi — şəbəkəsiz, botlarla
 ```bash
 GODOT --path game -- --practice
+
+# Mikrob növünü seçərək (0 kirpikli · 1 ayaqlı · 2 amöb):
+GODOT --path game -- --practice --species 2
 ```
 Eyni `World` və `Sim` kodu yerli işləyir; fərq yalnız snapshot-ların şəbəkədən
 yox, yaddaşdan gəlməsidir. Server yatmış olsa da oyun oynanır.
+
+`--species` menyunu keçdiyimiz üçün lazımdır: birbaşa dünyaya düşəndə
+`settings.cfg` oxunmur. `--shot` ilə birlikdə hər növün görüntüsünü
+redaktoru açmadan, təkrarlana bilən şəkildə yoxlamağa imkan verir.
 
 ### Serveri lokal qaldırmaq
 ```bash
@@ -207,7 +216,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (45 test)
+# Simulyasiya + World testləri (54 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -250,6 +259,20 @@ Masaüstü nəticəsi (RTX 5050): **~180 çəkiliş çağırışı (pik), 60 FPS
 GODOT --path game --resolution 720x1560 --max-fps 60 \
       -- --practice --shot C:/yol/kadr.png --shot-delay 500
 ```
+
+### Növün görüntüsü üzərində işləmək
+```bash
+GODOT --path game --resolution 720x900 --fixed-fps 60 \
+      -- --preview --preview-species 2 --preview-balls 6 \
+         --shot C:/yol/kadr.png --shot-delay 100
+```
+Oyunun içində mikrob 30 piksel radiusundadır — telefonda kifayətdir, forma
+üzərində işləyəndə isə heç nə seçilmir. Stend eyni [`GermVisual`]-i böyüdüb
+çəkir və mikrobu **həqiqi sürətlə** hərəkət etdirir: sürünmə, addım və kirpik
+dövrü sürətdən çıxdığı üçün dayanan mikroba baxmaq mənasızdır.
+
+`--fixed-fps` kadrı deterministik edir, yəni eyni `--shot-delay` həmişə eyni
+kadrı verir — dəyişikliyi əvvəl/sonra müqayisə etmək mümkün olur.
 
 ---
 
@@ -306,6 +329,16 @@ Client (60 FPS)                          Server (30 Hz, headless)
 2. **Simulyasiya bir dəfə yazılıb.** `sim.gd` həm serverdə, həm client proqnozunda işləyir.
 3. **Godot fizikası istifadə olunmur.** Prediction üçün simulyasiyanı geri sarıb yenidən
    oynatmaq lazımdır; fizika mühərriki bunu deterministik etmir.
+
+> **Öz topun gecikməli xəttdə çəkilmir.** Rəqiblər 100 ms geridə göstərilir, öz
+> mikrobun isə proqnozdan — yəni indi. Top da gecikməli xəttə salınsaydı (və
+> salınırdı), öz atdığın top mikrobunun 100 ms əvvəlki yerində doğulardı: top
+> 420 px/s getdiyinə görə bu, 42 piksel, mikrobun radiusundan (28 px) çox.
+> Ekranda görünən budur ki, top mikrobun **arxasında** peyda olur, gövdənin
+> içindən keçir və qabaqdan çıxır — sanki kənardan atılıb. Ona görə öz topun
+> atəş açılan andakı doğuş nöqtəsindən uçur və serverin sözünü gözləmir;
+> serverin xəttinə yalnız divardan sıçrayanda qayıdır, çünki sıçrayışı proqnoz
+> bilmir.
 
 ### Görüş sahəsi (area of interest)
 
@@ -428,12 +461,15 @@ UDP 27015 portu açıq olmalıdır.
 > Loqodakı "GERM ARENA" yazısı məhz buna görə SVG-də yox, Godot `Label`-ı ilə
 > çəkilir (`main_menu.gd → _make_logo`).
 
-Dünyada **iki mikrob növü** var və ikisi də tamamilə kodla çəkilir:
+Dünyada **üç mikrob növü** var və hamısı tamamilə kodla çəkilir:
 
 - **Kirpikli** — paramesium modeli. Kirpikləri metaxronal dalğa ilə döyünür,
   arxasında qamçı var, suda **üzür**.
 - **Ayaqlı** — "günəş heyvancığı". Şüa kimi çıxan aksopodiyaları növbə ilə
   yığılıb-uzanır, dibdə **yeriyir**; sitoplazması öndəki ayağa axır.
+- **Amöb** — hərəkət orqanı yoxdur, kənarın ÖZÜ hərəkət edir. İki qatlı gövdə
+  (jel qabıq + axıcı iç) önə uzanıb arxadan yığılır və sahəsini saxlayaraq
+  irəli axır — **sürünür**.
 
 Növü **menyudan sən seçirsən** (NÖV düyməsi). Seçim oyuna təsir etmir — iki
 mikrob eyni sürətlə gedir, eyni qaydalarla ölür — və şəbəkəyə bir bayt da

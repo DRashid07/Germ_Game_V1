@@ -112,10 +112,8 @@ func _add_bot() -> void:
 	# Çətinlik təsadüfidir: dünyada həm asan, həm təhlükəli mikroblar olsun.
 	var bot := Bot.new(bid, randf_range(0.7, 1.3))
 	_bots[bid] = bot
-	# Botların növü təsadüfidir ki, dünyada hər iki növ görünsün.
-	var species := Const.Species.CILIATE
-	if randi() % 2 == 1:
-		species = Const.Species.HELIOZOAN
+	# Botların növü təsadüfidir ki, dünyada hər üç növ görünsün.
+	var species := Const.species_from(randi() % Const.SPECIES_COUNT)
 	sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true, species)
 
 
@@ -242,11 +240,9 @@ func _build_frame() -> void:
 
 ## Mikrobun bayraqları bir ədəddə (bax [enum Const.GFlag]).
 static func _flags_of(g: Sim.GermState) -> int:
-	var f := 0
+	var f := (int(g.species) << Const.GFlag.SPECIES_SHIFT) & Const.GFlag.SPECIES_MASK
 	if g.safe_t > 0.0:
 		f |= Const.GFlag.SAFE
-	if g.species == Const.Species.HELIOZOAN:
-		f |= Const.GFlag.HELIOZOAN
 	return f
 
 

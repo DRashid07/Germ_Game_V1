@@ -16,6 +16,7 @@ const OUTPUT_DIR = path.resolve(__dirname, '..', 'audio');
 // çünki fasiləsiz atəşdə (saniyədə ~3 top) uzun səs bir-birinə qarışır.
 const SOUND_SPECS = [
   { file: 'eject.wav', duration: 0.105, limit: 0.130, strictLimit: true, peakDb: -6.5, create: createEject },
+  { file: 'blunk.wav', duration: 0.115, limit: 0.140, strictLimit: true, peakDb: -7.0, create: createBlunk },
   { file: 'absorb.wav', duration: 0.090, limit: 0.110, peakDb: -8.0, create: createAbsorb },
   { file: 'hit.wav', duration: 0.145, limit: 0.170, peakDb: -4.5, create: createHit },
   { file: 'burst.wav', duration: 0.700, limit: 0.780, peakDb: -1.5, create: createBurst },
@@ -230,6 +231,54 @@ function createEject(spec) {
   });
 
   return finishSound(sound, spec.peakDb, { drive: 1.15 });
+}
+
+// Topun membranı YARIB çıxdığı an — "blunk".
+//
+// `eject` təzyiqin özüdür və atəş anında səslənir; bu isə ondan bir qədər
+// SONRA, top divardan keçəndə çıxır (gecikmə radius / SHOT_SPEED — böyük
+// mikrobda 200 ms-ə çatır). İkisi birlikdə "sıxdı → çıxardı" cütü verir.
+//
+// Səsin özü qəsdən aşağıdır və tez enir: gərilmiş nazik pərdənin buraxılması
+// belə səslənir. Metal yoxdur — yalnız yaş pərdə və içindəki maye.
+function createBlunk(spec) {
+  const sound = blankSound(spec.duration);
+
+  // Pərdənin qopma çırtıltısı — çox qısa, yoxsa "cırılma" kimi eşidilir.
+  addFilteredNoise(sound, {
+    duration: 0.014,
+    amplitude: 0.30,
+    lowCut: 320,
+    highCut: 1900,
+    decayTime: 0.006,
+    seed: 0xb10c,
+  });
+
+  // Əsas "blunk": sürətlə enən ton. Enmə kəskindir (`glideCurve` yüksək),
+  // ona görə səs "bluu" yox, "blunk" oxunur.
+  addTone(sound, {
+    duration: 0.098,
+    frequencyStart: 610,
+    frequencyEnd: 112,
+    amplitude: 0.62,
+    attack: 0.003,
+    decayTime: 0.042,
+    glideCurve: 0.85,
+    harmonics: [[1, 1], [2, 0.18]],
+  });
+
+  // Gövdənin içindəki mayenin cavabı — bir az uzun, çox sakit.
+  addTone(sound, {
+    duration: 0.085,
+    frequencyStart: 168,
+    frequencyEnd: 88,
+    amplitude: 0.22,
+    decayTime: 0.055,
+    glideCurve: 0.5,
+    waveform: 'sine',
+  });
+
+  return finishSound(sound, spec.peakDb, { drive: 1.08 });
 }
 
 // Qida udmaq — qalxan "blup". Oyunçu ekrana baxmadan yediyini bilməlidir.

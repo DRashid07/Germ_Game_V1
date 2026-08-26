@@ -196,13 +196,11 @@ static func _make_button(text: String, primary: bool, on_press: Callable) -> But
 
 # ---------------------------------------------------------------- növ seçimi
 
-## İki növ arasında keçir. Yalnız GÖRÜNTÜ dəyişir — sürət, ölçü və ölüm
-## qaydaları hər ikisində eynidir, ona görə seçim balansa toxunmur və
+## Növlər arasında növbə ilə keçir. Yalnız GÖRÜNTÜ dəyişir — sürət, ölçü və
+## ölüm qaydaları hamısında eynidir, ona görə seçim balansa toxunmur və
 ## "hansı daha güclüdür" sualı yaranmır.
 func _toggle_species() -> void:
-	Net.species = Const.Species.CILIATE \
-		if Net.species == Const.Species.HELIOZOAN \
-		else Const.Species.HELIOZOAN
+	Net.species = Const.species_from((int(Net.species) + 1) % Const.SPECIES_COUNT)
 	_species_btn.text = _species_text()
 	_save_settings()
 
@@ -210,9 +208,13 @@ func _toggle_species() -> void:
 ## Düymənin mətni. Növün adı ilə yanaşı NƏ ETDİYİ də yazılır — oyunçu
 ## seçməzdən əvvəl fərqi bilməlidir.
 static func _species_text() -> String:
-	if Net.species == Const.Species.HELIOZOAN:
-		return "NÖV: AYAQLI — dibdə yeriyir"
-	return "NÖV: KİRPİKLİ — suda üzür"
+	match Net.species:
+		Const.Species.HELIOZOAN:
+			return "NÖV: AYAQLI — dibdə yeriyir"
+		Const.Species.AMOEBA:
+			return "NÖV: AMÖB — sürünərək gedir"
+		_:
+			return "NÖV: KİRPİKLİ — suda üzür"
 
 
 # ---------------------------------------------------------------- axın

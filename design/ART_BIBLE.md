@@ -70,13 +70,68 @@ Dünyada **üç növ** var. Hamısı eyni gövdəni bölüşür; fərq yalnız
 Daxili axının istiqaməti hər üçündə fərqlidir: biri sürüklənir, biri özünü
 çəkir, biri isə axaraq gedir. Ən incə, amma növləri ən güclü ayıran işarə budur.
 
-> **Növ oyuna təsir etmir.** Üç mikrob eyni sürətlə gedir, eyni radiusa
-> malikdir, eyni qaydalarla ölür. Fərq yalnız gözdədir.
+> **Növ oyuna TƏSİR EDİR — amma güc fərqi kimi yox.** Hər növün mühitlə
+> münasibəti başqadır və hər birinin öz **superi** var (bax §2b). Toxunulmaz
+> qalan yalnız **döyüş riyaziyyatıdır**: atəş dövrü, topun qiyməti və tutum
+> artımı üç növdə də eynidir. Bunu sənəd yox, `sim_test` saxlayır — "bir növü
+> bir az güclü etmək" ən asan səhvdir və oyunçunu menyuda "hansı daha
+> güclüdür" sualına məcbur edər.
+
+### 2b. Növün özəlliyi və superi
+
+Növ artıq yalnız görüntü deyil. Fikir bir cümlədədir: **hər növün mühitlə
+münasibəti başqadır** — biri suda üzür (su onu həm daşıyır, həm aparır), biri
+dibdə yeriyir (yerə yapışır), biri sürünür (divarlar onu saxlamır). Bu, həm də
+üç orqanizmin əsl ekologiyasıdır.
+
+**Passiv** — həmişə işləyir. Sabitlər: [`Const.SPECIES_THRUST`](../game/scripts/shared/constants.gd) və qonşuları.
+
+| | Passiv | Qiyməti |
+|---|---|---|
+| **Kirpikli** | tez sürətlənir, buraxanda sürüşür (×1.35 / ×0.85) | axın və cərəyan deşiyi onu ×1.15 gücü ilə aparır |
+| **Ayaqlı** | axına dirənir (×0.55) — deşiyin yanından keçən yeganə növ | ən yavaş (×0.95), qovmaqda da, qaçmaqda da sonuncu |
+| **Amöb** | maneə radiusu ×0.78 — dar aralıqdan keçir | ağır qopur (×0.85); topa hədəf kimi ölçüsü **dəyişmir** |
+
+Sonuncu sətir vacibdir: kiçilən radius **yalnız maneələr üçündür**. Topa dəymə,
+kamera və membranın çəkilişi tam radiusla işləyir — bu, ərazi özəlliyidir,
+döyüş özəlliyi yox.
+
+**Super** — döyüşərək dolur, düymə ilə işə düşür (Brawl Stars quruluşu).
+Doluluq: dəymə +3, qida +1/3 top, sənə dəyəndə +1, partlatma tam doldurur.
+Hədd 15-dir — dörd bitə sığdığı üçün.
+
+| | Super | Nə edir | Qiyməti |
+|---|---|---|---|
+| **Kirpikli** | **TRİXOSİST** | r×3.5 zolağındakı rəqib topları dağılıb **qidaya** çevrilir, mikroblar itələnir, özü geri sıçrayır | −2 top; dağılan toplar yerdə qalır və rəqib onları geri yeyə bilər |
+| **Ayaqlı** | **AKSOPODİYA TORU** | 4 saniyə: r×4 zolağındakı qida ona axır, tora düşən rəqib 40% yavaşlayır | dolu ikən açsa **öz superi onu partladır** |
+| **Amöb** | **SİSTLƏŞMƏ** | 2.5 saniyə: top **səkir**, metabolizm dayanır | tam hərəkətsiz — nə qaçır, nə atır, nə yeyir |
+
+Üçü də real biologiyadandır: paramesium yırtıcı toxunanda trixosistlərini
+partladıb geri üzür (bu qabiliyyəti olmayan mutantlar 9–45 dəfə tez yeyilir);
+heliozoanın aksopodiyalarındakı *kinetosistlər* yemi şüaya yapışdırır; amöb
+şərait pisləşəndə sistləşib mübadiləsini dayandırır.
+
+> **Heç bir super rəqibin TOP SAYINA toxunmur.** Bu oyunda "zərər" yoxdur —
+> top var, və o həm sursat, həm candır. Zərər verən super `SHOT_PAYLOAD`
+> riyaziyyatını yan yoldan pozardı, ona görə üçü də **mövqe, qida və vaxt**
+> üzərində işləyir.
+
+**Çəkiliş.** Sist gövdənin öz konturunu təkrarlamır: üstünə düzgün, sərt bir
+halqa oturur və rəng tündləşir — oyunçu bir baxışda "bura top girmir"
+deməlidir, forma oxumağa vaxt sərf etməməlidir. Tor isə öz **sərhədini** çəkir:
+görünməyən sahə ədalətsiz olardı, rəqib hara girməli olmadığını görməlidir.
+
+**Düymə** [`SuperButton`](../game/scripts/client/super_button.gd)-dadır: atəş
+düyməsinin üstündə, ondan kiçik. Atəş saniyədə basılır, super 20–30 saniyədən
+bir — böyük və əlaltı olan tez-tez basılan olmalıdır. Üç vəziyyət göstərir:
+sönük halqa, dolan qövs, yanıb-sönən dolu halqa (oyunçunun öz rəngində).
 
 ### Növü oyunçu seçir
 
-Menyudakı **NÖV** düyməsi növlər arasında növbə ilə keçir; seçim `settings.cfg`-də
-saxlanılır və dünyaya girərkən bir dəfə serverə göndərilir. Botların növü
+Menyuda üç **kart** yan-yanadır və hər birində növün silueti var; seçim
+`settings.cfg`-də saxlanılır və dünyaya girərkən bir dəfə serverə göndərilir.
+Kartın altında superin adı yazılır — seçim məna daşıdığına görə oyunçu nə
+seçdiyini bilməlidir. Botların növü
 təsadüfidir, ona görə dünyada hər üçü görünür.
 
 Seçim şəbəkəyə **bir bayt da** əlavə etmir. Səbəb: növ ayrıca sahə kimi yox,
@@ -86,6 +141,8 @@ toxunulmazlıq bayrağının **boş bitinə** yerləşdirilib.
 |---|---|
 | 0 | doğuş qalxanı aktivdir |
 | 1–2 | növün nömrəsi (0..3) |
+| 3–6 | superin doluluğu (0..15) |
+| 7 | super indi işləyir |
 
 Həmin sahə əvvəl yalnız 0/1 daşıyırdı, yəni qalan bitləri boş yatırdı. Sətir
 hər mikrob üçün saniyədə 30 dəfə gedir və Variant massivində hər ədəd 9 bayt
@@ -129,8 +186,13 @@ ardıcıllığı bunu edə bilməzdi.
    *gərginlik* budur. Üstəlik sürətə görə **dartılır**: getdiyi ox boyunca
    16%-ə qədər uzanır, ona dik istiqamətdə isə eyni əmsalla yastılaşır
    (həcm qorunur — maye içindəki cismin forması belədir).
-4. **Psevdopodiya** — nişan istiqamətindəki kiçik çıxıntı: mikrobun hansı tərəfə
-   atacağını göstərir.
+4. **Nişan çıxıntısı** — mikrobun hansı tərəfə atacağını göstərir. **Siluetin
+   ÖZ qabarığıdır**, kənarda ayrıca düymə deyil: əvvəl kirpikli və ayaqlıda
+   membrandan bir az kənarda parlaq bir dairə çəkilirdi və o, "atılmış top
+   gövdənin kənarında ilişib" kimi oxunurdu (amöbdə eyni səbəbdən artıq
+   çıxarılmışdı). Yalnız **yumşaq** gövdələrdə var — kirpikli və amöb;
+   **ayaqlıda yoxdur**, çünki mineral skelet uzana bilməz. Orada istiqaməti
+   yalnız atəş anındakı dartılma göstərir.
 5. **Kirpiklər (cilia)** — YALNIZ kirpiklidə. Perimetr boyu döyünən tüklər.
    **Metaxronal dalğa** ilə hərəkət edir: qonşu kirpiyin fazası bir az geridədir,
    ona görə halqa boyunca dalğa qaçır. Hamısı eyni anda döysəydi nəticə
@@ -394,14 +456,95 @@ kök sakit, uclar işlək olmalıdır.
 | Siluetin en/boy nisbəti (uzananda) | 1.60 | **2.30** |
 | Sahənin dəyişməsi | 6.2% | 6.2% |
 
-### Hələ yoxdur: konus (enli baş, nazik quyruq)
+### Sahə artıq TƏXMİN edilmir, dəqiq oturdulur
 
-Həqiqi amöbin ön ucu enli (lamellipodium), arxa ucu nazikdir (uropod). Bizim
-gövdədə ön və arxa en **bərabərdir** (20 / 20 px). Disklərin radiuslarını
-dəyişməklə sınandı — siluet yaxşılaşdı, amma sahənin qorunması pozuldu
-(6% → 29%), ona görə geri qaytarıldı. `SimTest._check_crawl` bu boşluğu
-`[qeyd]` sətri ilə açıq saxlayır: uydurma hədd qoyub "keçdi" yazmaqdansa
-çatışmazlıq görünsün.
+Əvvəl sahə disklərin radiuslarını əl ilə kiçiltməklə (`CRAWL_SLIM`) təxmin
+edilirdi. Nəticə: siluetə toxunan hər addım sahəni pozurdu — konus cəhdi məhz
+buna görə geri qaytarılmışdı (6% → 29%).
+
+İndi çoxbucaqlı öz mərkəzi ətrafında bir dəfə miqyaslanır və hədəf sahəyə
+**dəqiq** oturur (`CRAWL_AREA`). Ölçü: **6.2% → 0.0%**. Bu, disklərin
+ölçülərini sərbəst buraxır: hüceyrə həcmini saxlayır, siluet isə istənilən
+ola bilər.
+
+### Konus: enli baş, nazik quyruq
+
+Həqiqi amöbin ön ucu enli (lamellipodium), arxa ucu nazikdir (uropod).
+Uzun müddət bizim gövdədə ön və arxa en demək olar bərabər idi (18 / 17 px).
+İndi nisbət **1.39-1.42**-dir, ən enli kəsik isə mərkəzdən **6-8% öndədir**.
+
+Bura gedən yol üç səhv cəhddən keçir və hər üçü məntiqli görünür — ona görə
+yazılıb:
+
+| Cəhd | Nəticə | Səbəb |
+|---|---|---|
+| Disk radiusları (0.86/0.86 → 0.98/0.66) | −6% → −5%, **heç** | gövdə tək mərkəzdən şüalarla qurulur: en `rays[a]·sin a`-dır və maksimumunu həmişə mərkəzin yanında alır. Disklər yalnız UZUNLUĞA təsir edir |
+| Orta diski önə sürmək (45%-ə qədər) | −6% → −1% | eyni səbəb |
+| Şüaya `cos` əlavə etmək | 1.06 → 1.07, gücləndirəndə **pisləşdi** | `cos` maksimumunu burun ucunda alır, yəni burnu UZADIR; uzanan burun gövdəni daha da nazik göstərir |
+
+**İşləyən: `cos·sin²`** ([`GermVisual.CRAWL_CONE`](../game/scripts/client/germ_visual.gd)).
+Maksimumu `a` ≈ ±55°-dədir — yəni ön YANLARDA. Ön yanlar şişir, arxa yanlar
+yığılır, burun və quyruq UCLARI isə toxunulmaz qalır (ikisində də `sin`
+sıfırdır). Konusun tərifi elə budur: **en profili dəyişir, uzunluq yox.**
+
+Yuxarı hədd 0.65-dir: orada ön yanlar o qədər şişir ki, gövdə artıq uzana
+bilmir (en/boy 1.86) və sürünmə oxunmur. 0.45 seçilib.
+
+Konus **yalnız hərəkətdə** var. Dayanan amöbin qütbü yoxdur — real hüceyrə də
+dayananda polyarlığını itirir; həm də kamera öz mikrobunu mərkəzə mismarladığı
+üçün dayanan qeyri-simmetrik gövdə "yana yatıb" kimi oxunur.
+
+> Bunu mümkün edən şey sahənin dəqiq normallaşdırılmasıdır. Ondan əvvəl
+> siluetə toxunan hər cəhd sahənin qorunmasını pozurdu (6% → 29%) və geri
+> qaytarılırdı. Maneə aradan qalxandan sonra isə cəhd yenilənmədi —
+> boşluğun yeganə qeydi test çıxışındakı bir `[qeyd]` sətri idi, uğursuzluq
+> deyil, ona görə "108 keçdi, 0 uğursuz" yazısı onu tamamilə örtürdü. İndi
+> onun yerində dörd əsl yoxlama var.
+
+### Ölçü səhv olanda forma günahsızdır
+
+Konus üzərində işləyərkən ölçü **üç dəfə** yanlış nəticə verdi və hər dəfə
+"forma dəyişmir" dedi, halbuki forma dəyişirdi:
+
+1. **Zolağın ən enli yeri.** `max |y|` həmişə zolağın MƏRKƏZƏ ƏN YAXIN
+   kənarına düşür, ona görə ön və arxa ölçü hər ikisi gövdənin ortasını
+   göstərirdi.
+2. **Ümumi uzunluğun sabit faizində en.** Burun uzananda `half` böyüyür və
+   nümunə nöqtəsi burnun daralan yerinə sürüşür — konus GÜCLƏNDİKCƏ rəqəm
+   PİSLƏŞİRDİ.
+3. **Hər tərəfi öz uzunluğuna görə normallaşdırmaq.** Bu, ölçülmək istənən
+   asimmetriyanın özünü silirdi.
+
+Düzgün ölçü: şaquli xətti kəsən kənarları tapıb kəsişməni interpolyasiya
+etmək, ön və arxanı isə EYNİ MÜTLƏQ məsafədə müqayisə etmək.
+
+Dərs bundan ibarətdir: **rəqəm "dəyişmədi" deyəndə əvvəlcə rəqəmə şübhə et.**
+Bu formanın bir illik "alınmır" tarixçəsinin bir hissəsi elə buradan gəlir.
+
+### Altıncı dərs: problem ANİMASİYADA deyildi
+
+"Ayaqlarda da ilişir." Bu cümlə həlledici oldu: ayaqlar və sürünmə tamam ayrı
+kodlardır, ortaq nöqtələri yalnız **öz mikrobunun mövqeyidir**. Ölçüldükdə:
+
+```
+60 kadr çəkildi, öz mövqeyim yalnız 30 dəfə dəyişdi
+```
+
+Proqnoz server tick-i ilə addımlayır (`TICK_RATE = 30`), ekran isə 60 kadr
+çəkir. Kamera da həmin mövqeyə bağlıdır, ona görə nəticə yalnız mikrobun yox,
+**bütün dünyanın 30 Hz-lə pilləli sürüşməsi** idi. Rəqiblər bundan əziyyət
+çəkmirdi: onlar hər kadrda snapshot-lar arasında interpolyasiya olunur.
+
+> Yəni "botlarda düzgündür, mənimki ilişir" şikayətinin əsl səbəbi animasiya
+> deyil, **kadr sürəti uyğunsuzluğu** idi. Neçə raund forma və ritm
+> tənzimləndi, halbuki heç biri kömək edə bilməzdi.
+
+Həll: `Arena` tick-dən əvvəlki və sonrakı vəziyyəti saxlayır, çəkiliş isə
+aradakı nisbətə görə qarışdırılır (`_shown_pos`). Simulyasiya toxunulmaz qalır.
+Ölçü: **60 kadr → çəkilən mövqe 60 dəfə dəyişir.**
+
+Düzəliş yalnız HƏQİQİ mispredikt olanda sıçrayır (divar, geri təpmə): hər
+snapshot-da sıçratsaydıq, titrəmə geri qayıdardı.
 
 ### Geri sıçrayış qadağandır
 
@@ -437,10 +580,11 @@ arxada nazilir — çünki radius orada böyük, burada kiçikdir — və nətic
 > sürüşdürəndə çökək yerlərdə qonşu nöqtələr bir-birindən keçir, kontur özünü
 > kəsir və Godot çoxbucaqlını bölə bilmir — gövdə o kadrda yoxa çıxır.
 
-Amöbdə **kirpik, ayaq və kənarda heç bir çıxıntı yoxdur**. Nişan istiqaməti də
-ayrıca parlaq düymə ilə göstərilmir (digər iki növdə göstərilir): gövdənin öz
-silueti o tərəfə bir qabarıq verir. Kənarda çəkilən düymə gövdədən qopmuş ləkə
-kimi oxunurdu və istəmədən "ayaq" təsiri yaradırdı.
+Amöbdə **kirpik, ayaq və kənarda heç bir çıxıntı yoxdur**. Nişan istiqaməti
+gövdənin öz silueti ilə verilir — o tərəfə bir qabarıq düşür. Kənarda çəkilən
+parlaq düymə gövdədən qopmuş ləkə kimi oxunurdu və istəmədən "ayaq" təsiri
+yaradırdı; **sonradan həmin düymə qalan iki növdən də çıxarıldı** və eyni həll
+kirpikliyə verildi (bax §2, "Nişan çıxıntısı").
 
 Qatlar digər növlərdən **tam tutqun** çəkilir: şəffaf olanda ikisi bir-birini
 bulandırır və nəticə iki material yox, bir palçıq ləkəsi olur. Rəng fərqi də
@@ -461,12 +605,136 @@ qəsdən böyükdür — ikisi də əsas rəngə yaxın olanda gövdə tək rən
 | Amöb | yumrulanmış üçbucaq, qalın kontur, iki qat, çıxıntısız | formasız, kənarı ilə sürünür |
 | Qida | kiçik hamar top, parlaq nüvə | hərəkətsiz, "yem" |
 | Atılan top | eyni top + rəng + iz | qidadan RƏNGİ ilə ayrılır |
-| Maneə | böyük tünd ləkə, ləkəli səth | fon qatındandır, ön plana çıxmır |
+| Maneə | böyük dairə, DÖRD növdən biri (bax aşağı) | haşiyəsi qaydanı deyir |
 | Partlama | bulud + üç dalğa + damcılar + membran parçaları | maddə itmir, ətrafa yayılır |
 | Suda zərrəcik | qısa cizgi, axın istiqamətində | qab MAYE ilə doludur |
 
 Rəng korluğu üçün əsas ayırd etmə formadadır: qida HƏMİŞƏ kiçik və solğun-yaşıl,
 mikrob HƏMİŞƏ böyük və titrəyən, maneə HƏMİŞƏ hərəkətsiz və tünddür.
+
+---
+
+
+
+### Maneənin dörd növü, beş sprite-ı
+
+Dünyada 22-26 maneə var və əvvəl hamısı EYNİ şəkil idi. Dünya ekrandan ~4 dəfə
+enlidir, ona görə oyunçunun harada olduğunu ayırd edə biləcəyi heç bir
+oriyentir qalmırdı.
+
+| Növ | Sprite | Forma dili | Qayda |
+|---|---|---|---|
+| **SELİK** | `mucus_blob` · `mucus_bloom` | hamar / dənəvər, bütöv haşiyə | bloklayır |
+| **KÖVRƏK** | `mucus_crust` | **kəhrəba çatlar** — bucaqlı xətlər | topla sınır |
+| **KOL** | `mucus_bush` | **haşiyəsiz**, tüklü kənar, yaşıl | keçilir, gizlədir |
+| **CƏRƏYAN** | `mucus_vent` | **kəsik** haşiyə, kəhrəba, axın qövsləri | keçilir, itələyir |
+
+Beşinin də **xarici dairəsi eynidir** (r = 120) və bu, məcburidir: toqquşma
+həndəsəsi `Vector4(x, y, radius, kind)`-dır, yəni siluet dəyişsəydi oyunçu
+"hara dəyəcəyəm" sualında yanılardı.
+
+**Forma dili qaydanı deməlidir.** Keçilə bilən iki növ bərk növlərdən
+HAŞİYƏSİ ilə ayrılır: bərk maneənin konturu bütövdür, kolun konturu yoxdur
+(kənarı tükdür), cərəyanınkı isə kəsikdir. Oyunçu rəngə baxmadan, tək
+siluetlə "buradan keçə bilərəm" deyə bilməlidir — rəng korluğunda da işləyən
+yeganə kanal budur.
+
+Rəng ikinci kanaldır: qabın hər yeri soyuq firuzəyidir, kol **yaşıla**,
+kövrək qabığın ÇATLARI və cərəyan isə **kəhrəbaya** çalır. Kəhrəba onsuz da
+"diqqət" mənasını daşıyır (bax §1, `WARNING`).
+
+Çatların kəhrəba olması sonradan gəldi və ölçülə bilən səbəbi var: tünd
+çatlarla kövrək qabıq uzaqdan adi selik ləkəsindən SEÇİLMİRDİ. Forma dili
+işləyirdi (çatlar bucaqlıdır, ləkə hamardır), amma yalnız yaxından — oyunçu
+isə qərarı ekranın o biri başından verir.
+
+SELİK iki naxışa bölünür, çünki o, ən çox təkrarlanan növdür. Qalan üçünün
+TƏK şəkli var — onlar qaydadır, bəzək deyil, və qaydanın iki görkəmi
+olmamalıdır.
+
+Naxış maneənin MÖVQEYİNDƏN çıxır, təsadüfdən yox — eyni maneə hər açılışda
+eyni görünür, yəni xəritə yadda saxlanıla bilir.
+
+Bərk maneələrin altında kölgə var (aşağı 10 px, radiusun 1.03 misli): maneə
+döşəmənin İÇİNDƏ deyil, ÜSTÜNDƏ oturur. **Kolun və cərəyanın kölgəsi yoxdur** —
+kölgə "bu, döşəmənin üstündə duran cisimdir" deməkdir, onlar isə keçilə
+biləndir; kölgə qoysaydıq forma dili özü-özünü təkzib edərdi.
+
+> Rəng fərqi kodda `modulate` ilə verilmir — batch-i qırır və kadr vaxtını
+> altı dəfə pisləşdirir (ölçmə README-dədir). Fərq teksturaya bişirilir.
+
+### Gizlənməni oyunçu GÖRMƏLİDİR
+
+Kolda gizlənmək server tərəfdə görünməyən qaydadır: paket sadəcə
+göndərilmir. Oyunçunun ekranında isə heç nə dəyişmir — geribildirim olmasa
+xüsusiyyət praktiki olaraq YOXDUR, çünki oyunçu ondan istifadə etməyi ağlına
+gətirmir.
+
+Ona görə öz mikrobun kola girəndə **sönükləşir** (alfa 1.0 → 0.45). Mikrobun
+ÖZÜ dəyişir, yəni mesaj oyunçunun baxdığı yerdədir; HUD-dakı ikonu döyüş
+vaxtı heç kim görmür.
+
+---
+
+### 4b. Xəritənin dərinliyi
+
+Xəritə əvvəl yastı idi: düz rəngli döşəmə, bərabər şəbəkə, nazik halqalar və
+maneə şəkilləri. Maneələr döşəmənin **üstündə** yox, **üzərinə çəkilmiş** kimi
+oxunurdu. Dərinlik Brawl Stars üsulları ilə qazanılır — amma bir sərt
+məhdudiyyətlə.
+
+> **Siluet = toqquşma izi.** Brawl Stars obyekti toqquşma izindən yuxarı
+> qaldırır və kölgəni yerdə saxlayır. Bizdə bu QADAĞANDIR: amöbin dar keçidi
+> ([`Const.SPECIES_BODY`](../game/scripts/shared/constants.gd)) oyunçunun
+> aralığı dəqiq oxumasını tələb edir. Sprite qaldırılsa, amöb "keçirəm" deyib
+> görünməyən kənara dəyər. Dərinlik siluetin **içində** (kölgələmə) və
+> **çölündə** (təmas kölgəsi) qazanılır, sürüşdürmə ilə heç vaxt.
+>
+> Bu məhdudiyyət üsluba uyğundur: selik damcı kimi qabarmalıdır, kub kimi
+> qalxmamalı. Petri qabında düz künc yoxdur.
+
+**Vahid işıq.** Bütün xəritə üçün bir açar işıq: `L = (-0.35, -0.94)` —
+yuxarı-sol. Kölgə aşağı-sağa düşür.
+
+Maneələr artıq **fırladılmır**. Əvvəl hər ləkə `(o.x + o.y) * 0.01` radian
+fırladılırdı ki, eyni şəklin təkrarı bilinməsin — ölçü isə yüzlərlədir, yəni
+bucaq faktiki təsadüfi idi. Sprite-ın qradiyenti yuxarı-soldan işıqlanıb, ona
+görə fırlanma **işığı da fırladırdı**: 26 maneənin hər birində işıq başqa
+tərəfdən gəlirdi və qradiyent həcm yox, rəng ləkəsi kimi oxunurdu. Naxış
+variasiyası lazımdırsa, eyni istiqamətdə işıqlandırılmış ayrı sprite seçilir.
+
+**Kölgə sprite-a bişirilib**, kodda çəkilmir — səbəb ölçmədir (bax README,
+"Tələlər"). İki qat: yumşaq qat hündürlüyü, sıx kontakt halqası döşəməyə
+harada toxunduğunu deyir. Kölgə radiusla birlikdə miqyaslanır; əvvəl sabit
+10 piksel idi və 40 px-lik ləkə ilə 250 px-lik ləkə eyni kölgəni alırdı.
+
+**Kol iki qatdır.** Baza mikrobun altında, **frondlar üstündə**
+([`Arena._canopy`](../game/scripts/client/arena.gd)). Gizlənmə qaydası əvvəl
+yalnız serverdə mövcud idi — ekranda kolun içindəki mikrob kolun üstündə
+dayanırdı. İndi yarpaqlar onun üstündən keçir və "nəyinsə altındayam" izahsız
+oxunur. Üst sprite-ın **içi boşdur**: dolu qat gizlənəni tamamilə örtərdi.
+
+**Qabığın üç zədə vəziyyəti.** `BRITTLE_HP = 3` həmişə var idi, amma sprite heç
+vaxt dəyişmirdi — oyunçu neçə zərbə qaldığını bilmirdi. İndi zərbə sayı divar
+baytının boş bitlərində daşınır ([`DishMap.Wall`](../game/scripts/shared/dish_map.gd))
+və şəkil dəyişir: çatlar dərinləşir, kəhrəba genişlənir. Şəbəkəyə sıfır bayt.
+
+**Cərəyan deşiyi qabın mərkəzinə döndərilib.** Sprite "içəri sorulma"
+göstərirdi, qayda isə başqadır: `Sim._vent_push`-da `dir := (-c).normalized()`,
+yəni itələmə deşiyə yox, **qabın mərkəzinə** doğrudur. Rəsm qaydanı təkzib
+edirdi.
+
+**Su iki dərinlikdədir.** 110 zərrəcik `80 + 30` kimi bölünür: dərin qat sönük,
+nazik və yavaş; səth qatı parlaq və sürətli. Göz fərqi ölçmür — dərinlik kimi
+oxuyur ([`WaterMotes.depth`](../game/scripts/client/water_motes.gd)).
+
+**Döşəmə** tək qradiyent teksturasıdır (`dish_floor.svg`): mərkəz açıq, kənar
+qaranlığa düşür — qab əyri şüşədir. Şəbəkə kənara doğru sönür, məsafə halqaları
+isə nazik xətt yox, enli və qırıq sediment zolağıdır (nazik tam halqa döşəmənin
+üstünə çəkilmiş UI elementi kimi oxunurdu).
+
+**Şüşə divar** dörd hissədir: daxili menisk, gövdə, yuxarı-solda işıq qövsü,
+aşağı-sağda tünd dodaq. Simmetrik halqa həmişə yastı qalır.
 
 ---
 
@@ -556,6 +824,74 @@ deyil — snapshot-da hər bayt sayılır.
 
 ---
 
+## 6b. Menyu — yatay
+
+Oyun **yalnız yatay** oynanır (1280×720 baza). Menyu forma deyil, **vitrindir**:
+düzülüş Brawl Stars ana ekranının məntiqindən götürülüb, iqtisadiyyatı isə
+qəsdən götürülməyib.
+
+### Zonalar (1280×720)
+
+| | Yer | Ölçü | Nə edir |
+|---|---|---|---|
+| A | 34, 24 | 316×64 | Oyunçu nişanı: avatar + ad. Ad birbaşa yazılır, ayrıca ekran açılmır |
+| B | sağ 34, 24 | 64×64 + yazı | Server vəziyyəti və ayarlar. Server ünvanı dişlinin altındadır |
+| C | mərkəz `0.30w, 0.52h` | r = `0.40·min` | Petri qabı = podium. Mikrob 4.2× böyüdülüb və **canlıdır** |
+| D | sağ sütun | 560 en | Növün adı, izahı, üç kart |
+| E | sağ aşağı | 380×112 | Rejim lövhəsi + **OYNA** + MƏŞQ |
+| F | 34, aşağı | 600×72 | Oyunun qaydası iki sətirdə |
+
+Sağ sütun **aşağıya** bağlanıb, yuxarıya yox: OYNA baş barmağın çatdığı yerdə
+qalmalıdır, ekran nə qədər hündür olsa da.
+
+### Üç qayda
+
+1. **Mikrob canlıdır.** Menyu oyunun öz [`GermVisual`] kodunu işlədir və
+   mikrobu HƏQİQİ sürətlə hərəkət etdirir — ayrıca "menyu şəkli" saxlanmır,
+   ona görə menyu ilə oyun arasında görüntü kəsiyi ola bilməz. Mikrob ekranda
+   yerində dayanır, amma dünyada gedir: səhnə node-u eyni qədər geri sürüşür.
+2. **Ekranda BİR dolu laym ləkə var** — OYNA düyməsi. Qalan hər şey konturlu
+   və ya sönükdür, ona görə göz bir toxunuşluq yolu dərhal tapır. Düymənin
+   aşağı kənarındakı tünd "dodaq" qalınlıq verir: Brawl Stars bunu qara
+   konturla edir, bizim dil isə yumşaq və işıqlıdır, ona görə kontur əvəzinə
+   əsas rəngin tünd variantı işlədilir.
+3. **Basılan hər şey əzilir** (≈0.95 miqyas, 60 ms) və `ui_click` səsi verir.
+
+### Mağaza, valyuta və naviqasiya lenti YOXDUR
+
+Brawl Stars ana ekranının təxminən yarısı iqtisadiyyata gedir. Bizdə onun
+arxasında məhsul yoxdur, boş düymə isə heç bir düymədən pisdir — basılır, heç
+nə olmur, etibar itir.
+
+Amma **yerləri indidən ayrılıb**, ona görə bölmələr gələndə menyu yenidən
+dizayn olunmayacaq:
+
+| Gələcək bölmə | Yeri | İndi orada nə var |
+|---|---|---|
+| Valyuta nişanları | Yuxarı sağ, dişlinin solu | Server vəziyyəti (valyuta gələndə o, oyunçu nişanının ikinci sətrinə köçür) |
+| İrəliləyiş / səviyyə | Oyunçu nişanının içi | "adı dəyişmək üçün toxun" ipucu |
+| Naviqasiya lenti | Aşağı sol zolaq | Oyunun qaydası (o vaxt "necə oynanır" panelinə köçür) |
+
+Mikrob, növ kartları və OYNA — yəni ekranın ürəyi — heç bir halda yerini
+dəyişmir.
+
+### Tipoqrafiya
+
+| Rol | Şrift | Harada |
+|---|---|---|
+| Başlıq | **Baloo 2** 800 | Düymələr, növün adı, doluluq rəqəmi, mərkəzi mesajlar |
+| Mətn | **Nunito** 600 | Liderlər, izahlar, ad, ipucları |
+
+İkisi də yumru terminallıdır — üslubun *"heç bir metal, heç bir künc"* qaydasına
+oturur. Seçimin ikinci və daha sərt şərti: **Azərbaycan hərflərinin hamısı**
+(`Ç ç Ə ə Ğ ğ İ ı Ö ö Ş ş Ü ü`). Populyar oyun şriftlərinin çoxunda `Ə`/`ə`
+yoxdur və "MƏŞQ" sözü "M□ŞQ" çıxır — bax README, «Tələlər».
+
+Rollar [`assets/ui/theme.tres`](../game/assets/ui/theme.tres)-də bağlanıb;
+başlıq `Label`-a `theme_type_variation = "Heading"` ilə verilir.
+
+---
+
 ## 7. SVG qaydaları
 
 > ⚠️ **SVG-də `<text>` elementi işlətmə.** Godot SVG-ni ThorVG ilə rasterləşdirir,
@@ -586,6 +922,10 @@ Digər qaydalar:
 
 Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 
+> **Maneə sprite-larının kətanı 320²-dir, ləkənin radiusu isə yenə 120.** Aradakı
+> boşluq BİŞMİŞ KÖLGƏ üçündür (bax §4b). Kodda `scale = radius / 120` düsturu
+> kətan ölçüsündən asılı deyil, ona görə dəyişmir.
+
 | Fayl | Ölçü | Qeyd |
 |---|---|---|
 | `sprites/food_ball.svg` | 32² | Kodda `scale 0.85` |
@@ -599,7 +939,20 @@ Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 | `ui/button_secondary.svg` | 480×110 | Eyni, sönük variant |
 | `ui/panel.svg` | 480×300 | Nəticə lövhəsi üçün çərçivə |
 | `ui/logo.svg` | 600×220 | YALNIZ nişan, yazısız |
-| `ui/app_icon.svg` | 512² | `game/icon.svg` ilə eynidir |
+| `ui/app_icon.svg` | 512² | `game/icon.svg` ilə eynidir; menyuda oyunçu nişanının avatarıdır |
+| `sprites/dish_floor.svg` | 512² | Qabın döşəməsi — qradiyent, TƏK çağırış |
+| `sprites/mucus_crust2.svg` | 320² | Qabıq, 1 zərbə yeyib |
+| `sprites/mucus_crust3.svg` | 320² | Qabıq, 2 zərbə yeyib — kəhrəba HDR həddini keçir |
+| `sprites/mucus_bush_top.svg` | 320² | Kolun ÜST yarpaqları — mikrobun üstündən keçir |
+| `ui/gear.svg` | 32² | Ayarlar. Simvol (`⚙`) DEYİL — o, şriftdə yoxdur |
+| `ui/species_ciliate.svg` | 64² | Növ kartının silueti — yatıq oval + kirpik + qamçı |
+| `ui/species_heliozoan.svg` | 64² | Növ kartının silueti — radial şüalar |
+| `ui/species_amoeba.svg` | 64² | Növ kartının silueti — yumrulanmış üçbucaq |
+
+> Üç siluet **ağ** çəkilib və kartda `modulate` ilə boyanır: seçilən laym,
+> qalanları sönük. Formaları qəsdən bir-birindən uzaqdır — 36 pikseldə oxşar
+> iki nişan eyni ləkəyə dönür (ilk variantda kirpikli də radial idi və
+> ayaqlıdan seçilmirdi).
 
 Top atma düyməsi ([`fire_button.gd`](../game/scripts/client/fire_button.gd)) hazırda
 kodla çəkilir — oyunçunun rəngini və sursat vəziyyətini göstərməli olduğu üçün.

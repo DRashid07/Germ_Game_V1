@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <g transform="translate(32,32)">
+  <!-- KOLUN ÜST YARPAQLARI — mikrobun ÜSTÜNDƏN çəkilən qat.
+
+       Niyə ayrıca sprite: gizlənmə oyunun qaydasıdır, amma indiyə qədər
+       yalnız serverdə mövcud idi — ekranda kolun içindəki mikrob sadəcə
+       kolun ÜSTÜNDƏ dayanırdı. Dərinliyin ən güclü işarəsi isə örtülmədir:
+       mikrob nəyinsə ALTINDA görünəndə "gizlənirəm" hissi izahsız oxunur.
+
+       Ona görə kol iki qata bölünür: baza (mikrobun altında, adi maneə
+       qatında) və bu qat (mikrobun üstündə, `_canopy` node-unda).
+
+       İÇİ BOŞDUR və bu şərtdir: yalnız kənar frondlar çəkilir. Dolu qat
+       gizlənən mikrobu tamamilə örtərdi — qayda odur ki, mikrobun ən azı
+       75%-i oxunaqlı qalmalıdır, yoxsa oyunçu öz mikrobunu itirir.
+
+       Radius yenə 120: toqquşma həndəsəsi bütün növlərdə eynidir. -->
+  <g stroke="#4FBF8A" stroke-linecap="round" fill="none" opacity="0.62">
+    <!-- Uzun frondlar — kənardan içəri baxır, mərkəzə çatmır. -->
+    <g stroke-width="9">
+      <path d="M128 8 L128 62"/>
+      <path d="M198 30 L170 78"/>
+      <path d="M248 128 L194 128"/>
+      <path d="M226 198 L178 170"/>
+      <path d="M128 248 L128 194"/>
+      <path d="M58 226 L86 178"/>
+      <path d="M8 128 L62 128"/>
+      <path d="M30 58 L78 86"/>
+    </g>
+    <!-- Qısa aralıq frondlar — kənarın sıxlığı, mərkəz yenə boş qalır. -->
+    <g stroke-width="6" opacity="0.8">
+      <path d="M166 16 L152 58"/>
+      <path d="M240 90 L198 104"/>
+      <path d="M240 166 L198 152"/>
+      <path d="M166 240 L152 198"/>
+      <path d="M90 240 L104 198"/>
+      <path d="M16 166 L58 152"/>
+      <path d="M16 90 L58 104"/>
+      <path d="M90 16 L104 58"/>
+    </g>
+  </g>
+  <!-- Uc nöqtələri: fronda həcm verir, siluetin kənarını yumşaldır. -->
+  <g fill="#6FD9A4" opacity="0.45">
+    <circle cx="128" cy="10" r="5"/><circle cx="200" cy="28" r="4"/>
+    <circle cx="246" cy="128" r="5"/><circle cx="228" cy="200" r="4"/>
+    <circle cx="128" cy="246" r="5"/><circle cx="56" cy="228" r="4"/>
+    <circle cx="10" cy="128" r="5"/><circle cx="28" cy="56" r="4"/>
+  </g>
+  </g>
+</svg>

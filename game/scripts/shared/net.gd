@@ -17,6 +17,8 @@ signal server_disconnected()
 signal world_joined(info: Dictionary)
 signal join_rejected(reason: String)
 signal snapshot_arrived(data: Array)
+## Ad/rəng cədvəli gəldi (bax [method on_roster]).
+signal roster_arrived(table: Dictionary)
 signal you_burst(result: Dictionary)
 signal rejoin_failed()
 signal server_message(text: String)
@@ -27,6 +29,9 @@ var nickname := "Mikrob"
 ## Oyunçunun seçdiyi mikrob növü (bax [enum Const.Species]). Menyuda seçilir,
 ## dünyaya girərkən bir dəfə serverə göndərilir və oradan hamıya yayılır.
 var species := Const.Species.CILIATE
+
+## Menyuda seçilmiş rejim — dünyaya girərkən bir dəfə serverə göndərilir.
+var mode := Const.Mode.ENDLESS
 
 var _peer: MultiplayerPeer = null
 ## Serverdə lobby-ni saxlayır; client-də həmişə null.
@@ -110,6 +115,16 @@ func join_server(address: String, port: int = Const.DEFAULT_PORT) -> Error:
 	return OK
 
 
+## Növbədəki paketləri dərhal yola salır.
+##
+## Bağlantını bağlamazdan ƏVVƏL çağırılır: RPC növbədə qalıb peer bağlansa,
+## ENet paketi kanalsız peer-ə göndərməyə çalışır və xəta yazır.
+func flush() -> void:
+	var peer := multiplayer.multiplayer_peer
+	if peer is ENetMultiplayerPeer:
+		(peer as ENetMultiplayerPeer).host.flush()
+
+
 func disconnect_from_server() -> void:
 	if _peer != null:
 		_peer.close()
@@ -119,8 +134,24 @@ func disconnect_from_server() -> void:
 	is_server = false
 
 
+## Serverə qoşulmuşuq VƏ əl sıxışma bitib — yəni ona söz göndərmək olar.
+##
+## Yalnız nəqliyyat vəziyyətini soruşmaq AZDIR və bu, sükutla oyunu sındırır.
+## Godot hər oyuna standart olaraq [OfflineMultiplayerPeer] qoyur: heç bir
+## şəbəkə yoxdur, amma o, özünü "QOŞULU" elan edir və `get_unique_id()` 1
+## qaytarır — yəni "mən serverəm". Nəticədə:
+##
+##   • menyu hələ heç yerə qoşulmadan özünü "onlayn" sayır,
+##   • `Net.request_join.rpc_id(1, ...)` çağırışı ÖZÜMÜZƏ göndərilmiş sayılır
+##     və "RPC on yourself is not allowed" xətası ilə itir,
+##   • oyunçu OYNA basır, heç nə olmur.
+##
+## [member local_id] yalnız əl sıxışma bitəndə doldurulur
+## ([method _on_connected]) və bağlantı qopanda sıfırlanır — serverə söz
+## göndərməyin yeganə etibarlı şərti odur.
 func is_connected_to_server() -> bool:
-	return multiplayer.multiplayer_peer != null \
+	return local_id != 0 \
+		and multiplayer.multiplayer_peer != null \
 		and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
 
@@ -157,10 +188,10 @@ func _on_peer_disconnected(id: int) -> void:
 
 ## Dünyaya girmək. Növbə yoxdur — yer varsa oyunçu dərhal doğulur.
 @rpc("any_peer", "call_remote", "reliable")
-func request_join(player_name: String, species: int) -> void:
+func request_join(player_name: String, species: int, mode := 0) -> void:
 	if not is_server or lobby == null:
 		return
-	lobby.join(multiplayer.get_remote_sender_id(), player_name, species)
+	lobby.join(multiplayer.get_remote_sender_id(), player_name, species, mode)
 
 
 ## Bağlantı kəsildikdən sonra öz mikrobuna qayıtmaq. Nişan dünyaya girəndə
@@ -212,6 +243,16 @@ func on_snapshot(data: Array) -> void:
 	snapshot_arrived.emit(data)
 
 
+## Ad və rəng cədvəli: `{id: [ad, rəng]}`.
+##
+## ETİBARLI kanalla gedir və yalnız mikrobların dəsti dəyişəndə göndərilir.
+## Snapshot-dan fərqli olaraq bu itə bilməz: itsəydi, adsız mikroblar ekranda
+## qalardı və növbəti paket onu düzəltməzdi (cədvəl hər tick göndərilmir).
+@rpc("authority", "call_remote", "reliable")
+func on_roster(table: Dictionary) -> void:
+	roster_arrived.emit(table)
+
+
 ## Mikrobun partladı — oyun bitdi, nəticə ekranı göstərilir.
 @rpc("authority", "call_remote", "reliable")
 func on_burst(result: Dictionary) -> void:
@@ -227,3 +268,29 @@ func on_rejoin_failed() -> void:
 @rpc("authority", "call_remote", "reliable")
 func on_server_message(text: String) -> void:
 	server_message.emit(text)
+
+
+## "host:port" formatını ayırır; port yazılmayıbsa standart port işlədilir.
+## `ws://` və `wss://` ünvanları toxunulmadan ötürülür — porta orada URL özü qərar verir.
+##
+## Statikdir ki, testdən keçirilə bilsin: Railway ünvanı məhz buradan keçir və
+## səhv ayrılsa oyun ümumiyyətlə qoşula bilmir.
+##
+## Menyuda YOX, burada yaşayır: ünvanı hər menyu variantı oxuyur, menyular isə
+## dəyişir — köhnəsi silinəndə ayrışdırma onunla birlikdə getməməlidir.
+static func parse_address(raw_text: String) -> Array:
+	var raw := raw_text.strip_edges()
+	if raw.begins_with("ws://") or raw.begins_with("wss://"):
+		return [raw, 0]
+
+	var port := Const.DEFAULT_PORT
+	var host := raw
+	var colon := raw.rfind(":")
+	if colon > 0:
+		host = raw.substr(0, colon)
+		var tail := raw.substr(colon + 1)
+		if tail.is_valid_int():
+			port = int(tail)
+	if host.is_empty():
+		host = "127.0.0.1"
+	return [host, port]

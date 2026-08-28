@@ -1,12 +1,15 @@
 # Germ Arena
 
-Onlayn **io tipli** mikrob arenası. Mobil (Android) üçün, portret ekranda.
+Onlayn **io tipli** mikrob arenası. Mobil (Android) üçün, **yatay** ekranda.
 10 nəfərlik sonsuz petri qabı: girirsən, yeyirsən, böyüyürsən — partlayanda çıxırsan.
 
 - **Format:** matç yoxdur, növbə yoxdur. Düyməni basan kimi dünyadasan.
 - **Hərəkət:** telefonda sol barmaq üzən joystick, sağ aşağıda top atma düyməsi
+- **Super:** hər növün öz gücü — atəş düyməsinin üstündəki halqa dolanda basılır
 - **PC-də:** `WASD` / ox düymələri hərəkət, `BOŞLUQ` top atır
 - **Nişan:** yoxdur — top getdiyin tərəfə gedir, dayanmısansa son baxdığın tərəfə
+- **Ekran:** yatay, 1280×720 baza — telefon kilidlənir, brauzerdə portret
+  pəncərədə "telefonu yan çevir" örtüyü çıxır
 - **Motor:** Godot 4.7.2 · **Dil:** GDScript · **Şəbəkə:** server-authoritative
 
 ## Oyunun qaydası
@@ -67,6 +70,114 @@ zərrəciklər eyni tərəfə baxır və oyunçu fırlanmanı görmür — riyaz
 işləsə də effekt yox olur. İlk versiyada məhz belə idi (760 px, orta sürət
 BASE_SPEED-in 6.7%-i); indi orta sürət 11%-dir və testlə qorunur.
 
+### Xəritə interaktivdir
+
+Maneə `Vector4(x, y, radius, kind)`-dır. Toqquşma həndəsəsi hər növdə eynidir
+— dairə — amma QAYDA fərqlidir:
+
+| Növ | Mikrob | Top | Xüsusi |
+|---|---|---|---|
+| **SELİK** | bloklayır | sıçrayır | — |
+| **KOL** | keçir | keçir | içindəki mikrob **GİZLİDİR** |
+| **KÖVRƏK** | bloklayır | **sındırır** | 3 zərbədən sonra dağılır, yol açılır |
+| **CƏRƏYAN** | keçir | keçir | **mərkəzə doğru itələyir** |
+
+Növ [`DishMap`](game/scripts/shared/dish_map.gd)-dədir, yəni PAYLAŞILAN
+koddadır: client proqnozu ilə server eyni qaydanı icra etməlidir, əks halda
+mikrob client-də keçdiyi yerdən serverdə keçə bilməz və düzəliş onu geri
+sıçradar.
+
+**Gizlənmə YALNIZ serverdə mövcuddur.** Kolun içindəki mikrobun mövqeyi
+rəqiblərə **göndərilmir** ([`World._near_germs`](game/scripts/server/world.gd)).
+Client-də gizlətmək gizlənmə olmazdı: paket onsuz da şəbəkədə gedir və onu
+oxuyan hər kəs mikrobu görər. Eyni kolun içindəki iki oyunçu isə bir-birini
+görür — yoxsa kolda toqquşub bir-birini heç vaxt tapa bilməzdilər.
+
+> **Böyük mikrob kiçik kolda gizlənə bilmir.** Bu, oyunun öz qaydasının
+> davamıdır: böyümənin qiyməti var — iri hədəf, yavaş hərəkət, tez acma, və
+> indi bir də gizlənə bilməmək. Lider kolda oturub oyunu dondura bilmir.
+
+**Dağılan qabıq bərpa olunmur** — dünya oyun getdikcə AÇILIR. Vəziyyət hər
+snapshot ilə tam gedir (maneə başına bir bayt, `Const.Snap.WALLS`), fərq kimi
+yox: fərq göndərilsəydi bir itən paket client-i əbədi səhv vəziyyətdə qoyardı.
+
+Düzümü yuxarıdan görmək üçün — stend maneələri OYUNDAKI sprite-larla çəkir,
+yəni bir kadrda beş sprite-ın da həqiqi görkəmi yoxlanılır:
+```bash
+GODOT --path game --resolution 760x760 -- --map --map-layout 0 \
+      --shot C:/yol/kadr.png --shot-delay 60
+```
+
+### Zərbə hissi
+
+Hadisə baş verəndə oyun bunu **dörd ayrı kanaldan** deyir. Səbəb odur ki,
+ekranda 10 mikrob var və tək kanal (məsələn, yalnız səs) itir:
+
+| Kanal | Nə vaxt | Kod |
+|---|---|---|
+| **Ağ parıltı** | top rəqibin içinə keçəndə | [`GermVisual.flash`](game/scripts/client/germ_visual.gd) |
+| **Donmuş kadr** (75 ms) | yaxında biri partlayanda | [`Arena._apply_freeze`](game/scripts/client/arena.gd) |
+| **Kamera zərbəsi** | partlama və tutum artımı | `Arena._punch` |
+| **Uçan rəqəm** | `+2` zərbədə, `+5 TUTUM` mükafatda | [`Arena._pop_text`](game/scripts/client/arena.gd) |
+
+Uçan toplar da iz buraxır — [`ShotTrails`](game/scripts/client/shot_trails.gd).
+
+> **Donma `Engine.time_scale` ilə edilmir və bu, məcburidir.** `time_scale`
+> `_process` deltasını da kiçildir, yəni proqnoz tick-ləri yavaşıyır və serverə
+> daha az giriş gedir. Server isə 30 Hz-lə işləməyə davam edir: client geri
+> qalır, donma bitəndə düzəliş mikrobu sıçradır. Zərbə hissi üçün qoyulan
+> effekt öz zərbəsini yeyərdi. Ona görə donma YALNIZ görüntüdədir — kamera və
+> mikrob animasiyaları dayanır, simulyasiya isə tam sürətlə davam edir.
+
+### Bioluminessensiya (glow)
+
+Parlaq piksellər ətrafa işıq saçır — [`Arena._build_glow`](game/scripts/client/arena.gd).
+`gl_compatibility` renderer-ində DƏ işləyir, amma **iki şərtlə**:
+
+1. `rendering/viewport/hdr_2d` açıq olmalıdır (`project.godot`), yoxsa rənglər
+   1.0-da kəsilir və hədd heç vaxt keçilmir;
+2. `glow_hdr_threshold` 1.0-dan **aşağı** olmalıdır (indi `0.62`), çünki
+   `Palette`-dəki bütün rənglər ≤ 1.0-dır — heç nə öz-özünə HDR diapazonuna
+   çıxmır.
+
+Hədd fonu (`0.05`) toxunulmaz saxlayır: yalnız **canlı** olan şeylər işıq verir.
+
+## Rejimlər
+
+İki rejim var və oyunçu menyuda OYNA düyməsinin üstündəki kartdan seçir.
+Qaydalar (top, partlama, növ gücləri) hər ikisində EYNİDİR — fərq yalnız
+matçın olub-olmamasındadır.
+
+| | **SONSUZ ARENA** (ilkin) | **TƏK QALAN** |
+|---|---|---|
+| Giriş | dərhal — gözləmə yoxdur | 3 saniyə geriyə sayım |
+| Mikrob sayı | ən azı 6, botlarla saxlanılır | 10, matç boyu bərpa olunmur |
+| Ölüm | nəticə ekranı, sonra menyu — dərhal yenidən girirsən | matç bitir, yer alırsan |
+| Qab | sabit | 45 s sonra quruyub daralır |
+| Bitiş | yoxdur | sonuncu mikrob qalanda |
+
+**Quru zona top ARTIRIR, azaltmır.** Bu, rejimin əsas qərarıdır: oyunun imza
+ölümü partlamaqdır, aclıqla sönmək deyil. Ona görə kənar həm təhlükə, həm də
+yemdir — dolu oyunçunu öldürür, ac oyunçunu isə xilas edə bilər. Oyunçu hər
+dəfə real seçim edir: "kənara girib doldurummu, yoxsa mərkəzdə qalım?"
+
+Qabın radiusu YALNIZ matç saatından asılıdır (`Const.dish_radius`) — client
+eyni düsturu işlədir, ona görə daralma proqnozla ziddiyyət yaratmır.
+
+**Spor** — matçda doğulan iri qida yığını. Yeyənə **tutum** verir, yəni
+partlatmaqla eyni mükafata ikinci yol açır: döyüşməyən oyunçu da irəliləyir.
+
+**Quru zonada qida yoxdur.** Qab daralanda kənarda qalan qida quruyur və
+doğuş hədəfi də qabın ölçüsü ilə kiçilir. Bu, qaydanı bir cümləyə yığır:
+*quru zonada TOP var, QİDA yoxdur.* Onsuz matçın sonu ilişirdi — aşağıya bax.
+
+**Matç bitəndə qab dayanmır.** Əsas quruma 250 px-də bitir, sonra matçın
+sonuna qədər 90 px-ə qədər yavaş sıxılma davam edir. Dayansaydı, son dəqiqədə
+heç nə dəyişməzdi.
+
+Tam quruluş: [design/MODES.md](design/MODES.md). Orada həm tətbiq olunmuş
+hissə, həm də növbəti mərhələ (CÜT 2v2, ÜÇLÜK 3v3) yazılıb.
+
 ## Ekranlar
 
 [Baş menyu](docs/screenshot_menu.png) · [Oyun ekranı](docs/screenshot_world.png)
@@ -86,6 +197,7 @@ düyməsini bas — botlarla dolu dünya dərhal açılır, serverə ehtiyac yox
 |---|---|
 | `WASD` və ya ox düymələri | hərəkət |
 | `BOŞLUQ` (və ya `ENTER`) | top atmaq |
+| `SHIFT` (və ya `Q`) | **super** — dolubsa |
 | Siçan | ekran joysticki və düymələr |
 
 > **Niyə klaviatura?** Oyun toxunuş üçün qurulub, siçan isə Godot-da BİR toxunuş
@@ -153,22 +265,32 @@ game/                    Godot layihəsi
       world.gd           Bir petri qabı: Sim + oyunçular + botlar + snapshot
     client/
       arena.gd           ★ Oyun ekranı: prediction, interpolyasiya, kamera, reconnect
-      main_menu.gd       Menyu, qoşulma, qaydaların izahı
+      menu_v2.gd         ★ Baş menyu: canlı mikrob, növ kartları, qoşulma
+      main_menu.gd       KÖHNƏ şaquli menyu — ehtiyat (`--menu1`), sonra silinir
       hud.gd             Doluluq göstəricisi, liderlər, xəbərdarlıqlar, nəticə
-      germ_visual.gd     Bir mikrobun görüntüsü — İKİ NÖV (kirpikli üzür, ayaqlı yeriyir)
+      germ_visual.gd     Bir mikrobun görüntüsü — ÜÇ NÖV (üzür, yeriyir, sürünür)
       burst_fx.gd        Partlayaraq ölmə effekti (dalğa, damcı, membran parçaları)
+      shot_trails.gd     Uçan topların izi — hamısı BİR çəkiliş çağırışında
       water_motes.gd     Suda asılı zərrəciklər — axını gözlə görünən edir
       minimap.gd         Petri qabının kiçik xəritəsi
       touch_stick.gd     Üzən virtual joystick (hərəkət)
       fire_button.gd     Top atma düyməsi (basılı saxlananda davamlı atəş)
+      super_button.gd    Super düyməsi — dolan halqa, atəşin üstündə
+      super_button.gd    Super düyməsi — dolan halqa, atəşin üstündə
       sfx.gd             Səs effektləri (autoload: Sfx)
     tools/
-      sim_test.gd        54 headless test
+      sim_test.gd        226 headless test
       auto_client.gd     Şəbəkə testi üçün insansız client
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
+      map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
       perf_probe.gd      Kadr vaxtı və çəkiliş çağırışı ölçmə
-  assets/                SVG sprite-lar, UI, WAV səslər
+  assets/                SVG sprite-lar, UI, şriftlər, WAV səslər
+    fonts/               Baloo 2 (başlıq) + Nunito (mətn) — bax «Şriftlər»
+    ui/theme.tres        Şrift rolları; bütün Control-lar bunu oxuyur
+    sprites/             maneə sprite-ları: blob, bloom (SELİK) · crust ×3 (KÖVRƏK,
+                         zədə mərhələləri) · bush + bush_top (KOL) · vent (CƏRƏYAN)
+                         · dish_floor (qabın döşəməsi)
   web/shell.html         Brauzer versiyasının HTML qabığı
 design/                  Dizayn mənbəyi (art/audio bible, brif, sprite, səs generatoru)
 tools/                   Build və deploy skriptləri
@@ -198,13 +320,21 @@ GODOT --path game -- --practice
 
 # Mikrob növünü seçərək (0 kirpikli · 1 ayaqlı · 2 amöb):
 GODOT --path game -- --practice --species 2
+
+# Rejimi seçərək (0 sonsuz arena · 1 TƏK QALAN):
+GODOT --path game -- --practice --mode 1
 ```
 Eyni `World` və `Sim` kodu yerli işləyir; fərq yalnız snapshot-ların şəbəkədən
 yox, yaddaşdan gəlməsidir. Server yatmış olsa da oyun oynanır.
 
-`--species` menyunu keçdiyimiz üçün lazımdır: birbaşa dünyaya düşəndə
-`settings.cfg` oxunmur. `--shot` ilə birlikdə hər növün görüntüsünü
-redaktoru açmadan, təkrarlana bilən şəkildə yoxlamağa imkan verir.
+`--species` və `--mode` menyunu keçdiyimiz üçün lazımdır: birbaşa dünyaya
+düşəndə `settings.cfg` oxunmur. `--shot` ilə birlikdə hər növün və hər
+rejimin görüntüsünü redaktoru açmadan, təkrarlana bilən şəkildə yoxlamağa
+imkan verir.
+
+> Quruma `--mode 1`-də 45 saniyə sonra başlayır — ekran görüntüsü üçün çox
+> gözlətmə. Yoxlayarkən `Const.DRY_DELAY`-i müvəqqəti azalt, çək, sonra geri
+> qaytar. Bayraq ƏLAVƏ ETMƏ: sınaq üçün qoyulan bayraq buraxılışda qalır.
 
 ### Serveri lokal qaldırmaq
 ```bash
@@ -216,10 +346,12 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (54 test)
+# Simulyasiya + World testləri (226 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
+#   --mode <0|1> və --species <0|1|2> ilə rejim/növ seçilir; onsuz
+#   TƏK QALAN-ın onlayn yolu heç vaxt sınanmır.
 GODOT --headless --path game -- --server --ws --verbose &
 GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label A --quit-after 30 &
 GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label B --quit-after 30 &
@@ -244,10 +376,27 @@ pozulsa qida burulğanlarda ilişər və dünyanın bir hissəsi acından qırı
 
 ### Performans ölçmək
 ```bash
-GODOT --path game --resolution 720x1600 -- --practice --perf 12
+GODOT --path game --resolution 1280x720 --disable-vsync -- --practice --mode 0 --perf 12
 ```
+
+> ⚠️ **`--disable-vsync` MƏCBURİDİR.** Alət divar saatının kadr aralığını ölçür;
+> vsync açıq olanda o aralıq oyunun yükündən yox, EKRANIN tezliyindən çıxır.
+> 240 Hz monitorda nəticə həmişə 4.17 ms olur — yük nə olursa olsun. Bir dəfə
+> bu rəqəmə inanılıb buraya "büdcənin 25%-i" yazılmışdı; həqiqi yük 10–12%
+> imiş. Alət indi vsync açıq olanda xəbərdarlıq edir, amma bayrağı vermək
+> yenə sənin işindir.
+
 Orta, **1% ən pis** kadr, çəkiliş çağırışı və yaddaş yazılır.
-Masaüstü nəticəsi (RTX 5050): **~180 çəkiliş çağırışı (pik), 60 FPS büdcəsinin 25%-i**.
+Masaüstü nəticəsi (RTX 5050), `--disable-vsync` ilə:
+
+| Rejim | Orta kadr | 60 FPS büdcəsi | Çəkiliş çağırışı (pik) |
+|---|---|---|---|
+| SONSUZ ARENA (6 mikrob) | 1.85 ms | **11%** | ~230 |
+| TƏK QALAN (10 mikrob) | 2.82 ms | **17%** | ~212 |
+
+Fərq tam olaraq dörd əlavə mikrobdandır — quruma kənarı cəmi **2** çağırışdır
+(iki `draw_arc`). Mikrob ən bahalı elementdir, ona görə mikrob sayını artıran
+hər rejim bu cədvəldə ölçülməlidir.
 
 > Çəkiliş çağırışının 280-dən ~170-ə düşməsi bir dəyişiklikdən gəlir: səhnə
 > qatları növlərə bölündü (bütün qida bir qatda, bütün toplar başqasında) və
@@ -256,13 +405,28 @@ Masaüstü nəticəsi (RTX 5050): **~180 çəkiliş çağırışı (pik), 60 FPS
 
 ### Ekran görüntüsü almaq
 ```bash
-GODOT --path game --resolution 720x1560 --max-fps 60 \
+GODOT --path game --resolution 1280x720 --max-fps 60 \
       -- --practice --shot C:/yol/kadr.png --shot-delay 500
 ```
 
+### Xəritənin bir yerini gözlə yoxlamaq
+
+Doğuş yeri təsadüfidir, kol və cərəyan deşiyi isə dünyanın müəyyən
+yerlərindədir — ona görə "kolun içi necə görünür" sualına ekran görüntüsü ilə
+cavab vermək təsadüfə qalırdı. `--at` mikrobu istənilən nöqtədə doğurur:
+
+```bash
+GODOT --path game --resolution 1280x720 --fixed-fps 60 \
+      -- --practice --at "-190,610" --shot C:/yol/kadr.png --shot-delay 26
+```
+
+Düzümdəki koordinatlar [`DishMap`](game/scripts/shared/dish_map.gd)-dədir.
+Kadr nömrəsi vacibdir: `--shot` mikrobu hərəkətə salır, ona görə uzun
+gecikmədə o, artıq yoxlamaq istədiyin yerdən çıxmış olur.
+
 ### Növün görüntüsü üzərində işləmək
 ```bash
-GODOT --path game --resolution 720x900 --fixed-fps 60 \
+GODOT --path game --resolution 900x900 --fixed-fps 60 \
       -- --preview --preview-species 2 --preview-balls 6 \
          --shot C:/yol/kadr.png --shot-delay 100
 ```
@@ -452,6 +616,199 @@ UDP 27015 portu açıq olmalıdır.
 
 ---
 
+## Tələlər — səssiz uğursuzluqlar
+
+> ⚠️ **`multiplayer.multiplayer_peer` heç vaxt `null` olmur — Godot ora
+> `OfflineMultiplayerPeer` qoyur.**
+>
+> O peer heç bir şəbəkəyə toxunmur, amma özünü **QOŞULU** elan edir
+> (`get_connection_status() == CONNECTION_CONNECTED`) və `get_unique_id()`
+> kimi **1**, yəni "mən serverəm", qaytarır. Yalnız statusa baxan yoxlama
+> buna görə oyun açılan kimi "onlayn" deyir:
+>
+> ```gdscript
+> # SƏHV — qoşulmadan da true qaytarır
+> return multiplayer.multiplayer_peer != null \
+>     and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+> ```
+>
+> Nəticə tam səssizdir: menyu "artıq qoşuluyuq" deyib `request_join.rpc_id(1, …)`
+> göndərir, Godot isə bunu ÖZÜMÜZƏ göndərilmiş sayır və
+> `RPC 'request_join' on yourself is not allowed` yazıb çağırışı atır. Serverə
+> heç nə getmir, heç bir siqnal gəlmir — **OYNA düyməsi sadəcə işləmir.**
+>
+> Etibarlı şərt əl sıxışmanın bitməsidir: [`Net.local_id`](game/scripts/shared/net.gd)
+> yalnız `connected_to_server` gələndə doldurulur. `sim_test`-də bunun üçün
+> ayrıca yoxlama var — qoşulmamış client özünü onlayn saymamalıdır.
+
+> ⚠️ **"Dəyişibmi?" sualına SAYLA cavab vermək olmaz — kimlik dəyişir, say qalır.**
+>
+> Ad və rəng snapshot-dan çıxarılıb ayrıca reyestrə köçürüləndə köhnəlmə
+> yoxlaması belə yazılmışdı:
+>
+> ```gdscript
+> if sim.germs.size() != _roster_n:   # SƏHV
+> ```
+>
+> Amma `Sim.rekey_germ` mikrobu silib yenidən əlavə edir — **id dəyişir, say
+> dəyişmir**. Yenidən qoşulma məhz bunu edir. Nəticədə qayıdan oyunçunun
+> mikrobu bütün DİGƏR ekranlarda adsız və 0 rəngli qalırdı. Eyni tələ: bir
+> tick-də bot doğulub biri partlasa da say dəyişmir.
+>
+> Səhv oyunçunun ÖZÜNDƏN gizlidir — o, öz ekranında hər şeyi düzgün görür.
+> Yalnız başqasının ekranında bilinir, yəni tək client ilə test edəndə heç vaxt
+> tapılmır.
+>
+> Düzgün yol id-lərin ÖZÜNDƏN imza yığmaqdır (`key = key * 31 + gid`).
+> `_test_roster_tracks_ids` bunu qoruyur.
+
+> ⚠️ **Variant massivində hər ədəd ~9 bayt tutur — snapshot səssizcə MTU-nu aşırdı.**
+>
+> Godot bunu yalnız bir sətirlə deyir və o da server logunda itir:
+>
+> ```
+> WARNING: Sending 1448 bytes unreliably which is above the MTU (1392)
+> ```
+>
+> Aşan paket PARÇALANIR, snapshot isə `unreliable_ordered` gedir — yəni bir
+> parçanın itməsi **bütün snapshot-u** itirir. Oyunçu üçün bu, təsadüfi
+> "ilişmə" kimi görünür və səbəbi heç vaxt aydın olmur.
+>
+> Ölçüldükdə ən pis hal **2224 bayt** idi. Üç səbəb vardı və üçü də
+> "məntiqli görünən" koddan gəlirdi:
+>
+> | Səbəb | Ölçü |
+> |---|---|
+> | Ad və rəng hər tick göndərilirdi — halbuki heç vaxt dəyişmir | reyestrə köçdü |
+> | Rəqiblərin `ack` və `cooldown`-u da gedirdi — client onları oxumur | [enum SelfF]-ə köçdü |
+> | Mikroblar Variant massivi idi (~9 bayt/ədəd) | `PackedFloat32Array` (4 bayt) |
+>
+> Nəticə: **2224 → 1116 bayt**. Şəbəkəyə sıx gedir, client-də isə
+> [`Const.unpack_germs`](game/scripts/shared/constants.gd) köhnə sətir formasına
+> açır — belə çəkiliş kodu formatdan xəbərsiz qalır.
+>
+> `sim_test`-dəki `_test_snapshot_fits_mtu` indi bunu qoruyur və uğursuzluqda
+> hansı sahənin şişdiyini bayt-bayt çap edir. Snapshot-a yeni sahə əlavə
+> edəndə **əvvəlcə o testi çalışdır**.
+
+> ⚠️ **Bot maneəni ATƏŞ üçün görürdü, HƏRƏKƏT üçün yox — xəritə daralanda donurdu.**
+>
+> [`Bot.think`](game/scripts/shared/bot.gd) hədəf seçəndə
+> `Sim.has_line_of_sight` çağırırdı, amma getdiyi istiqaməti heç yoxlamırdı.
+> Açıq qabda bu bilinmirdi: yer çox idi, bot maneəyə sürtünüb yan keçirdi.
+>
+> TƏK QALAN qabı daraldanda isə hamı mərkəzə sıxıldı və botlar maneəyə
+> dirənib **tamamilə donub qaldı**. Diaqnostika birbaşa göstərdi — matçın son
+> 60 saniyəsində üç botun mərkəzdən uzaqlığı `177, 177, 154` dəyərlərində
+> dəyişmirdi:
+>
+> ```
+> t=176 r= 204 uzaq=181, 183, 184
+> t=208 r= 147 uzaq=177, 177, 154   ← donub
+> t=240 r=  90 uzaq=177, 177, 154   ← hələ də
+> ```
+>
+> Səssiz uğursuzluq idi: heç bir xəta yox, bütün testlər keçir, sadəcə matç
+> **beş dəfədən beşində** döyüşlə yox, 240 saniyəlik vaxt limiti ilə bitirdi.
+> Bir neçə saat balans "düzəlişi" (qida sıxlığı, quruma sürəti, botun
+> aqressivliyi) heç nəyi dəyişmədi, çünki səbəb balansda deyildi.
+>
+> Düzəlişdən sonra: **altı matçdan altısı** 2:34–3:34 arasında, tək qalibi ilə.
+> Dərs: rejim balansını ölçməzdən əvvəl agentlərin ümumiyyətlə TƏRPƏNDİYİNİ
+> yoxla. `sim_test`-dəki `_test_full_solo_match` indi məhz bunu qoruyur.
+
+> ⚠️ **Bir HUD elementinin BİR sahibi olmalıdır — yoxsa sonuncu yazan udur.**
+>
+> `Hud`-un xəbərdarlıq sətri, mərkəzdəki iri yazı və alt sətri kadr ərzində
+> bir neçə yerdən yazılır. Sıra `Arena._apply_local`-dadır və orada
+> `set_match` `update_gauge`-dən ƏVVƏL çağırılır:
+>
+> ```gdscript
+> # SƏHV — set_match mətni yazır, update_gauge dərhal üstündən silir
+> func set_match(...) -> void:
+>     if drying:
+>         _warn_lbl.text = "QURUYUR — mərkəzə get"
+>         _warn_lbl.visible = true      # növbəti sətirdə itir
+> ```
+>
+> `update_gauge` sonra gəlib `_set_warning("")` çağırır və sətri gizlədir.
+> Nəticə səssizdir: kod işləyir, test yoxdur, sadəcə TƏK QALAN rejiminin ən
+> ölümcül xəbərdarlığı **heç vaxt ekrana çıxmır**. Eyni səbəbdən sayımın alt
+> sətrində doğuş anındakı "GİZLƏNDİN" yazısı donub qalırdı.
+>
+> Qayda: mətni yazan **bir** funksiya olsun, qalanları yalnız bayraq qoysun
+> (`_drying`), yazan funksiya isə prioriteti özü həll etsin. Sayım gedərkən
+> mərkəzdəki hər iki sətrin sahibi [`Hud.set_match`](game/scripts/client/hud.gd)-dir.
+
+> ⚠️ **Şrift seçəndə Azərbaycan hərflərini YOXLA — xüsusən `Ə` və `ə`.**
+>
+> Oyun şrifti kimi ilk ağla gələnlərin çoxunda şva **yoxdur**: Fredoka, Titan
+> One, Lilita One, Archivo Black, Rubik, Sora, Gabarito, Russo One — hamısında
+> `Ə`/`ə` çatışmır (bəzilərində `Ğ ğ İ Ş ş` də). Şrift qalan hər şeyi düzgün
+> göstərir, ona görə səhv gec görünür: menyuda "MƏŞQ" **"M□ŞQ"**, HUD-da
+> "SƏVİYYƏ" **"S□VİYY□"** çıxır.
+>
+> Layihədə işlənən **Baloo 2** (başlıq) və **Nunito** (mətn) 14 hərfin
+> hamısını daşıyır: `Ç ç Ə ə Ğ ğ İ ı Ö ö Ş ş Ü ü`. Yenisini əlavə etməzdən
+> əvvəl həmin sətri fontda çap etdirib gözlə yoxla.
+
+> ⚠️ **`_draw` içindəki hər primitiv AYRICA çəkiliş çağırışıdır.**
+>
+> Sprite-lar batch olunur, `draw_circle`/`draw_arc` isə yox. Xəritəyə dərinlik
+> verəndə əvvəlcə hər şey `_draw`-a yazılmışdı — döşəmə 14 konsentrik disk,
+> hər bərk maneəyə iki kölgə dairəsi, şüşə kənara dörd qövs. Ölçmə:
+>
+> | | Çəkiliş çağ. | Orta kadr | 1% ən pis |
+> |---|---|---|---|
+> | Əvvəl | 237 | 4.17 ms | 4.26 ms |
+> | Hamısı `_draw`-da | **293** | 4.18 ms | 4.55 ms |
+> | Döşəmə teksturaya, kölgə sprite-a | **207** | 4.17 ms | 4.17 ms |
+>
+> Yəni 14 disk = 14 çağırış, 15 maneənin kölgəsi = 30 çağırış. Teksturaya
+> köçürüləndə isə **pulsuzdur**: sprite onsuz da çəkilir, kölgə onun bir
+> hissəsidir. Nəticədə xəritə ƏVVƏLKİNDƏN də ucuz oldu — köhnə kod da
+> kölgələri hər kadr `_draw`-da çəkirdi.
+>
+> Qayda: `_draw` yalnız **azsaylı və qat boyu ortaq** şeylər üçündür (şəbəkə
+> bir `draw_multiline`, şüşə kənar bir neçə qövs). Obyekt başına təkrarlanan
+> hər şey teksturaya bişirilməlidir.
+
+> ⚠️ **Sprite-lara AYRI-AYRI `modulate` vermə.**
+> 
+> `gl_compatibility` batch-i yalnız ardıcıl, eyni teksturalı VƏ **eyni
+> `modulate`-lı** elementləri bir çağırışa yığır. Hər maneəyə ±6% parlaqlıq
+> fərqi verilmişdi — nəticə ölçüldü:
+> 
+> | | Çəkiliş çağ. | Ən pis kadr | 1% ən pis |
+> |---|---|---|---|
+> | Hər sprite-a ayrı `modulate` | 242 | **70.7 ms** (14 FPS) | 50% büdcə |
+> | `modulate` çıxarılıb | **131** | 11.3 ms | 25% büdcə |
+> 
+> Xəta yoxdur, xəbərdarlıq yoxdur — sadəcə oyun telefonda ilişir. Rəng
+> fərqi lazımdırsa **teksturaya bişir**, kodda modulate ilə vermə.
+
+> ⚠️ **Yeni `class_name` skript yaradandan sonra MÜTLƏQ `--import` işlət.**
+> 
+> ```bash
+> GODOT --headless --path game --import
+> ```
+> 
+> Godot qlobal sinif adlarını `.godot/global_script_class_cache.cfg`-də saxlayır
+> və onu YALNIZ redaktor (və ya `--import`) yeniləyir. Fayl diskdə olsa da,
+> keşdə olmasa `class_name` tapılmır:
+> 
+> ```
+> Parse Error: Could not find type "ShotTrails" in the current scope.
+> Compile Error: Failed to compile depended scripts. (boot.gd)
+> ```
+> 
+> Nəticə isə xətaya BƏNZƏMİR: `boot.gd` kompilyasiya olunmur, əsas səhnə heç
+> vaxt yüklənmir, pəncərə açıq qalır və oyun sadəcə **donur**. Skript düzgün
+> yazılıb, sınaqlar keçir, amma oyun işləmir — sanki dəyişiklik "alınmayıb".
+> 
+> `.uid` faylı da elə `--import` zamanı yaranır; onsuz commit etsən başqa
+> maşında eyni hal təkrarlanır.
+
 ## Assetlər — bir vacib məhdudiyyət
 
 > ⚠️ **SVG-də `<text>` elementi işlətmə.** Godot SVG-ni ThorVG ilə rasterləşdirir,
@@ -459,7 +816,23 @@ UDP 27015 portu açıq olmalıdır.
 > yazı görünmür.
 >
 > Loqodakı "GERM ARENA" yazısı məhz buna görə SVG-də yox, Godot `Label`-ı ilə
-> çəkilir (`main_menu.gd → _make_logo`).
+> çəkilirdi (`main_menu.gd → _make_logo`). Yatay menyuda söz nişanı yoxdur —
+> yuxarı sol küncdə oyunçunun öz nişanı dayanır, Brawl Stars ana ekranında
+> olduğu kimi.
+
+### Şriftlər
+
+İki rol var və hər ikisi [`assets/ui/theme.tres`](game/assets/ui/theme.tres)-dən
+gəlir — kodda hər `Label` üçün ayrıca şrift təyin edilmir:
+
+| Rol | Şrift | Harada |
+|---|---|---|
+| Başlıq | **Baloo 2** (dəyişkən, 800) | Düymələr, növün adı, doluluq rəqəmi, mərkəzi mesajlar |
+| Mətn | **Nunito** (dəyişkən, 600) | Liderlər, izahlar, ad qutusu, ipucları |
+
+Başlıq rolu `Label`-a `theme_type_variation = "Heading"` ilə verilir (ayrıca
+tip yoxdur — başlıq da `Label`-dir). Şrift dəyişdirməzdən əvvəl yuxarıdakı
+Azərbaycan hərfləri tələsini oxu.
 
 Dünyada **üç mikrob növü** var və hamısı tamamilə kodla çəkilir:
 
@@ -471,9 +844,32 @@ Dünyada **üç mikrob növü** var və hamısı tamamilə kodla çəkilir:
   (jel qabıq + axıcı iç) önə uzanıb arxadan yığılır və sahəsini saxlayaraq
   irəli axır — **sürünür**.
 
-Növü **menyudan sən seçirsən** (NÖV düyməsi). Seçim oyuna təsir etmir — iki
-mikrob eyni sürətlə gedir, eyni qaydalarla ölür — və şəbəkəyə bir bayt da
-əlavə etmir: toxunulmazlıq bayrağının boş bitində daşınır.
+Növü **menyudan sən seçirsən** (üç kart). Seçim oyunun gedişinə **təsir edir**
+(aşağıdakı bölmə) və buna baxmayaraq şəbəkəyə **bir bayt da** əlavə etmir:
+növ də, superin doluluğu da toxunulmazlıq bayrağının boş bitlərində daşınır.
+
+### Növün özəlliyi və superi
+
+Hər növün **mühitlə münasibəti** başqadır — bu, üç orqanizmin əsl
+ekologiyasıdır: planktonik üzgüçü, bentik yeriyən, substrat sürünəni.
+
+| | Passiv | Super | Superin qiyməti |
+|---|---|---|---|
+| **Kirpikli** | ən cəld: tez qopur, uzun sürüşür · axın onu daha çox aparır | **TRİXOSİST** — yaxındakı rəqib topları dağılıb qidaya çevrilir, mikroblar itələnir, özü geri sıçrayır | −2 top; dağılan toplar yerə düşür və rəqib onları geri yeyə bilər |
+| **Ayaqlı** | axına dirənir (pəncələr yapışır) · ən yavaş növ | **AKSOPODİYA TORU** — 4 saniyə: qida ona axır, tora düşən rəqib 40% yavaşlayır | tutumu aşarsa **öz superi onu partladır** — dolu ikən açmaq olmaz |
+| **Amöb** | maneə radiusu kiçikdir: başqasının sığmadığı aralıqdan keçir | **SİSTLƏŞMƏ** — 2.5 saniyə qabıq: top **səkir**, metabolizm dayanır | tam hərəkətsizsən: nə qaçırsan, nə atırsan, nə yeyirsən |
+
+Super **döyüşərək** dolur (Brawl Stars məntiqi): dəymə +3, qida +1/3 top,
+sənə dəyəndə +1, partlatma isə tam doldurur. Hədd **15**-dir və bu rəqəm
+təsadüfi deyil — dörd bitə tam sığır.
+
+> **Heç bir super rəqibin top sayına toxunmur.** Zərər verən super
+> `SHOT_PAYLOAD` riyaziyyatını yan yoldan pozardı, ona görə üçü də **mövqe,
+> qida və vaxt** üzərində işləyir. Atəş dövrü, topun qiyməti və tutum artımı
+> üç növdə də eynidir — bunu sənəd yox, `sim_test` saxlayır.
+
+Botlar da superini işlədir və bu, məcburidir: dünyanın əhalisinin çoxu botdur,
+super yalnız onlar da işlədəndə oyunun bir hissəsinə çevrilir.
 
 Mikrobun ətrafında **halqa yoxdur**. Əvvəl iki halqa vardı (doluluq və fokus);
 ikisi də çıxarıldı, çünki mikrobu konsentrik dairələrin içinə salırdı. Doluluq

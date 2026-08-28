@@ -1,0 +1,43 @@
+; Layihənin şrift teması.
+;
+; Bütün Control-lar bunu avtomatik oxuyur (`project.godot` → gui/theme/custom),
+; ona görə kodda hər Label üçün ayrıca şrift təyin etmək lazım gəlmir.
+;
+; İKİ rol var:
+;   • MƏTN — Nunito. Yumru, kiçik ölçüdə də oxunaqlı; liderlər cədvəli,
+;     izahlar, ad qutuları buradadır.
+;   • BAŞLIQ — Baloo 2. Qalın və yumru; düymələr, oyunun adı, doluluq rəqəmi.
+;     Label-lərə `theme_type_variation = "Heading"` ilə verilir (tip yoxdur:
+;     başlıq da Label-dir, ona görə növ variasiyası işlədilir).
+;
+; Niyə məhz bunlar: hər ikisi Azərbaycan hərflərinin HAMISINI daşıyır —
+; Ç ç Ə ə Ğ ğ İ ı Ö ö Ş ş Ü ü. Bu, göründüyündən nadir haldır: oyun şrifti kimi
+; ilk ağla gələnlərin çoxunda (Fredoka, Titan One, Lilita One, Archivo Black,
+; Rubik, Sora) məhz Ə/ə YOXDUR və menyuda "MƏŞQ" sözü "M□ŞQ" kimi çıxır.
+; Şrift dəyişdirilməmişdən əvvəl 14 hərfin hamısı yoxlanmalıdır.
+;
+; İkisi də dəyişkən (variable) şriftdir — bir fayldan bütün çəkilər alınır,
+; ona görə hər qalınlıq üçün ayrıca fayl saxlanmır.
+
+[gd_resource type="Theme" load_steps=5 format=3]
+
+[ext_resource type="FontFile" uid="uid://cf2sj1462bl8o" path="res://assets/fonts/Nunito.ttf" id="1_body"]
+[ext_resource type="FontFile" uid="uid://blqqdf57gb1hx" path="res://assets/fonts/Baloo2.ttf" id="2_display"]
+
+[sub_resource type="FontVariation" id="FontVariation_body"]
+base_font = ExtResource("1_body")
+variation_opentype = {
+"wght": 600
+}
+
+[sub_resource type="FontVariation" id="FontVariation_display"]
+base_font = ExtResource("2_display")
+variation_opentype = {
+"wght": 800
+}
+
+[resource]
+default_font = SubResource("FontVariation_body")
+Button/fonts/font = SubResource("FontVariation_display")
+Heading/base_type = &"Label"
+Heading/fonts/font = SubResource("FontVariation_display")

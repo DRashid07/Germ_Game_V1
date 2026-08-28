@@ -112,6 +112,7 @@ func _make_logo() -> Control:
 
 static func _logo_word(text: String, x: float, y: float, size: float, color: Color) -> Label:
 	var l := Label.new()
+	l.theme_type_variation = "Heading"
 	l.text = text
 	l.position = Vector2(x, y)
 	l.add_theme_font_size_override("font_size", int(size))
@@ -226,12 +227,12 @@ func _play() -> void:
 	_save_settings()
 
 	if Net.is_connected_to_server():
-		Net.request_join.rpc_id(1, Net.nickname, int(Net.species))
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
 		_set_busy(true, "Dünyaya girilir...")
 		return
 
 	_set_busy(true, "Serverə qoşulur...")
-	var parts := parse_address(_addr.text)
+	var parts := Net.parse_address(_addr.text)
 	if Net.join_server(parts[0], parts[1]) != OK:
 		_set_busy(false, "Ünvan səhvdir və ya server əlçatmazdır")
 
@@ -251,7 +252,7 @@ func _cancel_join() -> void:
 
 func _on_connected() -> void:
 	if _joining:
-		Net.request_join.rpc_id(1, Net.nickname, int(Net.species))
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
 		_status.text = "Dünyaya girilir..."
 
 
@@ -294,29 +295,6 @@ func _set_busy(busy: bool, message: String) -> void:
 func _clean_nick() -> String:
 	var s := _nick.text.strip_edges()
 	return "Mikrob" if s.is_empty() else s.substr(0, 16)
-
-
-## "host:port" formatını ayırır; port yazılmayıbsa standart port işlədilir.
-## `ws://` və `wss://` ünvanları toxunulmadan ötürülür — porta orada URL özü qərar verir.
-##
-## Statikdir ki, testdən keçirilə bilsin: Railway ünvanı məhz buradan keçir və
-## səhv ayrılsa oyun ümumiyyətlə qoşula bilmir.
-static func parse_address(raw_text: String) -> Array:
-	var raw := raw_text.strip_edges()
-	if raw.begins_with("ws://") or raw.begins_with("wss://"):
-		return [raw, 0]
-
-	var port := Const.DEFAULT_PORT
-	var host := raw
-	var colon := raw.rfind(":")
-	if colon > 0:
-		host = raw.substr(0, colon)
-		var tail := raw.substr(colon + 1)
-		if tail.is_valid_int():
-			port = int(tail)
-	if host.is_empty():
-		host = "127.0.0.1"
-	return [host, port]
 
 
 func _load_settings() -> void:

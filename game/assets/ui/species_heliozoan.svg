@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Ayaqlı: bərk yumru gövdə, şüa kimi aksopodiyalar, ucunda toxunma düyməsi. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round">
+  <circle cx="32" cy="32" r="14" stroke-opacity="0.95"/>
+  <g stroke-width="2.4" stroke-opacity="0.8">
+    <path d="M32 18 L32 5"/><path d="M32 46 L32 59"/>
+    <path d="M18 32 L5 32"/><path d="M46 32 L59 32"/>
+    <path d="M22 22 L13 13"/><path d="M42 42 L51 51"/>
+    <path d="M42 22 L51 13"/><path d="M22 42 L13 51"/>
+  </g>
+  <g fill="#FFFFFF" stroke="none" fill-opacity="0.85">
+    <circle cx="32" cy="4" r="2.4"/><circle cx="32" cy="60" r="2.4"/>
+    <circle cx="4" cy="32" r="2.4"/><circle cx="60" cy="32" r="2.4"/>
+  </g>
+</svg>

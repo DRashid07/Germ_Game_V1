@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <!-- BİŞMİŞ KÖLGƏ — vahid işıq yuxarı-soldan, kölgə aşağı-sağa.
+       Kodda çəkilmirdi, çünki ölçmə göstərdi: hər maneə üçün iki
+       `draw_circle` = iki çəkiliş çağırışı, 15 bərk maneə üçün 30 çağırış.
+       Teksturada isə PULSUZDUR — sprite onsuz da çəkilir.
+       İki qat: yumşaq qat hündürlüyü, sıx kontakt halqası döşəməyə harada
+       toxunduğunu deyir. -->
+  <g>
+    <circle cx="177" cy="187" r="131" fill="#04090B" opacity="0.17"/>
+    <circle cx="169" cy="175" r="122" fill="#04090B" opacity="0.34"/>
+  </g>
+  <g transform="translate(32,32)">
+  <!-- Maneə növü 2: QABIQ. Quruyub çatlamış selik.
+       Xarici dairə mucus_blob.svg ilə EYNİDİR (r=120, eyni haşiyə): toqquşma
+       dairəsi dəyişmir, yalnız içindəki naxış fərqlənir. Fərq oxunsun deyə
+       naxış BUCAQLIDIR — yumru ləkənin tam əksi. -->
+  <defs>
+    <clipPath id="domeClip">
+      <circle cx="128" cy="128" r="118"/>
+    </clipPath>
+    <radialGradient id="crust" cx="42%" cy="38%" r="66%">
+      <stop offset="0%" stop-color="#1F4A56"/>
+      <stop offset="70%" stop-color="#17353E"/>
+      <stop offset="100%" stop-color="#0F262E"/>
+    </radialGradient>
+    <clipPath id="crustClip">
+      <circle cx="128" cy="128" r="118"/>
+    </clipPath>
+  </defs>
+  <circle cx="128" cy="128" r="120" fill="url(#crust)" stroke="#245562" stroke-width="5"/>
+  <!-- Çatlar. Kəsilir ki, heç biri haşiyədən kənara çıxmasın. -->
+  <g clip-path="url(#crustClip)" stroke="#6B3F14" stroke-width="6" fill="none"
+     stroke-linecap="round" opacity="0.85">
+    <path d="M128 20 L118 82 L140 116 L124 168 L136 236"/>
+    <path d="M20 108 L84 98 L118 82"/>
+    <path d="M236 140 L176 132 L140 116"/>
+    <path d="M60 210 L104 160 L124 168"/>
+    <path d="M206 206 L164 166 L124 168"/>
+  </g>
+  <!-- Çatların kəhrəba kənarı. Rəng QƏSDƏNDİR: palitrada kəhrəba "diqqət"
+       deməkdir (bax ART_BIBLE §1) və bu, oyunçunun bu maneə ilə NƏSƏ EDƏ
+       BİLDİYİNİN yeganə uzaqdan oxunan işarəsidir. Onsuz kövrək qabıq baxışda
+       adi selik ləkəsindən seçilmirdi. -->
+  <g clip-path="url(#crustClip)" stroke="#C88A2E" stroke-width="2.5" fill="none"
+     stroke-linecap="round" opacity="0.75">
+    <path d="M125 20 L115 82 L137 116 L121 168 L133 236"/>
+    <path d="M20 105 L84 95 L115 82"/>
+    <path d="M236 137 L176 129 L137 116"/>
+  </g>
+  <!-- Bir neçə xırda qabarcıq — səth tam düz görünməsin. -->
+  <g fill="#245562" opacity="0.28">
+    <circle cx="96" cy="140" r="9"/>
+    <circle cx="158" cy="96" r="7"/>
+    <circle cx="180" cy="180" r="6"/>
+  </g>
+  <!-- GÜNBƏZ HƏCMİ. Vahid işıq yuxarı-soldan gəlir (bax ART_BIBLE §2b).
+       Üç element: yuxarı-solda rim işığı, aşağı-sağda daxili oklüziya,
+       ortada yaş parıltı. HAMISI siluetin İÇİNDƏDİR — siluet toqquşma izidir
+       (r=120) və bir piksel də dəyişə bilməz, yoxsa amöb "keçirəm" deyib
+       görünməyən kənara dəyər. -->
+  <g clip-path="url(#domeClip)">
+    <circle cx="176" cy="184" r="116" fill="none" stroke="#07141A" stroke-width="46" opacity="0.40"/>
+    <path d="M 44 150 A 98 98 0 0 1 150 44" fill="none" stroke="#5A98A8" stroke-width="8"
+          stroke-linecap="round" opacity="0.42"/>
+    <ellipse cx="96" cy="86" rx="36" ry="23" fill="#6FB0C0" opacity="0.13"
+             transform="rotate(-28 96 86)"/>
+  </g>
+  </g>
+</svg>

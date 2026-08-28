@@ -15,7 +15,10 @@ extends Node2D
 
 ## Zərrəcik sayı. Kadr yükü deyil (bir çağırışdır), amma çoxu fonu
 ## "qar" kimi göstərir və mikrobların oxunmasına mane olur.
+##
+## İki qat arasında bölünür (bax [member depth]): 80 dərin, 30 səthə yaxın.
 const COUNT := 110
+
 ## Zərrəciklər kameranın ətrafındakı bu kvadratda saxlanılır (yarı-en, ekran
 ## eninə nisbətdə). Kənara çıxan zərrəcik əks tərəfə keçir — dünyanın hər
 ## yerində eyni sıxlıq, sabit yaddaş.
@@ -24,9 +27,25 @@ const FIELD_FACTOR := 0.8
 ## nöqtəyə bənzəyir, uzunu isə yağış kimi görünür.
 const STREAK := 0.85
 
-## Kameranın mərkəzi və göstərdiyi dünya eni — [Arena] hər kadr yeniləyir.
+## Kameranın mərkəzi və görünən sahənin UZUN kənarı — [Arena] hər kadr
+## yeniləyir. Uzun kənar, çünki sahə kvadratdır: qısa kənarla ölçülsəydi,
+## yatayda ekranın sol və sağ hissəsi zərrəciksiz qalardı.
 var focus := Vector2.ZERO
-var span := Const.VIEW_WIDTH_BASE
+var span := Const.VIEW_SPAN_BASE
+
+## Bu qat nə qədər DƏRİNDƏDİR: 0 = səth, 1 = dib.
+##
+## Su bir qat deyil, SÜTUNDUR. Bütün zərrəciklər eyni parlaqlıqda və eyni
+## sürətlə süzüləndə qat yastı bir "qar" kimi oxunur. İki dərinlik isə
+## parallaks verir: dərindəkilər sönük, nazik və yavaş, səthdəkilər parlaq
+## və sürətlidir. Göz fərqi ölçmür — DƏRİNLİK kimi oxuyur.
+##
+## Fərq qəsdən kiçikdir: yuxarıdan baxışda böyük parallaks "kamera səhv
+## işləyir" hissi verir.
+var depth := 0.0
+
+## Neçə zərrəcik. İki qat arasında bölünür (bax [method Arena._build_world]).
+var count := COUNT
 
 var _pos := PackedVector2Array()
 var _seed := PackedFloat32Array()
@@ -41,7 +60,7 @@ func _ready() -> void:
 	# onların üstündə, qida və mikroblar isə sonrakı qatlarda.
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	for i in COUNT:
+	for i in count:
 		_pos.push_back(Vector2.ZERO)
 		# Hər zərrəciyin öz fazası — hamısı eyni ritmdə titrəməsin.
 		_seed.push_back(rng.randf() * TAU)
@@ -68,7 +87,8 @@ func _process(delta: float) -> void:
 		# Broun hərəkəti: su molekullarının təsadüfi zərbələri. Zəifdir, amma
 		# olmasa zərrəciklər riyazi düzgünlükdə süzülür və süni görünür.
 		var jitter := Vector2.from_angle(_seed[i] + float(Time.get_ticks_msec()) * 0.0004) * 6.0
-		p += (Const.current_at(p) + jitter) * delta
+		# Dərin qat daha yavaş sürüşür — parallaks buradan gəlir.
+		p += (Const.current_at(p) * (1.0 - 0.42 * depth) + jitter) * delta
 
 		# Görüş kvadratından çıxan zərrəcik əks kənardan qayıdır.
 		var d := p - focus
@@ -97,4 +117,8 @@ func _draw() -> void:
 	# Şüşə kənarın rəngindən bir az açıq: fonun içində qalmalıdır, amma
 	# görünməlidir. Sönük olsa qat boş yerə hesablanır, parlaq olsa
 	# mikroblarla yarışır — ikisi arasında dar bir yol var.
-	draw_multiline(pts, Color(Palette.DISH_EDGE.lerp(Palette.TEXT, 0.30), 0.55), 1.8)
+	# Dərin qat sönük və nazikdir. Rəqəmlər art-direksiya sənədindən gəlir:
+	# dərin 0.20–0.26, səth 0.32–0.40 — ikisi də mikrobların parlaqlıq
+	# diapazonundan xeyli aşağıdadır.
+	var col := Palette.DISH_EDGE.lerp(Palette.TEXT, 0.30 - 0.12 * depth)
+	draw_multiline(pts, Color(col, 0.40 - 0.16 * depth), 1.8 - 0.5 * depth)

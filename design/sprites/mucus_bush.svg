@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <g transform="translate(32,32)">
+  <!-- Maneə növü: KOL (DishMap.Kind.BUSH). Mikrob da, top da KEÇİR —
+       içindəki mikrob gizlənir.
+
+       Forma dili KEÇİLƏ BİLƏNLİYİ deməlidir, yoxsa oyunçu divar sanıb
+       yanından dolanar. Ona görə bərk maneələrdən üç şeylə ayrılır:
+         1. HAŞİYƏ YOXDUR — bərk maneənin kəskin konturu buradadır, burada
+            kənar tükdən ibarətdir;
+         2. AÇIQDIR (yaşıla çalır), bərk maneə isə tünd firuzəyidir;
+         3. İÇİ SEYRƏKDİR — arxadakı döşəmə arasından görünür.
+
+       Radius yenə 120-dir: toqquşma həndəsəsi (Vector4.z) bütün növlərdə
+       eynidir, yalnız qayda fərqlidir. -->
+  <defs>
+    <radialGradient id="bushFill" cx="46%" cy="40%" r="64%">
+      <stop offset="0%" stop-color="#1F4A3E" stop-opacity="0.62"/>
+      <stop offset="72%" stop-color="#17392F" stop-opacity="0.50"/>
+      <stop offset="100%" stop-color="#122C25" stop-opacity="0.30"/>
+    </radialGradient>
+    <clipPath id="bushClip">
+      <circle cx="128" cy="128" r="120"/>
+    </clipPath>
+  </defs>
+
+  <circle cx="128" cy="128" r="118" fill="url(#bushFill)"/>
+
+  <!-- Kənar tükləri: qısa cizgilər halqa boyunca bayıra baxır. Konturun
+       yerini tuturlar, amma kəsilməz xətt yaratmırlar — "içəri girmək olar"
+       mesajı məhz buradadır. -->
+  <g stroke="#3E8A6B" stroke-width="7" stroke-linecap="round" opacity="0.75">
+    <path d="M128 14 L128 44"/><path d="M185 30 L172 57"/>
+    <path d="M226 71 L199 84"/><path d="M242 128 L212 128"/>
+    <path d="M226 185 L199 172"/><path d="M185 226 L172 199"/>
+    <path d="M128 242 L128 212"/><path d="M71 226 L84 199"/>
+    <path d="M30 185 L57 172"/><path d="M14 128 L44 128"/>
+    <path d="M30 71 L57 84"/><path d="M71 30 L84 57"/>
+  </g>
+  <g stroke="#2E6B52" stroke-width="5" stroke-linecap="round" opacity="0.6">
+    <path d="M158 20 L152 46"/><path d="M209 47 L191 66"/>
+    <path d="M236 99 L209 106"/><path d="M236 157 L209 150"/>
+    <path d="M209 209 L191 190"/><path d="M158 236 L152 210"/>
+    <path d="M98 236 L104 210"/><path d="M47 209 L65 190"/>
+    <path d="M20 157 L47 150"/><path d="M20 99 L47 106"/>
+    <path d="M47 47 L65 66"/><path d="M98 20 L104 46"/>
+  </g>
+
+  <!-- İçəridəki seyrək yarpaqlar. Sıxlıq gizlənməni İNANDIRIR: tam boş
+       dairənin içində gizlənmək oxunmazdı. -->
+  <g clip-path="url(#bushClip)" fill="#256B51" opacity="0.42">
+    <ellipse cx="96" cy="94" rx="30" ry="21" transform="rotate(-24 96 94)"/>
+    <ellipse cx="163" cy="108" rx="26" ry="18" transform="rotate(18 163 108)"/>
+    <ellipse cx="118" cy="152" rx="33" ry="22" transform="rotate(9 118 152)"/>
+    <ellipse cx="172" cy="168" rx="24" ry="16" transform="rotate(-14 172 168)"/>
+    <ellipse cx="76" cy="150" rx="22" ry="15" transform="rotate(32 76 150)"/>
+    <ellipse cx="128" cy="200" rx="26" ry="17" transform="rotate(-6 128 200)"/>
+  </g>
+  <!-- Sol-yuxarıdan işıq (ART_BIBLE §1) — yarpaqların üst kənarı parlayır. -->
+  <g clip-path="url(#bushClip)" fill="#4CA37C" opacity="0.30">
+    <ellipse cx="92" cy="86" rx="20" ry="9" transform="rotate(-24 92 86)"/>
+    <ellipse cx="159" cy="101" rx="17" ry="7" transform="rotate(18 159 101)"/>
+    <ellipse cx="113" cy="142" rx="22" ry="9" transform="rotate(9 113 142)"/>
+  </g>
+  </g>
+</svg>

@@ -44,6 +44,57 @@ body {
 	outline: none;
 }
 
+/* Portret örtüyü.
+   `window/handheld/orientation = 0` telefonu YALNIZ APK-da kilidləyir.
+   Brauzerdə kilidləmək olmur: `screen.orientation.lock()` yalnız tam ekran
+   rejimində və yalnız bəzi mobil brauzerlərdə işləyir. Oyun isə yalnız
+   yatay oynanır, ona görə portret pəncərədə kadrı sıxmaq əvəzinə oyunçudan
+   telefonu çevirməsi istənilir. Yükləmə arxada davam edir — örtük yalnız
+   üstdən çəkilən qatdır. */
+#rotate {
+	position: absolute;
+	inset: 0;
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 1.25rem;
+	background-color: #071012;
+	color: #EAFBF6;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	text-align: center;
+	z-index: 2;
+}
+
+#rotate.show {
+	display: flex;
+}
+
+#rotate svg {
+	width: 84px;
+	height: 84px;
+	animation: rotate-hint 2.4s ease-in-out infinite;
+}
+
+#rotate p {
+	margin: 0;
+	font-size: 1.15rem;
+}
+
+#rotate small {
+	color: #7FA0A0;
+	font-size: 0.9rem;
+}
+
+@keyframes rotate-hint {
+	0%, 34% { transform: rotate(0deg); }
+	62%, 100% { transform: rotate(-90deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#rotate svg { animation: none; transform: rotate(-90deg); }
+}
+
 #status, #status-splash, #status-progress {
 	position: absolute;
 	left: 0;
@@ -125,6 +176,16 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
+		<div id="rotate">
+			<svg viewBox="0 0 48 48" fill="none" stroke="#7CFF5B" stroke-width="2.4"
+					stroke-linejoin="round" aria-hidden="true">
+				<rect x="15" y="4" width="18" height="40" rx="3"></rect>
+				<line x1="21" y1="9" x2="27" y2="9" stroke-linecap="round"></line>
+			</svg>
+			<p>Telefonu yan çevir</p>
+			<small>Germ Arena yalnız yatay oynanır</small>
+		</div>
+
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
@@ -138,16 +199,26 @@ const engine = new Engine(GODOT_CONFIG);
 // yəni canvas-ın ölçüsünü mühərrik deyil, biz təyin edirik; Godot isə hər kadr
 // canvas.width/height-i oxuyub pəncərə ölçüsü kimi qəbul edir.
 //
-// Məqsəd: telefonda ekranı tam doldurmaq (APK ilə eyni görüntü), masaüstündə isə
-// enli pəncərədə oyunu telefon nisbətində, mərkəzdə saxlamaq.
+// Məqsəd: yatay tutulan telefonda ekranı tam doldurmaq (APK ilə eyni görüntü),
+// masaüstündə isə hündür pəncərədə oyunu 16:9-da, mərkəzdə saxlamaq.
+//
+// Nisbət eni yox, HÜNDÜRLÜYÜ məhdudlaşdırır: yatay telefon adətən 16:9-dan
+// ENLİDİR (20:9 və s.) və o artıq en kadra qatılmalıdır — `stretch/aspect`
+// "expand" olduğuna görə oyun həmin əlavə eni özü doldurur.
 // ---------------------------------------------------------------------------
-const MAX_ASPECT = 720 / 1280;   // 9:16 — bundan enli kadr verilmir
+const MIN_ASPECT = 1280 / 720;   // 16:9 — kadr bundan DAR (hündür) verilmir
 const MAX_DPR = 2;               // çox sıx ekranlarda doldurma yükünü saxlamaq üçün
 
 function fitCanvas() {
 	const canvas = document.getElementById('canvas');
-	const h = window.innerHeight;
-	const w = Math.min(window.innerWidth, Math.floor(h * MAX_ASPECT));
+	const rotate = document.getElementById('rotate');
+	// Portret pəncərə — oyun oynanmır, örtük göstərilir (bax #rotate).
+	if (rotate) {
+		rotate.classList.toggle('show', window.innerHeight > window.innerWidth);
+	}
+
+	const w = window.innerWidth;
+	const h = Math.min(window.innerHeight, Math.floor(w / MIN_ASPECT));
 	const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
 	canvas.style.width = w + 'px';
 	canvas.style.height = h + 'px';

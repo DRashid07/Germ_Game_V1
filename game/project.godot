@@ -19,11 +19,16 @@ Sfx="*res://scripts/client/sfx.gd"
 
 [display]
 
-window/size/viewport_width=720
-window/size/viewport_height=1280
-window/handheld/orientation=1
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/handheld/orientation=0
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+
+[gui]
+
+; Şrift teması — bax assets/ui/theme.tres.
+theme/custom="res://assets/ui/theme.tres"
 
 [input_devices]
 
@@ -37,5 +42,6 @@ common/physics_ticks_per_second=60
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+viewport/hdr_2d=true
 textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.027451, 0.058824, 0.070588, 1)

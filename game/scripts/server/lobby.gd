@@ -28,6 +28,9 @@ var _clock := 0.0
 ## nişan -> {"world": dünya id, "peer": köhnə peer id, "left_at": vaxt}
 var _orphans := {}
 
+## Hər dünyaya son göndərilmiş reyestrin versiyası (bax [member World.roster_rev]).
+var _roster_sent := {}
+
 ## `--verbose` ilə açılır: hər 5 saniyədən bir dünyaların vəziyyətini yazır.
 var verbose := false
 var _inputs_seen := 0
@@ -54,12 +57,13 @@ func _process(delta: float) -> void:
 
 # ---------------------------------------------------------------- giriş/çıxış
 
-func join(peer: int, player_name: String, species := 0) -> void:
+func join(peer: int, player_name: String, species := 0, mode := 0) -> void:
 	if peer_world.has(peer):
 		return                      # artıq dünyadadır
 	names[peer] = _sanitize(player_name)
 
-	var world := _open_world()
+	# Rejim də client-dən gəlir, yəni ETİBARSIZ ola bilər — növ kimi çərçivəyə salınır.
+	var world := _open_world(Const.mode_from(mode))
 	# Növ client-dən gəlir, yəni ETİBARSIZ ola bilər (bax [method Const.species_from]).
 	world.add_player(peer, names[peer], Const.species_from(species))
 	peer_world[peer] = world.id
@@ -68,16 +72,26 @@ func join(peer: int, player_name: String, species := 0) -> void:
 		names[peer], world.id, world.human_count()])
 
 
-## Yeri olan ilk dünyanı qaytarır; hamısı dolubsa yenisini açır.
-func _open_world() -> World:
+## Həmin REJİMDƏ yeri olan ilk dünyanı qaytarır; yoxdursa yenisini açır.
+##
+## Matçlı rejimdə "yer var" şərti ikiqatdır: dünyada boş yuva olmalıdır VƏ
+## matç hələ başlamamalıdır. Yarımçıq matça düşmək pisdir — gec gələn
+## oyunçu yeni dünyaya düşür və orada sıfırdan başlayır.
+func _open_world(mode: Const.Mode) -> World:
 	for wid in worlds:
 		var w: World = worlds[wid]
-		if w.has_room():
-			return w
-	var world := World.new(_next_world_id)
+		if w.mode != mode:
+			continue
+		if not w.has_room():
+			continue
+		if mode != Const.Mode.ENDLESS and w.phase != Const.Phase.WAITING \
+				and w.phase != Const.Phase.COUNTDOWN:
+			continue
+		return w
+	var world := World.new(_next_world_id, mode)
 	_next_world_id += 1
 	worlds[world.id] = world
-	print("[lobby] dünya #%d açıldı" % world.id)
+	print("[lobby] dünya #%d açıldı (%s)" % [world.id, Const.mode_name(mode)])
 	return world
 
 
@@ -120,16 +134,43 @@ func _tick_worlds(dt: float) -> void:
 	var empty: Array[int] = []
 	for wid in worlds:
 		var world: World = worlds[wid]
+		# Matç bitib nəticə göstərilibsə, dünya bağlanır. Oyunçular onsuz da
+		# nəticə ekranındadır və menyuya qayıdırlar.
+		if world.phase == Const.Phase.OVER and world.phase_t >= Const.RESULT_TIME:
+			empty.append(wid)
+			continue
 		var bursts := world.tick(dt)
 
 		# Partlayanlar əvvəlcə emal olunur: onlara nəticə gedir və dünyadan çıxırlar.
 		for entry in bursts:
 			_on_player_burst(world, entry)
 
+		# Matç bitdi — sağ qalanlara da nəticə gedir.
+		#
+		# Ayrı yoldur, çünki qalib PARTLAMIR: nişanı ölmür, "partladı" logu
+		# yazılmır, dünyadan çıxarılmır. Yalnız ekranını görür.
+		if not world.pending_results.is_empty():
+			for res in world.pending_results:
+				_on_match_end(world, res)
+			world.pending_results.clear()
+
+		# Reyestr yalnız DƏYİŞƏNDƏ gedir — hər tick yox.
+		#
+		# Ad və rəng mikrobun ömrü boyu sabitdir; onları snapshot-da daşımaq
+		# saniyədə 30 dəfə eyni baytları göndərmək demək idi və paketi MTU-dan
+		# yuxarı qaldıran səbəblərdən biri məhz bu idi.
+		var send_roster: bool = world.roster_rev != _roster_sent.get(wid, -1)
+		var table := world.roster() if send_roster else {}
+		if send_roster:
+			_roster_sent[wid] = world.roster_rev
+
 		for peer in world.peers:
 			# Bağlantısı kəsilmiş oyunçuya snapshot göndərmək mənasızdır.
-			if not world.is_suspended(peer):
-				Net.on_snapshot.rpc_id(peer, world.snapshot_for(peer))
+			if world.is_suspended(peer):
+				continue
+			if send_roster:
+				Net.on_roster.rpc_id(peer, table)
+			Net.on_snapshot.rpc_id(peer, world.snapshot_for(peer))
 
 		if world.is_empty():
 			empty.append(wid)
@@ -143,6 +184,30 @@ func _tick_worlds(dt: float) -> void:
 		if _report_accum >= 5.0:
 			_report_accum = 0.0
 			_report()
+
+
+## Matç bitdi və oyunçu SAĞ QALDI — nəticə göndərilir.
+##
+## Partlama yolundan (bax [method _on_player_burst]) iki fərqi var: nişan
+## silinmir (silinəcək bir mikrob yoxdur) və log "udu" yazır.
+func _on_match_end(world: World, res: Dictionary) -> void:
+	var peer := int(res["id"])
+	if world.is_suspended(peer):
+		return
+	var result := {
+		"pops": int(res["pops"]),
+		"cap": int(res["cap"]),
+		"level": Const.level_of(int(res["cap"])),
+		"age": float(res["age"]),
+		"killer": "",
+		"won": bool(res["won"]),
+		"survived": true,
+		"timed_out": bool(res["timed_out"]),
+	}
+	Net.on_burst.rpc_id(peer, result)
+	print("[lobby] %s matçı bitirdi (dünya #%d) — %s, %d partlatma, %.0f s" % [
+		names.get(peer, peer), world.id,
+		"QALİB" if result["won"] else "sağ qaldı", result["pops"], result["age"]])
 
 
 ## Oyunçunun mikrobu partladı — oyunu bitir, nəticə göndərilir və menyuya qayıdır.

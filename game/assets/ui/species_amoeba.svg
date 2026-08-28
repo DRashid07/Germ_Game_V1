@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Amöb: sabit forması yoxdur — yumrulanmış üçbucaq, kənarın özü hərəkət orqanıdır. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round">
+  <path d="M33 6 C46 8 57 19 54 33 C51 47 39 58 26 55 C12 52 5 40 8 27 C11 13 21 4 33 6 Z"
+        stroke-opacity="0.95"/>
+  <path d="M32 18 C40 19 46 25 44 33 C42 41 35 46 28 44 C21 42 17 35 19 28 C21 21 26 17 32 18 Z"
+        stroke-width="2.2" stroke-opacity="0.45"/>
+</svg>

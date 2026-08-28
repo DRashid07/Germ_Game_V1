@@ -16,6 +16,10 @@ var label := "auto"
 var drop_after := 0.0
 ## 0-dan böyükdürsə, bu qədər saniyədən sonra proses özü çıxır (CI üçün).
 var quit_after := 0.0
+## Hansı rejimə girsin (bax [enum Const.Mode]).
+var mode := int(Const.Mode.ENDLESS)
+## Hansı növlə girsin (bax [enum Const.Species]).
+var species := int(Const.Species.CILIATE)
 
 var _joined := false
 
@@ -46,7 +50,10 @@ func _on_connected() -> void:
 		_log("yenidən qoşuldu (id=%d), nişanla qayıdır" % Net.local_id)
 		return
 	_log("qoşuldu (id=%d), dünyaya girir" % Net.local_id)
-	Net.request_join.rpc_id(1, label, int(Const.Species.CILIATE))
+	# Rejim də ötürülür — onsuz TƏK QALAN-ın ONLAYN yolu bu alətlə heç vaxt
+	# sınana bilmirdi: server tərəf hazır idi, alət isə həmişə sonsuz arenaya
+	# girirdi.
+	Net.request_join.rpc_id(1, label, int(species), int(mode))
 
 
 func _on_world_joined(info: Dictionary) -> void:
@@ -75,9 +82,19 @@ func _simulate_drop() -> void:
 
 
 func _on_burst(result: Dictionary) -> void:
-	_log("PARTLADI — %d partlatma, tutum %d, %.0f s yaşadı (partladan: %s)" % [
-		result["pops"], result["cap"], result["age"],
-		result["killer"] if not str(result["killer"]).is_empty() else "aclıq"])
+	if bool(result.get("survived", false)):
+		_log("matçı SAĞ bitirdi — %s" % ("QALİB" if result.get("won", false) else "sağ qaldı"))
+	else:
+		_log("PARTLADI — %d partlatma, tutum %d, %.0f s yaşadı (partladan: %s)" % [
+			result["pops"], result["cap"], result["age"],
+			result["killer"] if not str(result["killer"]).is_empty() else "aclıq"])
+
+	# Oyun bitdi — DƏRHAL çıxırıq.
+	#
+	# [Arena] normalda menyuya qayıdır, menyu isə serveri yoxlamaq üçün şəbəkəyə
+	# çıxır. Headless test client-ində bunun mənası yoxdur və CI logunu
+	# "server yatıb" xətaları ilə doldururdu.
+	get_tree().quit(0)
 
 
 func _log(msg: String) -> void:

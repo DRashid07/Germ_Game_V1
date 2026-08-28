@@ -68,4 +68,19 @@ func _report() -> void:
 	var budget := 16.67
 	print("  60 FPS büdcəsindən istifadə: %.0f%% (orta), %.0f%% (1%% ən pis)" % [
 		avg * 1000.0 / budget * 100.0, p99 * 1000.0 / budget * 100.0])
+
+	# VSYNC XƏBƏRDARLIĞI — bu olmasa alət səssizcə YALAN danışır.
+	#
+	# Ölçülən şey divar saatının kadr aralığıdır. Vsync açıq olanda o aralıq
+	# oyunun yükündən yox, EKRANIN tezliyindən çıxır: yük nə qədər az olsa da,
+	# nəticə həmişə 16.7 / 8.3 / 4.2 ms görünür. Sınanıb — `--max-fps 30` ilə
+	# alət "büdcənin 200%-i" yazır, halbuki oyun daha yüngül işləyir.
+	#
+	# Bir dəfə bu rəqəmə inanılıb sənədə "büdcənin 25%-i" yazılmışdı; əslində
+	# 240 Hz monitorun kadr aralığı idi, həqiqi yük isə 10–12% çıxdı.
+	if DisplayServer.window_get_vsync_mode() != DisplayServer.VSYNC_DISABLED:
+		print("")
+		print("  ⚠ VSYNC AÇIQDIR — yuxarıdakı FPS və büdcə rəqəmləri OYUNUN")
+		print("    yükünü yox, ekranın tezliyini göstərir. Yalnız çəkiliş")
+		print("    çağırışı etibarlıdır. Düzgün ölçmək üçün: --disable-vsync")
 	print("=====================================\n")

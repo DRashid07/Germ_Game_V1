@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kirpikli: UZUN oval gövdə, kənar boyu sıx kirpiklər, arxada qamçı.
+     Forma qəsdən yatıqdır — ayaqlının şüaları radialdır, ikisi 36 pikseldə
+     bir-birinə oxşamamalıdır.
+     Rəng AĞDIR — kart onu `modulate` ilə boyayır. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round">
+  <ellipse cx="27" cy="32" rx="19" ry="12" stroke-opacity="0.95"/>
+  <g stroke-width="2.4" stroke-opacity="0.75">
+    <path d="M14 24 L11 19"/><path d="M22 21 L20 15"/><path d="M31 21 L31 15"/>
+    <path d="M39 24 L42 19"/>
+    <path d="M14 40 L11 45"/><path d="M22 43 L20 49"/><path d="M31 43 L31 49"/>
+    <path d="M39 40 L42 45"/>
+  </g>
+  <path d="M46 32 C53 30 56 36 62 33" stroke-width="2.4" stroke-opacity="0.8"/>
+</svg>

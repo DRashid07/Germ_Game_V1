@@ -2,7 +2,7 @@ class_name Screenshot
 extends Node
 ## Oyunu bir neçə kadr işlədib ekran görüntüsü saxlayır, sonra çıxır.
 ##
-##   Godot_v4.7.2.exe --path game --resolution 720x1560 -- --practice --shot C:/.../kadr.png
+##   Godot_v4.7.2.exe --path game --resolution 1280x720 -- --practice --shot C:/.../kadr.png
 ##
 ## Redaktoru açmadan tərtibatın doğru oturduğunu yoxlamaq üçündür.
 ## Headless rejimdə işləmir — həqiqi render tələb olunur.

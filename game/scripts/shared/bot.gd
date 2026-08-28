@@ -17,6 +17,14 @@ const BOT_NAMES := [
 ## Botun saxlamağa çalışdığı döyüş məsafəsi.
 const IDEAL_RANGE := 380.0
 ## Bu məsafədən uzaq rəqib bota maraqlı deyil.
+## Ac bot quru zonada bu qədər piksel dərinliyə qədər qala bilər.
+##
+## Sıfır olsaydı, bot kənara heç toxunmazdı və oyunçu quru zonanın yem
+## olduğunu heç vaxt görməzdi — mexanika yalnız sənəddə qalardı.
+const DRY_TOLERANCE := 140.0
+
+## Maneə yoxlaması gövdədən bu qədər irəlidə aparılır.
+const PROBE_AHEAD := 34.0
 const AGGRO_RANGE := 720.0
 ## Nişan səhvi (radian) — bot mükəmməl atıcı olmamalıdır.
 const AIM_ERROR := 0.09
@@ -66,7 +74,49 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 	var aim := me.aim
 	var fire := false
 
-	if target != null and target.pos.distance_to(me.pos) < AGGRO_RANGE and not hungry:
+	# QURU ZONA hər şeydən üstündür.
+	#
+	# Quru zonada top ARTIR (bax [method Sim._step_germs]) — yəni kənar ac bot
+	# üçün YEMDİR, dolu bot üçün ÖLÜMDÜR. Bot da oyunçu ilə eyni qərarı verir:
+	# acdırsa bir az qalır, doludursa dərhal qaçır.
+	#
+	# Bu yoxlama olmasaydı, TƏK QALAN-da botların hamısı daralan qabın çölündə
+	# qalıb bir-bir partlayardı və insan oyunçu heç nə etmədən udardı. Rejimin
+	# bütün gərginliyi buradan asılıdır.
+	#
+	# Sərhəd radiusun 92%-idir, tam kənarı yox: tam kənarda dönsəydi, bot orada
+	# titrəyərdi — bir kadr içəri, bir kadr çölə.
+	var out_by := me.pos.length() - sim.dish_radius * 0.92
+
+	# Tolerans QABLA birlikdə kiçilir.
+	#
+	# Mütləq ədəd olsaydı, 1200 px-lik qabda düzgün, 90 px-lik qabda isə absurd
+	# olardı: bot qabın 2.5 misli uzağında dayanıb "bir az kənardayam" sayardı.
+	# Ölçülüb — matçın sonunda iki bot 165 və 225 px-də dayanırdı, yəni
+	# bir-birindən o qədər uzaq idi ki, heç görmürdülər və matç döyüşlə yox,
+	# vaxt limiti ilə bitirdi.
+	var tolerance := minf(DRY_TOLERANCE, sim.dish_radius * 0.25)
+	var must_flee := out_by > 0.0 and (bloated or out_by > tolerance)
+
+	# Ac bot adətən döyüşdən yayınır — bir dəymə onu partlada bilər. Amma rəqib
+	# qidadan YAXINDIRSA, qaçmağın mənası yoxdur: rəqib onu qidaya çatana qədər
+	# vurar, üstəlik gözləmək aclıqla onsuz da öldürür.
+	#
+	# Bu şərt olmasaydı, matçın sonu ilişirdi: qab daraldıqca qida azalır, hər
+	# iki mikrob daimi ac olur və heç biri atəş açmır. Ölçülüb — beş matçın
+	# BEŞİ döyüşlə yox, 240 saniyəlik vaxt limiti ilə bitirdi.
+	var enemy_d := target.pos.distance_to(me.pos) if target != null else INF
+	var food_d := meal.pos.distance_to(me.pos) if meal != null else INF
+	var can_fight := not hungry or enemy_d < food_d
+
+	if must_flee:
+		var inward := (-me.pos).normalized()
+		move = inward
+		aim = inward.angle()
+		# Qaçarkən də boşalır: dolu olduğu üçün qaçır, top atmaq onu xilas edir.
+		fire = bloated and me.balls > Const.FIRE_MIN_BALLS
+
+	elif target != null and target.pos.distance_to(me.pos) < AGGRO_RANGE and can_fight:
 		var to_target := target.pos - me.pos
 		var dist := to_target.length()
 		var forward := to_target.normalized()
@@ -95,8 +145,78 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 		move = wander
 		aim = wander.angle()
 
-	return Sim.PlayerInput.make(_seq, move, aim, fire)
+	move = _avoid(sim, me, move)
 
+	var use_super := me.super_ready() and _wants_super(sim, me, target, meal, hungry)
+	return Sim.PlayerInput.make(_seq, move, aim, fire, use_super)
+
+
+## Maneədən yan keçir.
+##
+## Bot maneəni yalnız ATƏŞ üçün nəzərə alırdı (bax [method Sim.has_line_of_sight]),
+## HƏRƏKƏT üçün yox. Açıq qabda bu az bilinirdi, çünki yer çox idi. Amma quru
+## zona hamını mərkəzə sıxanda botlar maneəyə dirənib DONURDU: ölçülüb —
+## matçın son 60 saniyəsində üç bot 177, 177 və 154 px-də tərpənmədən qalmışdı,
+## bir-birini görmürdü və matç döyüşlə yox, vaxt limiti ilə bitirdi.
+##
+## Düz geri dönmək kifayət etmir: bot maneə ilə hədəf arasında irəli-geri
+## titrəyərdi. Ona görə TƏNGƏNS boyunca sürüşür — maneəni dolanır.
+static func _avoid(sim: Sim, me: Sim.GermState, move: Vector2) -> Vector2:
+	if move == Vector2.ZERO:
+		return move
+	var probe := me.pos + move * (me.radius() + PROBE_AHEAD)
+	for i in sim.obstacles.size():
+		if DishMap.wall_gone(sim.broken[i]):
+			continue
+		var o := sim.obstacles[i]
+		var c := Vector2(o.x, o.y)
+		var r := o.z + me.radius()
+		if probe.distance_squared_to(c) > r * r:
+			continue
+		var away := (me.pos - c).normalized()
+		var tangent := Vector2(-away.y, away.x)
+		if tangent.dot(move) < 0.0:
+			tangent = -tangent
+		return (tangent * 0.85 + away * 0.35).normalized()
+	return move
+
+
+## Bot superi nə vaxt işlədir.
+##
+## Botun superi olmasaydı, dünyanın yarısı superini heç vaxt göstərməzdi:
+## əhalinin çoxu botdur ([constant Const.MIN_POPULATION]) və insan oyunçu
+## rəqibin superini görmədən onun nə olduğunu öyrənə bilməzdi.
+##
+## Qaydalar QƏSDƏN sadədir — bot mükəmməl oynamamalıdır. Hər növ superini
+## öz TƏYİNATINA görə işlədir, amma anı həmişə düzgün seçmir:
+##   • kirpikli — üstünə top gələndə (qaçış)
+##   • ayaqlı   — yeri boş, yaxınlıqda qida var (yığım). Dolu ikən İŞLƏTMİR:
+##     tor onu öz tutumundan keçirib partlada bilər
+##   • amöb     — sıxılanda: ya acdır, ya rəqib top atmağa hazırdır (möhlət)
+static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
+		meal: Sim.FoodState, hungry: bool) -> bool:
+	match me.species:
+		Const.Species.CILIATE:
+			# Trixosist top xərcləyir — acıqkən qaçış özü ölümə apara bilər.
+			if me.balls <= Const.MIN_BALLS + Const.TRICHO_COST:
+				return false
+			var reach := me.radius() * Const.TRICHO_RADIUS
+			for shot in sim.shots:
+				if shot.owner_id != me.id and shot.pos.distance_to(me.pos) < reach:
+					return true
+			return false
+		Const.Species.HELIOZOAN:
+			if me.fill() > 0.55 or meal == null:
+				return false
+			return meal.pos.distance_to(me.pos) < me.radius() * Const.NET_RADIUS
+		Const.Species.AMOEBA:
+			if hungry and me.balls <= Const.MIN_BALLS + 1:
+				return true
+			if target == null:
+				return false
+			return target.pos.distance_to(me.pos) < Bot.IDEAL_RANGE * 0.7
+		_:
+			return false
 
 ## Topun uçuş müddətində hədəfin gedəcəyi nöqtə.
 ## İki dəfə hesablanır: birinci təxmin məsafəni, ikinci artıq qabaqlanmış

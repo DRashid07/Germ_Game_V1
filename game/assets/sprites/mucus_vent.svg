@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <g transform="translate(32,32)">
+  <!-- Maneə növü: CƏRƏYAN DEŞİYİ (DishMap.Kind.VENT). Hər şey keçir, içindən
+       keçən mikrob MƏRKƏZƏ doğru güclü itələnir.
+
+       Forma dili İTƏLƏMƏNİ deməlidir. Üç işarə:
+         1. DƏRİNLİK — mərkəzə doğru qaralan qradiyent, yəni "bu, deşikdir";
+         2. AXIN CİZGİLƏRİ — içəri baxan qövslər, suyun sorulduğunu göstərir;
+         3. İSTİ RƏNG — qabın hər yeri soyuq firuzəyidir, deşik isə kəhrəbadır.
+            Rəng oyunda "diqqət" mənasını daşıyır (bax ART_BIBLE §1, WARNING).
+
+       Haşiyəsi var, amma KƏSİKDİR: bərk maneənin bütöv konturundan fərqlənir,
+       yəni "keçmək olar" mesajı qorunur.
+
+       Radius yenə 120-dir — toqquşma həndəsəsi bütün növlərdə eynidir. -->
+  <defs>
+    <radialGradient id="ventPit" cx="50%" cy="50%" r="58%">
+      <stop offset="0%" stop-color="#040A0C"/>
+      <stop offset="45%" stop-color="#0A1D22"/>
+      <stop offset="100%" stop-color="#14333A" stop-opacity="0.55"/>
+    </radialGradient>
+  </defs>
+
+  <circle cx="128" cy="128" r="118" fill="url(#ventPit)"/>
+
+  <!-- Kəsik haşiyə — keçilə bilən sərhəd. -->
+  <circle cx="128" cy="128" r="115" fill="none" stroke="#C88A2E" stroke-width="6"
+          stroke-linecap="round" stroke-dasharray="26 22" opacity="0.85"/>
+
+  <!-- Axın cizgiləri: üç qol mərkəzə doğru burulur. Qövsdürlər, düz xətt
+       deyil — su burularaq sorulur, düz getmir (qabın öz burulğan modeli ilə
+       eyni dil, bax README "Qab su ilə doludur"). -->
+  <g fill="none" stroke="#E8A845" stroke-width="7" stroke-linecap="round" opacity="0.7">
+    <path d="M128 34 Q152 74 128 104"/>
+    <path d="M209 174 Q166 178 146 145"/>
+    <path d="M47 174 Q90 178 110 145"/>
+  </g>
+  <g fill="none" stroke="#8F6425" stroke-width="5" stroke-linecap="round" opacity="0.55">
+    <path d="M198 62 Q184 106 148 112"/>
+    <path d="M58 62 Q72 106 108 112"/>
+    <path d="M128 220 Q128 176 128 152"/>
+  </g>
+
+  <!-- Mərkəzdəki göz: ən dərin nöqtə, ətrafında nazik halqa. -->
+  <circle cx="128" cy="128" r="26" fill="#02070A"/>
+  <circle cx="128" cy="128" r="26" fill="none" stroke="#E8A845" stroke-width="3.5"
+          opacity="0.8"/>
+  <circle cx="128" cy="128" r="42" fill="none" stroke="#C88A2E" stroke-width="2"
+          stroke-dasharray="8 12" opacity="0.5"/>
+  </g>
+</svg>

@@ -20,10 +20,14 @@ func _ready() -> void:
 		_start_auto_client(args)
 	elif args.has("--preview"):
 		_start_preview(args)
+	elif args.has("--menu1"):
+		_start_old_menu(args)
+	elif args.has("--map"):
+		_start_map(args)
 	else:
 		# `_ready` icra olunarkən ağac hələ məşğuldur — səhnə dəyişimi
 		# növbəti kadra təxirə salınmalıdır.
-		get_tree().change_scene_to_file.call_deferred("res://scenes/ui/main_menu.tscn")
+		get_tree().change_scene_to_file.call_deferred("res://scenes/ui/menu.tscn")
 		_setup_screenshot(args)
 
 
@@ -40,7 +44,25 @@ func _start_practice(args: PackedStringArray) -> void:
 	if not kind.is_empty():
 		Net.species = Const.species_from(int(kind))
 
+	# `--mode <0|1>` — rejim (0 sonsuz arena, 1 TƏK QALAN).
+	#
+	# Menyu keçildiyi üçün seçim yalnız buradan verilə bilər. `--species` ilə
+	# eyni səbəb: rejimi redaktoru açmadan, təkrarlana bilən şəkildə yoxlamaq.
+	var mode := _arg_value(args, "--mode", "")
+	if not mode.is_empty():
+		Net.mode = Const.mode_from(int(mode))
+
+	# `--at x,y` — mikrobu xəritənin müəyyən yerində doğurur (yalnız yoxlama).
+	# `configure_practice`-dən ƏVVƏL oxunmalıdır: yerli dünya mikrobu məhz
+	# orada yaradır. Sonra qoyulsaydı proqnoz yeni yerdə, server isə köhnə
+	# yerdə olardı və ilk düzəliş mikrobu geri sıçradardı.
+	var at := _arg_value(args, "--at", "")
+
 	var arena: Arena = load("res://scenes/game/arena.tscn").instantiate()
+	if not at.is_empty():
+		var parts := at.split(",")
+		if parts.size() == 2:
+			arena.start_at = Vector2(float(parts[0]), float(parts[1]))
 	arena.configure_practice()
 	arena.auto_input = args.has("--shot")   # görüntü üçün mikrob hərəkətdə olsun
 	var tree := get_tree()
@@ -59,6 +81,27 @@ func _start_preview(args: PackedStringArray) -> void:
 	stand.capacity = int(_arg_value(args, "--preview-cap", "16"))
 	stand.fire_every = float(_arg_value(args, "--preview-fire", "0"))
 	stand.speed_scale = float(_arg_value(args, "--preview-speed", "1"))
+	var tree := get_tree()
+	tree.root.add_child.call_deferred(stand)
+	tree.set_deferred("current_scene", stand)
+	_setup_screenshot(args)
+
+
+
+
+## Köhnə şaquli menyu — ehtiyat (bax [MainMenu]).
+##
+## Oyunun girişi artıq [MenuV2]-dir. Köhnəsi bir buraxılış boyu saxlanılır:
+## yeni menyu şəbəkə axınını tam üzərinə götürüb və cihazda sınanana qədər
+## geri dönüş yolu açıq qalmalıdır.
+func _start_old_menu(args: PackedStringArray) -> void:
+	get_tree().change_scene_to_file.call_deferred("res://scenes/ui/main_menu.tscn")
+	_setup_screenshot(args)
+
+## Xəritə düzümünün stendi — bütün qab yuxarıdan (bax [MapPreview]).
+func _start_map(args: PackedStringArray) -> void:
+	var stand := MapPreview.new()
+	stand.layout = int(_arg_value(args, "--map-layout", "0"))
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(stand)
 	tree.set_deferred("current_scene", stand)
@@ -96,7 +139,14 @@ func _start_auto_client(args: PackedStringArray) -> void:
 	client.label = _arg_value(args, "--label", "auto")
 	client.drop_after = float(_arg_value(args, "--drop-after", "0"))
 	client.quit_after = float(_arg_value(args, "--quit-after", "0"))
+	client.mode = int(_arg_value(args, "--mode", "0"))
+	client.species = int(_arg_value(args, "--species", "0"))
 	get_tree().root.add_child.call_deferred(client)
+
+	# `--shot` burada da işləməlidir: onsuz ONLAYN oyunun görüntüsünü çəkmək
+	# mümkün deyildi və adların, rənglərin, geri sıçramanın şəbəkə üzərindən
+	# vizual yoxlanışı yalnız loglara qalırdı.
+	_setup_screenshot(args)
 
 
 static func _arg_value(args: PackedStringArray, key: String, fallback: String) -> String:

@@ -41,6 +41,11 @@ const TEXT_MUTED := Color("7FA0A0")
 const PANEL := Color("0E1D22")
 const PANEL_BORDER := Color("1F3D45")
 const FOCUS := Color("FFD166")
+## Yoldaşın adı və xəritə halqası — laym.
+##
+## Mikrob rənglərindən (bax [constant GERM_COLORS]) qəsdən KƏNARDADIR:
+## yoldaş nişanı heç bir oyunçunun öz rəngi ilə qarışmamalıdır.
+const ALLY := Color("A6FF4D")
 const SAFE := Color("52E08A")
 const DANGER := Color("FF4757")
 const WARNING := Color("FFB020")

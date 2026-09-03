@@ -62,6 +62,23 @@ var pending_results: Array = []
 ## qalibə "sonuncu mikrob sənsən" yazmaq YALAN olardı.
 var timed_out := false
 
+## Mikrobun komandası — mikrob ÖLƏNDƏN SONRA da qalır.
+##
+## Nəticə ekranı ölmüş oyunçuya da göndərilir və orada "hansı komanda idin"
+## sualı hələ də mənalıdır. [member Sim.germs] isə ölənləri saxlamır.
+var teams := {}
+
+## ÜÇLÜK: hər komandanın udduğu raund sayı.
+var round_wins := PackedInt32Array()
+## ÜÇLÜK: neçənci raunddur (1-dən başlayır).
+var round_no := 1
+
+## CÜT: dirilməni gözləyən mikroblar — `id -> qalan saniyə`.
+##
+## Ölən mikrob dünyadan çıxır, amma yeri komandaya SAXLANILIR. Yoldaşı da
+## ölsə, növbə təmizlənir və cüt matçdan çıxır.
+var _revive := {}
+
 var _frame_germs: Array = []    ## [Vector2 pos, Array row]
 var _frame_shots: Array = []
 var _frame_food: Array = []
@@ -84,19 +101,24 @@ func human_count() -> int:
 
 
 func has_room() -> bool:
-	return peers.size() < Const.WORLD_CAPACITY
+	# Tutum REJİMDƏN çıxır: ÜÇLÜK altı mikrobludur, sabit 10 işlətsəydik
+	# yeddinci oyunçu dolu dünyaya girməyə çalışardı.
+	return peers.size() < Const.mode_capacity(int(mode))
 
 
 ## Oyunçunu dünyaya salır və mikrobunu doğurur.
 func add_player(peer: int, player_name: String,
 		species := Const.Species.CILIATE) -> Sim.GermState:
 	# İnsan gələndə bot yerini ona verir — dünya heç vaxt hədddən çox olmur.
-	if sim.germs.size() >= Const.WORLD_CAPACITY:
+	if sim.germs.size() >= Const.mode_capacity(int(mode)):
 		_remove_one_bot()
 	peers.append(peer)
 	_last_seq[peer] = 0
 	tokens[peer] = _new_token()
-	return sim.add_germ(peer, player_name, _free_color(), false, species)
+	var g := sim.add_germ(peer, player_name, _free_color(), false, species)
+	g.team = _free_team()
+	teams[peer] = g.team
+	return g
 
 
 ## Dünyaya girəndə oyunçuya göndərilən məlumat.
@@ -155,6 +177,9 @@ func _step_phase(dt: float) -> void:
 				_set_phase(Const.Phase.PLAYING)
 		Const.Phase.PLAYING:
 			match_t += dt
+			# ÜÇLÜK vaxt həddi matçın deyil, RAUNDUN həddidir.
+			if mode == Const.Mode.TRIO and match_t >= Const.TRIO_ROUND:
+				_end_round()
 			# Bitmə şərti burada YOX, addımdan SONRA yoxlanılır: sonuncu mikrob
 			# məhz `sim.step` içində partlayır və matç o anda bitməlidir,
 			# növbəti tick-də yox. Bir tick gecikmə oyunçuya ölü dünyada bir
@@ -168,6 +193,89 @@ func _set_phase(next: Const.Phase) -> void:
 	phase_t = 0.0
 	if next == Const.Phase.OVER:
 		_award_survivors()
+
+
+## ÜÇLÜK: raundu bitirir və ya matçı yekunlaşdırır.
+##
+## Raund qalibi: sağ mikrobu çox olan komanda; bərabərdirsə TOP CƏMİ çox olan
+## (bax design/MODES.md §6.4). Bərabərlik qaydası lazımdır, çünki 60 saniyə
+## heç kimin ölmədiyi raund tamamilə mümkündür.
+func _end_round() -> void:
+	if round_wins.size() < 2:
+		round_wins.resize(2)
+
+	var alive := [_team_alive(0), _team_alive(1)]
+	var balls := [0, 0]
+	for gid in sim.germs:
+		var g: Sim.GermState = sim.germs[gid]
+		if g.team == 0 or g.team == 1:
+			balls[g.team] += g.balls
+
+	var winner := -1
+	if alive[0] != alive[1]:
+		winner = 0 if alive[0] > alive[1] else 1
+	elif balls[0] != balls[1]:
+		winner = 0 if balls[0] > balls[1] else 1
+	if winner >= 0:
+		round_wins[winner] += 1
+
+	# Matç bitdimi?
+	if winner >= 0 and round_wins[winner] >= Const.TRIO_ROUNDS_WIN:
+		_set_phase(Const.Phase.OVER)
+		return
+
+	# Yeni raund: HAMI eyni şərtlərlə doğulur.
+	#
+	# Tutum raunddan raunda KEÇMİR — keçsəydi, birinci raundu udan komanda
+	# ikincidə də üstün başlayardı və matç faktiki olaraq bir raundda həll
+	# olunardı.
+	round_no += 1
+	match_t = 0.0
+	_revive.clear()
+	_reset_round()
+	_set_phase(Const.Phase.COUNTDOWN)
+
+
+## Raund üçün dünyanı təzələyir: hamı diri, tam əhali, başlanğıc tutumu.
+func _reset_round() -> void:
+	for gid in sim.germs.keys():
+		var g: Sim.GermState = sim.germs[gid]
+		g.balls = Const.START_BALLS
+		g.capacity = Const.START_CAPACITY
+		g.charge = 0
+		g.super_t = 0.0
+		g.dry_t = 0.0
+		g.safe_t = Const.SPAWN_SAFE_TIME
+		g.vel = Vector2.ZERO
+		g.pos = sim.find_spawn(g.radius())
+	sim.shots.clear()
+
+
+## CÜT: dirilmə növbəsini işlədir.
+##
+## Tutum və super doluluğu SIFIRDAN başlayır — dirilmə ikinci şansdır,
+## cəzasız davam deyil. Əks halda dolu cüt qəsdən ölüb təzələnərdi.
+func _step_revive(dt: float) -> void:
+	if _revive.is_empty():
+		return
+	for gid in _revive.keys():
+		var r: Dictionary = _revive[gid]
+		# Yoldaşı da ölübsə dirilmə ləğv olunur — cüt matçdan çıxır.
+		if _team_alive(int(r["team"])) <= 0:
+			_revive.erase(gid)
+			places[gid] = _teams_standing() + 1
+			continue
+		r["left"] = float(r["left"]) - dt
+		if float(r["left"]) > 0.0:
+			continue
+		_revive.erase(gid)
+		var g := sim.add_germ(gid, String(r["name"]), int(r["color"]),
+			bool(r["bot"]), Const.species_from(int(r["species"])))
+		g.team = int(r["team"])
+		if bool(r["bot"]):
+			_bots[gid] = Bot.new(gid, randf_range(0.7, 1.3))
+		sim.events.append({
+			"t": "super", "pos": g.pos, "arg": 0.0, "color": g.color})
 
 
 ## Sağ qalanlara yer verir və insanların nəticəsini hazırlayır.
@@ -222,7 +330,13 @@ func _match_over() -> bool:
 	# Sıra VACİBDİR: hər iki şərt eyni tick-də ödənə bilər və o halda matç
 	# "sonuncu qaldı" ilə bitməlidir, "vaxt bitdi" ilə yox — nəticə ekranındakı
 	# cümlə bundan asılıdır.
-	if sim.germs.size() <= 1:
+	#
+	# KOMANDALI rejimdə şərt "bir mikrob" yox, "bir KOMANDA" qalmasıdır:
+	# CÜT-də sona iki mikrob qalır və matç onda bitir.
+	if Const.is_team_mode(int(mode)):
+		if _teams_standing() <= 1:
+			return true
+	elif sim.germs.size() <= 1:
 		return true
 	if match_t >= Const.MATCH_MAX:
 		timed_out = true
@@ -238,17 +352,79 @@ func inputs_open() -> bool:
 
 ## Snapshot-un matç sahəsi (bax [enum Const.MF]).
 func _match_row(peer: int) -> Array:
+	var team: int = int(teams.get(peer, -1))
+	var us := 0
+	var them := 0
+	if mode == Const.Mode.TRIO and team >= 0 and round_wins.size() >= 2:
+		us = round_wins[team]
+		them = round_wins[1 - team]
 	return [
 		int(mode),
 		int(phase),
 		phase_t,
 		sim.dish_radius,
-		sim.germs.size(),
+		_alive_count(),
 		int(places.get(peer, 0)),
+		team,
+		us,
+		them,
 	]
 
 
+## Sağ sayılan mikroblar — CÜT-də dirilmə gözləyən də SAĞ sayılır.
+##
+## Yoxsa HUD-dakı "SAĞ: N" yoldaş öləndə düşür, 15 saniyə sonra qalxır və
+## oyunçu kiminsə matçdan çıxdığını sanır.
+func _alive_count() -> int:
+	return sim.germs.size() + _revive.size()
+
+
+## Komandada neçə mikrob sağdır (dirilmə gözləyənlər DAXİL DEYİL).
+func _team_alive(team: int) -> int:
+	if team < 0:
+		return 0
+	var n := 0
+	for gid in sim.germs:
+		if sim.germs[gid].team == team:
+			n += 1
+	return n
+
+
+## Neçə komandanın sağ mikrobu var.
+func _teams_standing() -> int:
+	var seen := {}
+	for gid in sim.germs:
+		seen[sim.germs[gid].team] = true
+	for gid in _revive:
+		seen[int(_revive[gid]["team"])] = true
+	return seen.size()
+
+
 # ---------------------------------------------------------------- botlar
+
+## Ən boş komandanın nömrəsi (komandasız rejimdə -1).
+##
+## Ən azı olana verilir ki, komandalar bərabər dolsun. İnsanlar ayrı-ayrı
+## vaxtlarda gəlir və botlar aradakı boşluqları tutur — sadə növbə ilə
+## paylasaydıq, bir komanda iki insanla, digəri iki botla qalardı.
+func _free_team() -> int:
+	if not Const.is_team_mode(int(mode)):
+		return -1
+	var size := Const.team_size(int(mode))
+	var teams := Const.mode_capacity(int(mode)) / size
+	var count := PackedInt32Array()
+	count.resize(teams)
+	for gid in sim.germs:
+		var t: int = sim.germs[gid].team
+		if t >= 0 and t < teams:
+			count[t] += 1
+
+	var best := 0
+	for i in teams:
+		if count[i] < count[best]:
+			best = i
+	return best
+
 
 func _add_bot() -> void:
 	var bid := _next_bot_id
@@ -259,7 +435,9 @@ func _add_bot() -> void:
 	_bots[bid] = bot
 	# Botların növü təsadüfidir ki, dünyada hər üç növ görünsün.
 	var species := Const.species_from(randi() % Const.SPECIES_COUNT)
-	sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true, species)
+	var g := sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true, species)
+	g.team = _free_team()
+	teams[bid] = g.team
 
 
 func _remove_one_bot() -> void:
@@ -280,7 +458,7 @@ func _keep_population(dt: float) -> void:
 	if mode != Const.Mode.ENDLESS:
 		if phase != Const.Phase.WAITING and phase != Const.Phase.COUNTDOWN:
 			return
-		while sim.germs.size() < Const.WORLD_CAPACITY:
+		while sim.germs.size() < Const.mode_capacity(int(mode)):
 			_add_bot()
 		return
 
@@ -327,8 +505,13 @@ func tick(dt: float) -> Array:
 	# (bax [method Const.dish_radius]).
 	sim.dish_radius = Const.dish_radius(int(mode), match_t)
 	_keep_population(dt)
-	if mode == Const.Mode.SOLO and phase == Const.Phase.PLAYING:
+	# Spor TƏK QALAN və CÜT-dədir. ÜÇLÜK-də yoxdur: raund 60 saniyədir və
+	# tutum artımı o qədər qısa oyunda balansı pozur (bax design/MODES.md §6.4).
+	if phase == Const.Phase.PLAYING \
+			and (mode == Const.Mode.SOLO or mode == Const.Mode.DUO):
 		sim.keep_spores(dt)
+	if phase == Const.Phase.PLAYING:
+		_step_revive(dt)
 
 	for bid in _bots:
 		var bot: Bot = _bots[bid]
@@ -369,6 +552,27 @@ func tick(dt: float) -> Array:
 	for entry in sim.burst_log:
 		var gid := int(entry["id"])
 		_inputs.erase(gid)
+
+		# CÜT — yoldaşı sağ ikən ölüm MÜVƏQQƏTİDİR.
+		#
+		# Yer verilmir, nəticə ekranı göndərilmir, mikrob dünyaya qayıdır
+		# (bax [method _step_revive]). Yoldaşı da ölübsə, cüt matçdan çıxır və
+		# adi ölüm yolu işləyir.
+		var t: int = int(teams.get(gid, -1))
+		if mode == Const.Mode.DUO and phase == Const.Phase.PLAYING \
+				and _team_alive(t) > 0:
+			_revive[gid] = {
+				"left": Const.REVIVE_TIME,
+				"team": t,
+				"bot": _bots.has(gid),
+				"name": String(entry.get("name", "Mikrob")),
+				"color": int(entry.get("color", 0)),
+				"species": int(entry.get("species", 0)),
+			}
+			if _bots.has(gid):
+				_bots.erase(gid)
+			continue
+
 		if mode != Const.Mode.ENDLESS:
 			places[gid] = place
 			place += 1
@@ -378,7 +582,11 @@ func tick(dt: float) -> Array:
 		out.append(entry)
 
 	if phase == Const.Phase.PLAYING and _match_over():
-		_set_phase(Const.Phase.OVER)
+		# ÜÇLÜK-də bir komandanın qırılması RAUNDU bitirir, matçı yox.
+		if mode == Const.Mode.TRIO:
+			_end_round()
+		else:
+			_set_phase(Const.Phase.OVER)
 
 	_build_frame()
 	return out
@@ -479,6 +687,10 @@ static func _flags_of(g: Sim.GermState) -> int:
 	f |= (g.charge << Const.GFlag.CHARGE_SHIFT) & Const.GFlag.CHARGE_MASK
 	if g.super_t > 0.0:
 		f |= Const.GFlag.SUPER
+	# Komanda `team + 1` kimi yazılır ki, SIFIR "komandasız" qalsın
+	# (bax [enum Const.GFlag]).
+	if g.team >= 0:
+		f |= ((g.team + 1) << Const.GFlag.TEAM_SHIFT) & Const.GFlag.TEAM_MASK
 	return f
 
 

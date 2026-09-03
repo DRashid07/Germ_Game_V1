@@ -489,6 +489,22 @@ static func lift_budget(legs: int) -> int:
 ##
 ## [method setup] mikrobu bir dəfə qurur, ona görə reyestr sonra çatanda ad
 ## birdəfəlik boş qalardı (bax [method Arena._on_roster]).
+## Yoldaşdırmı — komandalı rejimdə ad rəngini və halqanı dəyişir.
+##
+## Rəng DƏYİŞMİR: rəng "kim" sualına cavab verir, komanda isə "dost ya
+## düşmən" sualına. İkisini bir kanalda birləşdirsək, on mikrobun
+## bir-birindən seçilməsi itər (bax design/MODES.md §4).
+var is_ally := false:
+	set(value):
+		if is_ally == value:
+			return
+		is_ally = value
+		if _label != null and not is_local:
+			_label.add_theme_color_override("font_color",
+				Palette.ALLY if value else Palette.TEXT_MUTED)
+		queue_redraw()
+
+
 func set_identity(p_name: String, p_color: int) -> void:
 	if p_name.is_empty():
 		return

@@ -32,6 +32,11 @@ static func run() -> int:
 	_test_full_solo_match()
 	_test_ordinals()
 	_test_solo_ends_and_ranks()
+	_test_aoi_covers_screen()
+	_test_team_bits_roundtrip()
+	_test_duo_teams()
+	_test_duo_revive()
+	_test_trio_rounds()
 	_test_ranking_matches_board()
 	_test_super_consumed_once()
 	_test_world_frozen_after_over()
@@ -44,6 +49,7 @@ static func run() -> int:
 	_test_wall_damage_bits()
 	_test_bots_use_supers()
 	_test_every_species_uses_super()
+	_test_super_flag_carries_duration()
 	_test_species_share_combat_math()
 	_test_species_movement()
 	_test_amoeba_squeezes()
@@ -1147,6 +1153,58 @@ static func _test_every_species_uses_super() -> void:
 		_check(supers > 0, "%s superi işə düşür (%d dəfə)" % [
 			NAMES[int(kind)], supers])
 
+
+## Snapshot-dakı "super işləyir" biti öz mikrobunun vəziyyətini QURA bilməlidir.
+##
+## Client öz superini adətən proqnozda özü işə salır. MƏŞQ rejimində isə yerli
+## dünya girişi proqnoz addımından ƏVVƏL emal edir: doluluq proqnoza çatanda
+## artıq sıfırdır, [method Sim.GermState.super_ready] "yox" deyir və proqnozun
+## sayğacı heç vaxt qalxmır. Ona görə ayaqlının toru və amöbin qabığı ÖZ
+## mikrobunda heç vaxt çəkilmirdi — botlarda görünürdü, çünki onlar snapshot
+## bayrağından gəlir.
+##
+## Düzəliş bayrağa söykənir (bax [method Arena._reconcile]), yəni yoxlanan şey
+## bayrağın MÜQAVİLƏSİDİR: super işləyəndə bit qalxır və nə qədər qalxılı
+## qalırsa, [method Const.super_time] də client-ə o qədər deyir.
+static func _test_super_flag_carries_duration() -> void:
+	const NAMES := ["kirpikli", "ayaqlı", "amöb"]
+	for kind in [Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		var world := _quiet_world(41)
+		var g := world.sim.add_germ(A_ID, "A", 0, false, kind)
+		g.safe_t = 0.0
+		g.charge = Const.SUPER_MAX
+		# İkinci mikrob dünyanı AÇIQ saxlayır: tək mikrob qalanda dünya bitmiş
+		# sayılır və donur (bax [method World._match_over]).
+		world.sim.add_germ(B_ID, "B", 1).safe_t = 0.0
+
+		world.accept_input(A_ID,
+			Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, false, true).to_array())
+		world.tick(Const.TICK_DELTA)
+
+		_check(_super_bit(world, A_ID),
+			"%s: snapshot 'super işləyir' bitini daşıyır" % NAMES[int(kind)])
+
+		# Bit nə qədər qalxılı qalır: client sayğacını məhz bundan qurur, yəni
+		# ikisi bir-birindən bir neçə tick-dən çox ayrılmamalıdır.
+		var ticks := 1
+		while _super_bit(world, A_ID) and ticks < 600:
+			world.tick(Const.TICK_DELTA)
+			ticks += 1
+		var lived := float(ticks) * Const.TICK_DELTA
+		var want := Const.super_time(int(kind))
+		_check(absf(lived - want) <= Const.TICK_DELTA * 3.0,
+			"%s: bit superin öz müddəti qədər qalır (%.2f ≈ %.2f s)"
+				% [NAMES[int(kind)], lived, want])
+
+
+## Snapshot-dakı mikrobun "super işləyir" biti — client-in etdiyi işin eynisi.
+static func _super_bit(world: World, gid: int) -> bool:
+	for row in Const.unpack_germs(world.snapshot_for(gid)[Const.Snap.GERMS]):
+		if int(row[Const.GF.ID]) == gid:
+			return (int(row[Const.GF.FLAGS]) & Const.GFlag.SUPER) != 0
+	return false
+
+
 ## Qabığın zədəsi BAYTDA daşınır və növü/dağılma bitini pozmur.
 ##
 ## Sayğac oyunçuya lazımdır: qabıq üç zərbədən sonra dağılır, amma sprite
@@ -1465,6 +1523,214 @@ static func _test_solo_ends_and_ranks() -> void:
 	var first_dead: int = int(world.places.keys()[0])
 	_check(int(world.places[first_dead]) == Const.WORLD_CAPACITY,
 		"ilk ölən sonuncu yeri alır (%d)" % int(world.places[first_dead]))
+
+
+## Göndərilən sahə EKRANIN KÜNCÜNƏ çatır — hər telefon nisbətində.
+##
+## Kamera miqyası qısa kənardan çıxır ([method Arena._update_camera]), yəni
+## ekran nə qədər genişdirsə, küncə qədər olan məsafə o qədər böyükdür.
+## [constant Const.AOI_FACTOR] bundan kiçik olsa, obyektlər ekranın
+## kənarında GÖZ QARŞISINDA peyda olar — səssiz uyğunluq səhvidir: 16:9
+## telefonda düzgün işləyir, 20:9-da isə oyunçu qidanın və rəqiblərin
+## havadan çıxdığını görür.
+##
+## Nisbətlər real telefonlardır: 16:9 (HD), 18:9, 19.5:9 (iPhone X+),
+## 20:9 (yaygın Android), 21:9 (oyun telefonları), 4:3 (planşet).
+static func _test_aoi_covers_screen() -> void:
+	const ASPECTS := [
+		[16.0 / 9.0, "16:9"], [2.0, "18:9"], [19.5 / 9.0, "19.5:9"],
+		[20.0 / 9.0, "20:9"], [21.0 / 9.0, "21:9"], [4.0 / 3.0, "4:3"],
+	]
+	var bad := ""
+	var worst := 0.0
+	for cap in [Const.START_CAPACITY, 30, Const.MAX_CAPACITY]:
+		var aoi := Const.aoi_radius(int(cap))
+		for pair in ASPECTS:
+			var a: float = pair[0]
+			# Görünən SAHƏ sabitdir (bax [constant Const.VIEW_ASPECT_REF]), yəni
+			# hündürlük nisbətdən çıxır: h = √(sahə / a), en = a × h.
+			# Künc yarım-diaqonaldır.
+			var area := Const.view_area(int(cap))
+			var h := sqrt(area / a)
+			var corner := 0.5 * h * sqrt(1.0 + a * a)
+			var ratio := corner / aoi
+			worst = maxf(worst, ratio)
+			if corner > aoi:
+				bad += " %s@%d(%.0f>%.0f)" % [pair[1], cap, corner, aoi]
+
+	_check(bad.is_empty(),
+		"görüş sahəsi bütün nisbətlərdə küncə çatır (ən dar hal %.0f%%)%s" % [
+			worst * 100.0, bad])
+
+
+## Komanda snapshot-dan DÜZGÜN keçir — client yoldaşı tanıya bilir.
+##
+## Komanda bayrağın 8-10-cu bitlərindədir və `team + 1` kimi yazılır. Səhv
+## sürüşmə və ya maska səssiz olur: mikroblar çəkilir, oyun işləyir, sadəcə
+## yoldaş düşmən kimi görünür — ekranda heç bir xəta yoxdur.
+static func _test_team_bits_roundtrip() -> void:
+	var world := World.new(44, Const.Mode.DUO)
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+	world._build_frame()
+
+	var want := {}
+	for gid in world.sim.germs:
+		want[gid] = world.sim.germs[gid].team
+
+	var bad := ""
+	var seen := 0
+	for row in Const.unpack_germs(world.snapshot_for(A_ID)[Const.Snap.GERMS]):
+		var gid := int(row[Const.GF.ID])
+		var got := ((int(row[Const.GF.FLAGS]) & Const.GFlag.TEAM_MASK)
+			>> Const.GFlag.TEAM_SHIFT) - 1
+		seen += 1
+		if got != int(want.get(gid, -99)):
+			bad += " %d:%d≠%d" % [gid, got, want.get(gid, -99)]
+	_check(seen > 0 and bad.is_empty(),
+		"komanda bayraqdan düzgün oxunur (%d mikrob%s)" % [seen, bad])
+
+	# Komandasız rejimdə bit SIFIR olmalıdır, yəni oxunuş -1 verməlidir.
+	var solo := World.new(45, Const.Mode.SOLO)
+	solo.add_player(A_ID, "A")
+	solo.tick(Const.TICK_DELTA)
+	solo._build_frame()
+	var none := true
+	for row in Const.unpack_germs(solo.snapshot_for(A_ID)[Const.Snap.GERMS]):
+		var got := ((int(row[Const.GF.FLAGS]) & Const.GFlag.TEAM_MASK)
+			>> Const.GFlag.TEAM_SHIFT) - 1
+		if got != -1:
+			none = false
+	_check(none, "komandasız rejimdə komanda biti boşdur")
+
+
+## CÜT: komandalar bərabər dolur və yoldaşa top dəymir.
+static func _test_duo_teams() -> void:
+	var world := World.new(41, Const.Mode.DUO)
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+
+	_check(world.sim.germs.size() == Const.WORLD_CAPACITY,
+		"CÜT-də dünya dolur (%d)" % world.sim.germs.size())
+
+	var count := {}
+	for gid in world.sim.germs:
+		var tm: int = world.sim.germs[gid].team
+		count[tm] = int(count.get(tm, 0)) + 1
+	var bad := ""
+	for k in count:
+		if int(count[k]) != 2:
+			bad += " komanda %d=%d" % [k, count[k]]
+	_check(count.size() == 5 and bad.is_empty(),
+		"5 komanda × 2 mikrob (%d komanda%s)" % [count.size(), bad])
+
+	# DOST ATƏŞİ: yoldaşa atılan top ona TOP ƏLAVƏ ETMƏMƏLİDİR.
+	var mate := -1
+	var my_team: int = world.sim.germs[A_ID].team
+	for gid in world.sim.germs:
+		if gid != A_ID and world.sim.germs[gid].team == my_team:
+			mate = gid
+			break
+	_check(mate != -1, "yoldaş tapıldı")
+	if mate == -1:
+		return
+
+	var me: Sim.GermState = world.sim.germs[A_ID]
+	var buddy: Sim.GermState = world.sim.germs[mate]
+	me.safe_t = 0.0
+	buddy.safe_t = 0.0
+	me.pos = Vector2.ZERO
+	buddy.pos = Vector2(150.0, 0.0)
+	var before := buddy.balls
+	me.aim = 0.0
+	me.cooldown = 0.0
+	world.sim._fire(me)
+	for i in 40:
+		buddy.pos = Vector2(150.0, 0.0)
+		world.sim.step({}, Const.TICK_DELTA)
+		if not world.sim.germs.has(mate):
+			break
+	var after: int = world.sim.germs[mate].balls if world.sim.germs.has(mate) else -1
+	_check(after <= before, "yoldaşa atılan top ona top VERMİR (%d → %d)" % [before, after])
+
+
+## CÜT: yoldaşı sağ ikən ölüm müvəqqətidir, ikisi də ölsə cüt çıxır.
+static func _test_duo_revive() -> void:
+	var world := World.new(42, Const.Mode.DUO)
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+	var steps := int(Const.COUNTDOWN_TIME / Const.TICK_DELTA) + 2
+	for i in steps:
+		world.tick(Const.TICK_DELTA)
+
+	var my_team: int = world.sim.germs[A_ID].team
+	var mate := -1
+	for gid in world.sim.germs:
+		if gid != A_ID and world.sim.germs[gid].team == my_team:
+			mate = gid
+			break
+
+	# Yoldaş ölür — YER ALMIR, çünki mən sağam.
+	world.sim.germs[mate].balls = 0
+	world.tick(Const.TICK_DELTA)
+	_check(not world.places.has(mate),
+		"yoldaşı sağ ikən ölənə yer VERİLMİR")
+	_check(not world.sim.germs.has(mate) and world._revive.has(mate),
+		"ölən yoldaş dirilmə növbəsindədir")
+
+	# Vaxt keçir — qayıdır.
+	var ticks := int(Const.REVIVE_TIME / Const.TICK_DELTA) + 4
+	for i in ticks:
+		world.sim.germs[A_ID].balls = Const.START_BALLS
+		world.tick(Const.TICK_DELTA)
+	_check(world.sim.germs.has(mate), "yoldaş %.0f saniyə sonra dirilir" % Const.REVIVE_TIME)
+	if world.sim.germs.has(mate):
+		_check(world.sim.germs[mate].capacity == Const.START_CAPACITY,
+			"dirilən mikrobun tutumu SIFIRLANIR (%d)" % world.sim.germs[mate].capacity)
+		_check(world.sim.germs[mate].team == my_team,
+			"dirilən mikrob ÖZ komandasına qayıdır")
+
+
+## ÜÇLÜK: 3v3, raundlar, üç raundun ikisini udan qalib.
+static func _test_trio_rounds() -> void:
+	var world := World.new(43, Const.Mode.TRIO)
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+
+	_check(world.sim.germs.size() == Const.TRIO_GERMS,
+		"ÜÇLÜK-də %d mikrob (%d)" % [Const.TRIO_GERMS, world.sim.germs.size()])
+	_check(is_equal_approx(Const.dish_radius(int(Const.Mode.TRIO), 0.0), Const.TRIO_RADIUS),
+		"ÜÇLÜK öz qabında oynanır (%.0f)" % Const.dish_radius(int(Const.Mode.TRIO), 0.0))
+
+	var steps := int(Const.COUNTDOWN_TIME / Const.TICK_DELTA) + 2
+	for i in steps:
+		world.tick(Const.TICK_DELTA)
+	_check(world.phase == Const.Phase.PLAYING, "birinci raund başladı")
+
+	# Komanda 1-i qırırıq → raund komanda 0-a gedir.
+	for gid in world.sim.germs.keys():
+		if world.sim.germs[gid].team == 1:
+			world.sim.germs[gid].balls = 0
+	world.tick(Const.TICK_DELTA)
+	world.tick(Const.TICK_DELTA)
+
+	_check(world.round_wins.size() >= 2 and world.round_wins[0] == 1,
+		"raundu udan komandaya xal yazılır (%s)" % str(world.round_wins))
+	_check(world.phase == Const.Phase.COUNTDOWN,
+		"matç bitmir, yeni raund başlayır (faza=%d)" % world.phase)
+	_check(world.sim.germs.size() == Const.TRIO_GERMS,
+		"yeni raundda hamı diridir (%d)" % world.sim.germs.size())
+
+	# İkinci raundu da eyni komanda udur → MATÇ bitir.
+	for i in steps:
+		world.tick(Const.TICK_DELTA)
+	for gid in world.sim.germs.keys():
+		if world.sim.germs[gid].team == 1:
+			world.sim.germs[gid].balls = 0
+	world.tick(Const.TICK_DELTA)
+	world.tick(Const.TICK_DELTA)
+	_check(world.phase == Const.Phase.OVER,
+		"iki raund udan matçı udur (faza=%d, hesab=%s)" % [world.phase, str(world.round_wins)])
 
 
 ## Matçın son sıralaması liderlər cədvəli ilə EYNİ meyara görə işləyir.

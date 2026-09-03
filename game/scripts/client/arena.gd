@@ -40,6 +40,13 @@ const VIEW_GRACE := Const.INTERP_DELAY + Const.TICK_DELTA
 ## deyil. Serverin qəbul etmədiyi atəş isə özü düşüb gedir.
 const MUZZLE_GRACE := 0.6
 
+## Server "super hələ işləyir" deyəndə proqnozun sayğacının uzadıldığı vaxt.
+##
+## Üç tick-dir: bir tick bayrağın öz gecikməsi, qalan ikisi itən paket üçün
+## ehtiyat. Uzun olsaydı, super serverdə bitəndən sonra da ekranda qalardı
+## (bax [method _reconcile]).
+const SUPER_TAIL := Const.TICK_DELTA * 3.0
+
 # ---------------------------------------------------------------- vəziyyət
 
 var my_id := 0
@@ -49,6 +56,9 @@ var practice := false
 var pred: Sim                       ## Yalnız lokal mikrobu saxlayan proqnoz
 var me: Sim.GermState
 var pending: Array[Sim.PlayerInput] = []
+## Serverin son dediyi "super işləyir" biti — qalxma anını tutmaq üçün
+## saxlanılır (bax [method _reconcile]).
+var _super_on_srv := false
 
 ## Şəbəkə testi üçün: joystick əvəzinə avtomatik giriş üretilir.
 var auto_input := false
@@ -121,6 +131,20 @@ var _visuals := {}                  ## germ id -> {"node": GermVisual, "seen": f
 var _roster := {}
 var _roster_rev := -1
 var _food_views := {}               ## food id -> {"node": Sprite2D, "seen": float}
+
+## Sprite HOVUZLARI — qida və toplar üçün.
+##
+## Partlayan mikrob BİR kadrda 24-ə qədər qida yaradır
+## (bax [method Sim._burst]) və client həmin kadrda 24 dəfə `Sprite2D.new()`
+## + `add_child` çağırırdı. Ölçülüb: 25 saniyəlik oyunda 2-3 kadr 60 FPS
+## büdcəsini aşırdı, ən pisi 68 ms — masaüstündə görünmür (orta 1.9 ms),
+## telefonda isə açıq "ilişmə"dir.
+##
+## Hovuz yaratmanı sıfıra endirir: node bir dəfə qurulur, sonra gizlədilib
+## təkrar işlədilir. Qat başına ayrı hovuz var ki, valideyn dəyişməsin —
+## `reparent` özü də ucuz deyil.
+var _food_pool: Array[Sprite2D] = []
+var _shot_pool: Array[Sprite2D] = []
 var _shot_views := {}               ## shot id -> Dictionary
 ## Öz atəşlərinin doğuş nöqtələri — serverin topu təsdiqləməsini gözləyir
 ## (bax [method _remember_muzzle]).
@@ -141,6 +165,10 @@ var _phase_t := 0.0
 var _wet_radius := Const.WORLD_RADIUS
 var _alive := 0
 var _place := 0
+## Baxanın komandası (-1 komandasız) — serverdən gəlir (bax [enum Const.MF]).
+var _my_team := -1
+var _score_us := 0
+var _score_em := 0
 
 ## ── Zərbə hissi ──────────────────────────────────────────────────────────
 
@@ -248,6 +276,16 @@ func _ready() -> void:
 ## saçır, qabın döşəməsi (0.05) və şəbəkə isə toxunulmaz qalır. Yəni fon
 ## bulanmır — yalnız CANLI olan şeylər işıq verir.
 func _build_glow() -> void:
+	# AŞAĞI keyfiyyətdə glow QURULMUR.
+	#
+	# Glow tam ekranı bir neçə dəfə bulandıran keçiddir və `hdr_2d` ilə birlikdə
+	# kadr buferini RGBA16F-ə qaldırır — mobil GPU-da hər kadr iki dəfə çox
+	# yaddaş zolağı. Söndürəndə HDR buferi də söndürülür, yoxsa bahalı format
+	# heç nəyə xidmət etmədən qalır.
+	if Net.quality == Const.Quality.LOW:
+		get_viewport().use_hdr_2d = false
+		return
+
 	var env := Environment.new()
 	env.background_mode = Environment.BG_CANVAS
 	env.glow_enabled = true
@@ -308,12 +346,14 @@ func _build_world() -> void:
 	# Zərrəcik sayı ARTMIR (110 ikiyə bölünür), ona görə əlavə yük yalnız
 	# ikinci  çağırışıdır.
 	_motes_deep = WaterMotes.new()
-	_motes_deep.count = 80
+	# Zərrəcik sıxlığı da keyfiyyətdən asılıdır: onlar oyuna təsir etmir,
+	# yalnız suyun canlı görünməsi üçündür — ilk kəsiləcək şey budur.
+	_motes_deep.count = 80 if Net.quality == Const.Quality.HIGH else 34
 	_motes_deep.depth = 1.0
 	add_child(_motes_deep)
 
 	_motes = WaterMotes.new()
-	_motes.count = 30
+	_motes.count = 30 if Net.quality == Const.Quality.HIGH else 14
 	add_child(_motes)
 
 	_food_layer = Node2D.new()
@@ -575,7 +615,8 @@ func _do_tick() -> void:
 	_hud.set_super(float(me.charge) / float(Const.SUPER_MAX), me.super_ready())
 	if _mode != Const.Mode.ENDLESS:
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
-			me.pos.length() > _wet_radius)
+			me.pos.length() > _wet_radius,
+			_score_us, _score_em, _score_us + _score_em + 1)
 	_hud.update_gauge(me.balls, me.capacity)
 
 
@@ -800,13 +841,34 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	# Doluluq və superin işlək olması serverin sözüdür.
 	#
 	# Superin QALAN VAXTI göndərilmir — yalnız "işləyir / işləmir" biti gedir.
-	# Bu, kifayətdir: proqnoz superi özü işə salıb öz sayğacını saxlayır
-	# (atəşin soyuması ilə eyni model), server isə bitəni bitmiş elan edir.
-	# Bir bitlə saniyədə 30 dəfə vaxt göndərməkdən qurtulmuş oluruq.
+	# Bir bitlə saniyədə 30 dəfə vaxt göndərməkdən qurtulmuş oluruq; sayğacı
+	# proqnoz özü aparır (atəşin soyuması ilə eyni model).
+	#
+	# Amma sayğacı QURMAQ proqnoza tapşırıla bilməz. Səbəb məşq rejimindədir:
+	# orada yerli dünya girişi [method _do_tick]-in İÇİNDƏ, proqnoz addımından
+	# ƏVVƏL emal edir. Super işə düşür, doluluq serverdə sıfırlanır və elə həmin
+	# kadrda bura gəlib proqnozun doluluğunu da sıfırlayır — nəticədə proqnoz
+	# addımına çatanda [method Sim.GermState.super_ready] artıq "yox" deyir və
+	# `super_t` HEÇ VAXT qalxmır. Ayaqlının toru və amöbin qabığı ÖZ mikrobunda
+	# görünmürdü (botlarda görünürdü, çünki onlar snapshot bayrağından çəkilir).
+	#
+	# Ona görə bayrağın QALXMASI sayğacı özü qurur, düşməsi isə sıfırlayır.
 	var flags := int(entry[Const.GF.FLAGS])
 	me.charge = (flags & Const.GFlag.CHARGE_MASK) >> Const.GFlag.CHARGE_SHIFT
-	if (flags & Const.GFlag.SUPER) == 0:
+	var super_on := (flags & Const.GFlag.SUPER) != 0
+	if not super_on:
 		me.super_t = 0.0
+	elif not _super_on_srv:
+		# Serverdə super İNDİ başladı. `maxf` onlayn oyun üçündür: orada proqnoz
+		# superi özü işə salıb və onun sayğacı bayraqdan bir neçə tick QABAQDA
+		# olur — geri çəkilməməlidir.
+		me.super_t = maxf(me.super_t, Const.super_time(int(me.species)))
+	else:
+		# Server hələ "işləyir" deyir, proqnozun sayğacı isə bitib: quyruq
+		# fərqidir. Bir neçə tick uzadılır ki, effekt bayraq sönənə qədər
+		# davam etsin və itən paketdə yanıb-sönməsin.
+		me.super_t = maxf(me.super_t, SUPER_TAIL)
+	_super_on_srv = super_on
 
 	var balls_before := me.balls
 	var cap_before := me.capacity
@@ -1001,14 +1063,16 @@ func _update_camera(delta: float) -> void:
 	_view_span = lerpf(_view_span, want, clampf(delta * 2.0, 0.0, 1.0))
 
 	var vp := get_viewport_rect().size
-	# Miqyas QISA kənardan çıxarılır, endən yox.
+	# Miqyas SAHƏDƏN çıxarılır — nə endən, nə də qısa kənardan.
 	#
-	# Endən çıxarılsaydı, eyni [method Const.view_span] dəyəri yatayda və
-	# portretdə tamamilə fərqli sahə verərdi: 1280×720-də görünən dünya
-	# 620×349-a düşərdi — portretdəkindən üç dəfə dar. Qısa kənar isə hər iki
-	# oriyentasiyada eyni sahəni saxlayır, sadəcə çevirir.
-	var short_side := minf(vp.x, vp.y)
-	var k := short_side / maxf(_view_span, 1.0)
+	# Qısa kənardan çıxsaydı (əvvəl belə idi), geniş ekran daha çox dünya
+	# görərdi: 21:9 telefon 16:9-dan 31%, 4:3-dən isə 75% çox sahə. Ekranın
+	# forması oyun üstünlüyünə çevrilirdi.
+	#
+	# Sahə sabit olanda forma yalnız KADRIN FORMASINI dəyişir: geniş ekran
+	# enli və alçaq görür, kvadrata yaxın ekran dar və hündür. Məlumatın
+	# miqdarı hamıda eynidir (bax [constant Const.VIEW_ASPECT_REF]).
+	var k := Const.camera_zoom_span(_view_span, vp)
 	# Kamera zərbəsi. Sönmə SÜRƏTLİDİR: zərbə ani olmalıdır, uzansa
 	# "nəfəs alan kamera" kimi oxunur və oyunçunu yorur.
 	_punch = move_toward(_punch, 0.0, delta * 0.75)
@@ -1030,10 +1094,12 @@ func _update_camera(delta: float) -> void:
 	# Zərrəciklər kameranı izləyir: dünyanın hamısını doldurmaq əvəzinə
 	# yalnız görünən sahədə saxlanılır (bax [WaterMotes]).
 	#
-	# Sahə UZUN kənarla ölçülür: `_view_span` qısa kənarın ölçüsüdür, zərrəcik
-	# sahəsi isə kvadratdır və ekranın geniş tərəfini də örtməlidir — yoxsa
-	# yatayda sol və sağ kənarlar boş qalar.
-	var mote_span := _view_span * (maxf(vp.x, vp.y) / maxf(short_side, 1.0))
+	# Sahə UZUN kənarla ölçülür: zərrəcik sahəsi kvadratdır və ekranın geniş
+	# tərəfini də örtməlidir — yoxsa yatayda sol və sağ kənarlar boş qalar.
+	#
+	# Görünən dünya ölçüsü birbaşa miqyasdan çıxır (`piksel / zoom`), çünki
+	# artıq qısa kənar deyil, SAHƏ sabitdir.
+	var mote_span := maxf(vp.x, vp.y) / maxf(k, 0.001)
 	_motes.focus = _shown_pos()
 	_motes.span = mote_span
 	_motes_deep.focus = _shown_pos()
@@ -1068,6 +1134,9 @@ func _apply_match(row: Array) -> void:
 	_wet_radius = float(row[Const.MF.RADIUS])
 	_alive = int(row[Const.MF.ALIVE])
 	_place = int(row[Const.MF.PLACE])
+	_my_team = int(row[Const.MF.TEAM])
+	_score_us = int(row[Const.MF.SCORE_US])
+	_score_em = int(row[Const.MF.SCORE_EM])
 	pred.dish_radius = _wet_radius
 
 	if was != _phase:
@@ -1297,6 +1366,10 @@ func _render_germs(render_time: float) -> void:
 		# mikrob yaranan kimi göndərilir.
 		var info: Array = _roster.get(gid, ["", 0])
 		var v := _ensure_germ(gid, String(info[0]), int(info[1]), kind)
+		# Komanda bayraqda `team + 1` kimi gəlir; 0 komandasız deməkdir.
+		var tm := ((int(n[Const.GF.FLAGS]) & Const.GFlag.TEAM_MASK)
+			>> Const.GFlag.TEAM_SHIFT) - 1
+		v.is_ally = _my_team >= 0 and tm == _my_team and gid != my_id
 
 		var pos := Vector2(float(o[Const.GF.X]), float(o[Const.GF.Y])).lerp(
 			Vector2(float(n[Const.GF.X]), float(n[Const.GF.Y])), alpha)
@@ -1409,10 +1482,9 @@ func _render_shots(render_time: float) -> void:
 		var sid := int(e[Const.SF.ID])
 		var view: Dictionary = _shot_views.get(sid, {})
 		if view.is_empty():
-			var spr := Sprite2D.new()
+			var spr := _take(_shot_pool, _shot_layer)
 			spr.texture = _tex["shot"]
 			spr.modulate = Palette.germ_color(int(e[Const.SF.COLOR]))
-			_shot_layer.add_child(spr)
 			var mine := int(e[Const.SF.COLOR]) == my_color
 			view = {"node": spr, "mine": mine}
 			if mine:
@@ -1505,7 +1577,7 @@ func _render_food(_render_time: float) -> void:
 
 		var view: Dictionary = _food_views.get(fid, {})
 		if view.is_empty():
-			var spr := Sprite2D.new()
+			var spr := _take(_food_pool, _food_layer)
 			spr.texture = _tex["food"]
 			# Sprite-ın parlaq haşiyəsi var, ona görə görünən top gerçək
 			# radiusdan bir az böyükdür — toqquşma ilə uyğunlaşdırılır.
@@ -1518,7 +1590,6 @@ func _render_food(_render_time: float) -> void:
 				k *= Const.SPORE_RADIUS / Const.FOOD_RADIUS
 			spr.scale = Vector2(k, k)
 			spr.position = target
-			_food_layer.add_child(spr)
 			view = {"node": spr}
 			_food_views[fid] = view
 		var node: Sprite2D = view["node"]
@@ -1527,6 +1598,31 @@ func _render_food(_render_time: float) -> void:
 
 
 # ---------------------------------------------------------------- təmizlik
+
+## Hovuzdan sprite götürür; hovuz boşdursa yenisini qurur.
+func _take(pool: Array[Sprite2D], layer: Node) -> Sprite2D:
+	if pool.is_empty():
+		var fresh := Sprite2D.new()
+		layer.add_child(fresh)
+		return fresh
+	var spr: Sprite2D = pool.pop_back()
+	spr.visible = true
+	spr.modulate = Color.WHITE
+	spr.rotation = 0.0
+	spr.scale = Vector2.ONE
+	return spr
+
+
+## Sprite-ı hovuza qaytarır — ağacda qalır, sadəcə gizlənir.
+##
+## Görünməyən node çəkilmir, yəni çəkiliş çağırışına düşmür; ağacdan
+## çıxarıb geri qoymaq isə hovuzun qazancını yeyərdi.
+func _give(pool: Array[Sprite2D], spr: Sprite2D) -> void:
+	if spr == null or not is_instance_valid(spr):
+		return
+	spr.visible = false
+	pool.append(spr)
+
 
 ## Görüş sahəsindən çıxan obyektlərin görüntüsü silinir.
 ## Kiçik möhlət verilir, çünki render 100 ms geridədir.
@@ -1538,7 +1634,16 @@ func _sweep_views() -> void:
 			if float(dict[key].get("seen", 0.0)) < cutoff:
 				dead.append(key)
 		for key in dead:
-			(dict[key]["node"] as Node).queue_free()
+			var node: Node = dict[key]["node"]
+			# Qida və toplar HOVUZA qayıdır, silinmir. Mikrobun görüntüsü isə
+			# mürəkkəbdir (ad etiketi, növ, animasiya vəziyyəti) — onu təkrar
+			# işlətmək qurmaqdan ucuz deyil, ona görə o silinir.
+			if is_same(dict, _food_views):
+				_give(_food_pool, node as Sprite2D)
+			elif is_same(dict, _shot_views):
+				_give(_shot_pool, node as Sprite2D)
+			else:
+				node.queue_free()
 			dict.erase(key)
 		# Ölən topun izi də getməlidir: yoxsa `_tracks` böyüyür və izin
 		# qalığı ekranda donmuş qalır. `is_same` şərtdir — id-lər yalnız

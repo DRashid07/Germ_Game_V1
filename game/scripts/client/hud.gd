@@ -57,6 +57,7 @@ var _board_lbl: Label
 var _pop_lbl: Label
 ## Sağ qalan mikrob sayı — yalnız matçlı rejimdə görünür.
 var _alive_lbl: Label
+var _score_lbl: Label
 var _center_lbl: Label
 var _sub_lbl: Label
 var _result: Control
@@ -183,6 +184,23 @@ func _build_board() -> void:
 	_alive_lbl.offset_bottom = 70
 	_alive_lbl.visible = false
 	_safe_root.add_child(_alive_lbl)
+
+	# RAUND HESABI — yalnız ÜÇLÜK-də.
+	#
+	# "SAĞ: N" sayğacının yerində durur, çünki ikisi eyni sualın iki rejimdəki
+	# cavabıdır: "matç harda dayanıb". ÜÇLÜK-də sağ sayı az məna daşıyır —
+	# raund onsuz da 60 saniyəyə bitir, matçı isə hesab həll edir.
+	_score_lbl = _make_label(24, Palette.ALLY)
+	_score_lbl.theme_type_variation = "Heading"
+	_score_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_score_lbl.anchor_left = 1.0
+	_score_lbl.anchor_right = 1.0
+	_score_lbl.offset_left = -260
+	_score_lbl.offset_right = -20
+	_score_lbl.offset_top = 40
+	_score_lbl.offset_bottom = 70
+	_score_lbl.visible = false
+	_safe_root.add_child(_score_lbl)
 
 	_board_lbl = _make_label(21, Palette.TEXT)
 	_board_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -525,7 +543,9 @@ func show_result(result: Dictionary) -> void:
 ##
 ## Üç şey deyir: neçəyə başlayır, neçə nəfər qalıb, quru zonadasanmı.
 ## Üçü də oyunçunun növbəti hərəkətini dəyişir, ona görə üçü də ekrandadır.
-func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool) -> void:
+## [param us] və [param them] yalnız ÜÇLÜK-də mənalıdır: udulan raund sayı.
+func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool,
+		us := 0, them := 0, round_no := 1) -> void:
 	if phase == Const.Phase.COUNTDOWN:
 		# Sayım gedərkən mərkəzdəki HƏR İKİ sətir bu funksiyanındır.
 		#
@@ -539,8 +559,11 @@ func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool) 
 		_sub_lbl.text = "%s · %d mikrob" % [Const.mode_name(mode), alive]
 		_sub_lbl.visible = true
 
+	var trio := mode == Const.Mode.TRIO
 	_alive_lbl.text = "SAĞ: %d" % alive
-	_alive_lbl.visible = phase == Const.Phase.PLAYING
+	_alive_lbl.visible = phase == Const.Phase.PLAYING and not trio
+	_score_lbl.text = "RAUND %d   %d — %d" % [round_no, us, them]
+	_score_lbl.visible = trio and phase != Const.Phase.WAITING
 
 	# Quruma xəbərdarlığı burada YAZILMIR — yalnız bayraq qoyulur.
 	#

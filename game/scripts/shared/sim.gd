@@ -52,6 +52,12 @@ class GermState:
 	## öz superi var ([method _use_super]). Döyüş riyaziyyatı — atəş dövrü,
 	## topun qiyməti, tutum artımı — üç növdə də EYNİDİR və bu, testlə saxlanılır.
 	var species := Const.Species.CILIATE
+	## Komanda nömrəsi, -1 = komandasız (SONSUZ ARENA, TƏK QALAN).
+	##
+	## Simulyasiyaya təsir edir: yoldaşa top dəymir və tor yoldaşı yavaşlatmır.
+	## İTƏLƏMƏ isə komandaya baxmır — üst-üstə düşən iki yoldaş ekranda
+	## oxunmaz bir ləkəyə çevrilərdi.
+	var team := -1
 
 	func radius() -> float:
 		return Const.germ_radius(capacity)
@@ -71,6 +77,7 @@ class GermState:
 		c.cooldown = cooldown; c.safe_t = safe_t; c.drain_t = drain_t
 		c.pops = pops; c.age = age; c.is_bot = is_bot; c.alive = alive
 		c.species = species
+		c.team = team
 		c.charge = charge; c.super_t = super_t; c.food_acc = food_acc
 		c.dry_t = dry_t
 		return c
@@ -464,6 +471,10 @@ func _net_slow(g: GermState) -> float:
 		var o: GermState = germs[id]
 		if o.id == g.id or not o.alive or not o.in_net():
 			continue
+		# Tor YOLDAŞI yavaşlatmır — yoxsa ayaqlı öz komandasını tələyə salır və
+		# super komanda rejimində cəzaya çevrilir.
+		if o.team >= 0 and o.team == g.team:
+			continue
 		var reach := o.radius() * Const.NET_RADIUS
 		if g.pos.distance_squared_to(o.pos) <= reach * reach:
 			return Const.NET_SLOW
@@ -492,13 +503,13 @@ func _use_super(g: GermState) -> void:
 		"arg": reach,
 		"color": g.color,
 	})
+	# Davametmə [method Const.super_time]-dan gəlir: client eyni cədvəldən
+	# oxuyur (bax [method Arena._reconcile]), yəni müddət BİR yerdə yazılır.
 	match g.species:
 		Const.Species.CILIATE:
 			_super_trichocyst(g)
-		Const.Species.HELIOZOAN:
-			g.super_t = Const.NET_TIME
-		Const.Species.AMOEBA:
-			g.super_t = Const.CYST_TIME
+		_:
+			g.super_t = Const.super_time(int(g.species))
 
 
 ## KİRPİKLİ — trixosist partlayışı.
@@ -715,9 +726,17 @@ func _step_shots(dt: float) -> void:
 				hit_obstacle = o
 				hit_index = i
 
+		var owner: GermState = germs.get(s.owner_id)
 		for id in germs:
 			var g: GermState = germs[id]
 			if not g.alive or g.id == s.owner_id or g.safe_t > 0.0:
+				continue
+			# DOST ATƏŞİ YOXDUR — top yoldaşın içindən keçir.
+			#
+			# Top rəqibə +2 verir, yəni yoldaşa dəyməsi ona KÖMƏK deyil, zərərdir:
+			# onu partlama həddinə yaxınlaşdırır. Komandalı rejimdə bu, oyunçunu
+			# yoldaşından qaçmağa məcbur edərdi.
+			if owner != null and owner.team >= 0 and g.team == owner.team:
 				continue
 			var t := _seg_circle_t(from, to, g.pos, g.radius() + Const.SHOT_RADIUS)
 			if t >= 0.0 and t < best:
@@ -841,6 +860,9 @@ func _burst(g: GermState, killer_id: int) -> void:
 		# oyunun ən böyük anına çevirir.
 		killer.charge = Const.SUPER_MAX
 
+	# Ad, rəng, növ və komanda da yazılır: CÜT-də ölüm müvəqqətidir və mikrob
+	# eyni kimliklə qayıdır (bax [method World._step_revive]). Bunlar yalnız
+	# serverdə qalır — şəbəkəyə getmir.
 	burst_log.append({
 		"id": g.id,
 		"killer": killer_id,
@@ -848,6 +870,10 @@ func _burst(g: GermState, killer_id: int) -> void:
 		"pops": g.pops,
 		"cap": g.capacity,
 		"age": g.age,
+		"name": g.name,
+		"color": g.color,
+		"species": int(g.species),
+		"team": g.team,
 	})
 
 

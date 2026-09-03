@@ -144,17 +144,18 @@ Hədd fonu (`0.05`) toxunulmaz saxlayır: yalnız **canlı** olan şeylər işı
 
 ## Rejimlər
 
-İki rejim var və oyunçu menyuda OYNA düyməsinin üstündəki kartdan seçir.
+Dörd rejim var və oyunçu menyuda OYNA düyməsinin üstündəki kartdan seçir.
 Qaydalar (top, partlama, növ gücləri) hər ikisində EYNİDİR — fərq yalnız
 matçın olub-olmamasındadır.
 
-| | **SONSUZ ARENA** (ilkin) | **TƏK QALAN** |
-|---|---|---|
-| Giriş | dərhal — gözləmə yoxdur | 3 saniyə geriyə sayım |
-| Mikrob sayı | ən azı 6, botlarla saxlanılır | 10, matç boyu bərpa olunmur |
-| Ölüm | nəticə ekranı, sonra menyu — dərhal yenidən girirsən | matç bitir, yer alırsan |
-| Qab | sabit | 45 s sonra quruyub daralır |
-| Bitiş | yoxdur | sonuncu mikrob qalanda |
+| | **SONSUZ ARENA** | **TƏK QALAN** | **CÜT** | **ÜÇLÜK** |
+|---|---|---|---|---|
+| Mikrob | ən azı 6 | 10 | 10 (5×2) | 6 (3v3) |
+| Giriş | dərhal | 3 s sayım | 3 s sayım | 3 s sayım |
+| Ölüm | menyu, yenidən gir | matç bitir | **yoldaşın diriltir** | raund bitir |
+| Qab | sabit 1200 | 1200 → 90 | 1200 → 90 | 700 → 220 |
+| Spor | yox | 3 | 3 | yox |
+| Bitiş | yoxdur | sonuncu mikrob | sonuncu cüt | 3 raundun 2-si |
 
 **Quru zona top ARTIRIR, azaltmır.** Bu, rejimin əsas qərarıdır: oyunun imza
 ölümü partlamaqdır, aclıqla sönmək deyil. Ona görə kənar həm təhlükə, həm də
@@ -175,12 +176,45 @@ doğuş hədəfi də qabın ölçüsü ilə kiçilir. Bu, qaydanı bir cümləy�
 sonuna qədər 90 px-ə qədər yavaş sıxılma davam edir. Dayansaydı, son dəqiqədə
 heç nə dəyişməzdi.
 
-Tam quruluş: [design/MODES.md](design/MODES.md). Orada həm tətbiq olunmuş
-hissə, həm də növbəti mərhələ (CÜT 2v2, ÜÇLÜK 3v3) yazılıb.
+**Komanda ayrı KANALLA göstərilir, rənglə yox.** On mikrob rəngi qalır, çünki
+rəng "kim" sualına cavab verir, komanda isə "dost ya düşmən" sualına — ikisi
+ayrı sualdır. Yoldaşın adı **laym**, düşməninki sönük ağdır.
+
+CÜT-də yoldaşın sağ ikən ölüm müvəqqətidir: 15 saniyə sonra qayıdırsan, amma
+**tutum sıfırlanır** — dirilmə ikinci şansdır, cəzasız davam deyil. İkiniz də
+ölsəniz cüt matçdan çıxır.
+
+ÜÇLÜK-də tutum raunddan raunda **keçmir**: keçsəydi, birinci raundu udan
+komanda ikincidə də üstün başlayardı və matç faktiki olaraq bir raundda
+həll olunardı.
+
+Tam quruluş: [design/MODES.md](design/MODES.md).
 
 ## Ekranlar
 
 [Baş menyu](docs/screenshot_menu.png) · [Oyun ekranı](docs/screenshot_world.png)
+
+### Menyunun quruluşu
+
+Zonalar Brawl Stars-ın menyusundan götürülüb — hər birinin bir işi var:
+
+| Zona | Nə var | Niyə |
+|---|---|---|
+| Mərkəz | mikrob + ad lövhəsi | Kimlik OBYEKTƏ bağlıdır, ayrı sütuna yox |
+| Aşağı-mərkəz | **OYNA** | Ekranın lövbəri, ən böyük element |
+| Aşağı-sağ | rejim kartı | «Nə oynayıram» və «başla» bir qərardır — yan-yana |
+| Sol lent | MİKROBLAR | Brawl Stars-da Brawlers/Shop/Social |
+| Aşağı-sol | MƏŞQ · offline | Ən az prioritetli yuva |
+| Yuxarı-sol · sağ | kimlik · sistem | Sabit konvensiya |
+
+Növ və rejim seçimi ANA EKRANDA deyil, ayrı vərəqlərdədir
+([design/menu/](design/menu/)). Səbəb sayğacdır: əvvəl ana ekranda on yeddi
+zona və altı cümlə vardı, oyunçu OYNA-ya çatana qədər hamısının arasından
+keçirdi. İndi səkkiz zona və bir sətir qeyd var.
+
+> Sağ lent QƏSDƏN boşdur. Brawl Stars-da orada Battle Log, liderlər və
+> xəbərlər var; bizdə hələ yoxdur və boş düymə qoymaqdansa yeri saxlamaq
+> daha düzgündür.
 
 ---
 
@@ -279,7 +313,7 @@ game/                    Godot layihəsi
       super_button.gd    Super düyməsi — dolan halqa, atəşin üstündə
       sfx.gd             Səs effektləri (autoload: Sfx)
     tools/
-      sim_test.gd        226 headless test
+      sim_test.gd        245 headless test
       auto_client.gd     Şəbəkə testi üçün insansız client
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
@@ -321,8 +355,11 @@ GODOT --path game -- --practice
 # Mikrob növünü seçərək (0 kirpikli · 1 ayaqlı · 2 amöb):
 GODOT --path game -- --practice --species 2
 
-# Rejimi seçərək (0 sonsuz arena · 1 TƏK QALAN):
-GODOT --path game -- --practice --mode 1
+# Rejimi seçərək (0 sonsuz · 1 TƏK QALAN · 2 CÜT · 3 ÜÇLÜK):
+GODOT --path game -- --practice --mode 3
+
+# Qrafika səviyyəsi (0 yüksək · 1 aşağı):
+GODOT --path game -- --practice --quality 1
 ```
 Eyni `World` və `Sim` kodu yerli işləyir; fərq yalnız snapshot-ların şəbəkədən
 yox, yaddaşdan gəlməsidir. Server yatmış olsa da oyun oynanır.
@@ -346,7 +383,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (226 test)
+# Simulyasiya + World testləri (245 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -402,6 +439,56 @@ hər rejim bu cədvəldə ölçülməlidir.
 > qatları növlərə bölündü (bütün qida bir qatda, bütün toplar başqasında) və
 > maneələr sprite-a keçirildi. Godot yalnız ARDICIL və eyni teksturalı elementləri
 > bir çağırışa yığır — qarışıq düzülsə, hər qida topu ayrıca çağırış olur.
+
+### Telefon uyğunluğu — ölçülmüş vəziyyət
+
+| Yoxlanan | Nəticə |
+|---|---|
+| Nisbətlər 16:9 … 21:9 və 4:3 | HUD bütöv, kəsilmə yoxdur |
+| Görüş sahəsi ekranın küncünə çatır | bəli, ehtiyat **18%** (ən dar hal 21:9) |
+| Ekran forması üstünlük verirmi | **yox** — görünən sahə hər ekranda eynidir |
+| Qrafika səviyyəsi | YÜKSƏK / AŞAĞI, telefonda ilkin dəyər AŞAĞI |
+| Çox toxunuş (hərəkət + atəş + super) | hər idarə öz `_touch_index`-ini izləyir |
+| Safe area (çıxıntı/notch) | `DisplayServer.get_display_safe_area()` tətbiq olunur |
+| Portret pəncərə | yatay kadra letterbox olunur (bax [boot.gd](game/scripts/boot.gd)) |
+| Renderer | `gl_compatibility`, arm64 + x86_64, ETC2/ASTC |
+| Yaddaş | 42–54 MB |
+| Çəkiliş çağırışı | 130–300 (pik) |
+
+### Ekran forması üstünlük VERMİR
+
+Kameranın miqyası qısa kənardan yox, **SAHƏDƏN** çıxır: oyunçunun gördüyü
+dünya sahəsi bütün ekranlarda eynidir (`620 × 620 × 16/9`). Geniş ekran daha
+enli, amma daha alçaq görür.
+
+Əvvəl miqyas qısa kənardan çıxırdı və ekranın forması oyun üstünlüyü verirdi:
+
+| Nisbət | Əvvəl | İndi |
+|---|---|---|
+| 4:3 | 513k sahə (−25%) | 683k |
+| 16:9 | 683k (etalon) | 683k |
+| 20:9 | 854k (+25%) | 683k |
+| 21:9 | 897k (**+31%**) | 683k |
+
+Yəni ən yaxşı və ən pis telefon arasında **56 faiz** fərq vardı. Mobil rəqabət
+oyunları (Brawl Stars və bənzərləri) məhz bunu bağlayır. Bonus olaraq görüş
+sahəsinin ehtiyatı da 6%-dən **18%**-ə qalxdı: sahə sabit olanda kadrın küncü
+sonsuz uzaqlaşmır. `_test_aoi_covers_screen` altı real telefon nisbətini yoxlayır.
+
+### Qrafika səviyyəsi
+
+Menyuda dişli → **QRAFİKA: YÜKSƏK / AŞAĞI**. Telefonda ilkin dəyər AŞAĞI-dır.
+
+AŞAĞI-da glow və `hdr_2d` sönür, zərrəciklər yarıya düşür. Glow tam ekranı bir
+neçə dəfə bulandıran keçiddir və HDR ilə birlikdə kadr buferini RGBA16F-ə
+qaldırır — mobil GPU-da hər kadr iki dəfə çox yaddaş zolağı.
+
+> Bu fərq masaüstündə **ölçülə bilmir**: eyni konfiqurasiyanın iki çalışması
+> arasındakı səpələnmə (2.0 ms və 3.3 ms) konfiqurasiyalar arasındakı fərqdən
+> böyükdür. Ona görə seçim oyunçuya verilib — telefonda ölçmək lazımdır.
+
+Səviyyə YALNIZ görüntüyə təsir edir: qaydalar, görüş sahəsi və şəbəkə eynidir,
+yəni aşağı keyfiyyət nə üstünlük verir, nə də məhrum edir.
 
 ### Ekran görüntüsü almaq
 ```bash

@@ -1,8 +1,11 @@
 # Germ Arena — Oyun Rejimləri (spesifikasiya)
 
-**Vəziyyət:** 1–3-cü mərhələlər **TƏTBİQ OLUNUB** (bax §14). Matç skeleti,
-daralan qab və TƏK QALAN oyundadır. 4–6-cı mərhələlər (komandalar, CÜT,
-ÜÇLÜK) hələ dizayndır.
+**Vəziyyət:** BÜTÜN altı mərhələ **TƏTBİQ OLUNUB** (bax §14). Dörd rejim də
+oyundadır: SONSUZ ARENA, TƏK QALAN, CÜT, ÜÇLÜK.
+
+**Bir dizayn səhvi düzəldilib:** §4 komanda üçün İKİ bit deyirdi (bit 8-9,
+0..3), amma CÜT-də BEŞ komanda var (5 × 2 = 10 mikrob). Kod üç bit işlədir
+(bit 8-10) və komandanı `team + 1` kimi yazır ki, sıfır "komandasız" qalsın.
 
 Bu sənəd tətbiqin mənbəyidir — rəqəmlər dəyişəndə həm burası, həm
 `constants.gd` yenilənməlidir. Tətbiq olunmuş rəqəmlərin son sözü

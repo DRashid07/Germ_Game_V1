@@ -26,4 +26,17 @@ func _process(_delta: float) -> void:
 		print("[shot] saxlanıldı: %s (%dx%d)" % [path, img.get_width(), img.get_height()])
 	else:
 		printerr("[shot] saxlanmadı: %s" % error_string(err))
+
+	# Çıxış RENDER GERİ ÇAĞIRIŞININ İÇİNDƏN edilmir.
+	#
+	# Yuxarıdakı `await` bizi `frame_post_draw` siqnalının içinə salır, yəni
+	# rendering server hələ kadrı bağlayır. Elə oradan `quit()` çağırmaq
+	# bağlanma sırasını pozur və çıxışda "N resources still in use" /
+	# "ObjectDB instances were leaked" xəbərdarlıqlarını verə bilir.
+	#
+	# QEYD: bu xəbərdarlıq təkrarlana bilmədi — 40-dan çox çalışmada səhnədən,
+	# səs sürücüsündən, gözləyən taymerdən və çıxış yolundan asılı olmadığı
+	# göstərildi. Yəni bu, sübut edilmiş düzəliş deyil, sadəcə düzgün sıra:
+	# kadrdan çıxıb normal döngəyə qayıdırıq, sonra bağlayırıq.
+	await get_tree().process_frame
 	get_tree().quit()

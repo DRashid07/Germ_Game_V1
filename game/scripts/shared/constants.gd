@@ -19,11 +19,32 @@ const WORLD_RADIUS := 1200.0
 ## Böyük mikrob daha geniş sahə görür — həm ədalətlidir, həm böyüməni hiss etdirir.
 const VIEW_SPAN_BASE := 620.0
 const VIEW_SPAN_PER_RADIUS := 8.0
+
+## Görüş sahəsinin ETALON nisbəti — 16:9.
+##
+## Oyunçunun gördüyü dünya SAHƏSİ bütün ekranlarda eynidir və bu nisbətdən
+## çıxır: 620 × (620 × 16/9). Geniş ekran daha enli, amma daha alçaq görür.
+##
+## Səbəb rəqabətdir. Miqyas yalnız qısa kənardan çıxsaydı (əvvəl belə idi),
+## ekranın forması üstünlük verərdi — ölçülüb:
+##
+##   4:3    513k sahə   (−25%)
+##   16:9   683k        (etalon)
+##   20:9   854k        (+25%)
+##   21:9   897k        (+31%)
+##
+## Yəni ən yaxşı və ən pis telefon arasında 56 faiz fərq vardı. Mobil
+## rəqabət oyunları (Brawl Stars və bənzərləri) məhz bunu bağlayır: ekran
+## nə qədər geniş olsa da, oyunçu eyni qədər məlumat görür.
+const VIEW_ASPECT_REF := 16.0 / 9.0
 ## Client-ə göndərilən sahə ekrandan bir qədər genişdir ki, obyektlər
-## kənarda "peyda olmasın". 1.35 istənilən oriyentasiyada 20:9-a qədər bütün
-## nisbətləri örtür (kadrın küncü mərkəzdən ən çox 1.22 × qısa kənar
-## məsafədədir). Ölçü qısa kənara bağlı olduğuna görə yatay və portret üçün
-## eyni ədəd işləyir — kadrın küncü hər iki halda eyni uzaqlıqdadır.
+## kənarda "peyda olmasın".
+##
+## Bərabər sahə qaydası ([constant VIEW_ASPECT_REF]) bu ədədin işini
+## asanlaşdırır: ekran nə qədər geniş olsa da, sahə sabit qaldığı üçün kadrın
+## küncü sonsuz uzaqlaşmır. Ən pis hal 21:9-dur və orada künc `1.11 × span`
+## məsafədədir, yəni 1.35 rahat örtür (əvvəl, sahə hədsiz böyüyəndə, ehtiyat
+## cəmi 6% idi). `_test_aoi_covers_screen` bunu qoruyur.
 const AOI_FACTOR := 1.35
 
 # ---------- Şəbəkə ----------
@@ -212,7 +233,33 @@ enum Species { CILIATE = 0, HELIOZOAN = 1, AMOEBA = 2 }
 enum Mode {
 	ENDLESS = 0,   ## SONSUZ ARENA — matç yoxdur, qab sabitdir. Standart rejim.
 	SOLO = 1,      ## TƏK QALAN — 10 mikrob, qab quruyur, sona qalan udur.
+	DUO = 2,       ## CÜT — 5 komanda × 2, TƏK QALAN-ın qabı, dirilmə var.
+	TRIO = 3,      ## ÜÇLÜK — 3v3, dar qab, üç raundun ikisini udan qalib.
 }
+
+
+## Rejim komandalıdırmı?
+##
+## Bir yerdə cavab verilir, çünki sual koda ONLARLA yerdə düşür: dost atəşi,
+## rəng, yer paylanması, bot doldurma. Hər yerdə `mode == DUO or mode == TRIO`
+## yazsaydıq, beşinci rejim gələndə biri mütləq unudulardı.
+static func is_team_mode(mode: int) -> bool:
+	return mode == Mode.DUO or mode == Mode.TRIO
+
+
+## Rejimdə bir komandada neçə mikrob var (komandasızda 1).
+static func team_size(mode: int) -> int:
+	match mode:
+		Mode.DUO: return 2
+		Mode.TRIO: return 3
+		_: return 1
+
+
+## Rejimdə dünyanın tam əhalisi.
+static func mode_capacity(mode: int) -> int:
+	match mode:
+		Mode.TRIO: return TRIO_GERMS
+		_: return WORLD_CAPACITY
 
 ## Matçın fazası.
 ##
@@ -246,6 +293,23 @@ const MATCH_MAX := 240.0
 const DRY_DELAY := 45.0          ## Quruma bu qədər saniyədən sonra başlayır
 const DRY_TIME := 105.0          ## Tam qurumaya qədər
 const SOLO_END_RADIUS := 250.0   ## Əsas qurumanın sonu — 10 mikrob burada rastlaşır
+
+## ÜÇLÜK dar qabda oynanır: altı mikrob, qısa raund, dərhal təmas.
+## Böyük qabda üç nəfər bir-birini axtarmaqla vaxtı yeyərdi.
+const TRIO_GERMS := 6
+const TRIO_RADIUS := 700.0
+const TRIO_END_RADIUS := 220.0
+const TRIO_DRY_DELAY := 40.0
+const TRIO_DRY_TIME := 45.0
+const TRIO_ROUND := 60.0        ## Bir raundun uzunluğu
+const TRIO_ROUNDS_WIN := 2      ## Neçə raund udan matçı udur
+const ROUND_BREAK := 3.0        ## Raund arası hesab ekranı
+
+## CÜT-də ölən yoldaş bu qədər saniyə sonra qayıdır (yoldaşı sağdırsa).
+##
+## Tutum və super doluluğu SIFIRLANIR: dirilmə ikinci şans olmalıdır,
+## cəzasız davam deyil — yoxsa cüt qəsdən ölüb yenidən doğula bilər.
+const REVIVE_TIME := 15.0
 
 ## Matçın son anında qabın radiusu.
 ##
@@ -335,15 +399,31 @@ const CYST_TIME := 2.5
 const SPECIES_COUNT := 3
 
 
+## Növün superi nə qədər DAVAM edir. Kirpiklininki anidir, ona görə sıfır.
+##
+## Bir yerdə cavab verilir, çünki sual İKİ tərəfdən düşür: [method Sim._use_super]
+## superi işə salanda və client snapshot-dakı "super işləyir" bitindən öz
+## sayğacını qurmalı olanda (bax [method Arena._reconcile]). İki yerdə yazılsaydı,
+## dördüncü növ gələndə biri mütləq unudulardı və effekt öz mikrobunda yarımçıq
+## qalardı.
+static func super_time(species: int) -> float:
+	match species:
+		int(Species.HELIOZOAN): return NET_TIME
+		int(Species.AMOEBA): return CYST_TIME
+		_: return 0.0
+
+
 ## Xam ədədi rejimə çevirir; tanınmayan hər şey sonsuz arenaya düşür.
 ##
 ## Növdəki [method species_from] ilə eyni səbəb: dəyər client-dən gəlir və
 ## etibarsız ola bilər. Çevirmə BİR yerdə olanda "yad dəyər gələndə nə olur"
 ## sualının bir cavabı olur.
 static func mode_from(value: int) -> Mode:
-	if value == int(Mode.SOLO):
-		return Mode.SOLO
-	return Mode.ENDLESS
+	match value:
+		int(Mode.SOLO): return Mode.SOLO
+		int(Mode.DUO): return Mode.DUO
+		int(Mode.TRIO): return Mode.TRIO
+		_: return Mode.ENDLESS
 
 
 ## Sıra sayının Azərbaycanca şəkilçisi: 1-ci, 3-cü, 6-cı, 9-cu.
@@ -363,7 +443,65 @@ static func ordinal(n: int) -> String:
 
 
 static func mode_name(mode: int) -> String:
-	return "TƏK QALAN" if mode == int(Mode.SOLO) else "SONSUZ ARENA"
+	match mode:
+		Mode.SOLO: return "TƏK QALAN"
+		Mode.DUO: return "CÜT"
+		Mode.TRIO: return "ÜÇLÜK"
+		_: return "SONSUZ ARENA"
+
+
+## Qrafika keyfiyyəti.
+##
+## Yalnız GÖRÜNTÜYƏ təsir edir — simulyasiyaya yox. Oyun qaydaları, görüş
+## sahəsi və şəbəkə hər iki səviyyədə eynidir, yəni aşağı keyfiyyət
+## üstünlük də vermir, məhrumiyyət də.
+enum Quality {
+	HIGH = 0,   ## Glow, HDR kadr buferi, tam zərrəcik sıxlığı
+	LOW = 1,    ## Glow və HDR sönülü, zərrəciklər yarıya qədər
+}
+
+
+static func quality_from(value: int) -> Quality:
+	return Quality.LOW if value == int(Quality.LOW) else Quality.HIGH
+
+
+static func quality_name(q: int) -> String:
+	return "AŞAĞI" if q == int(Quality.LOW) else "YÜKSƏK"
+
+
+## Cihaza görə ilkin keyfiyyət.
+##
+## Telefonda AŞAĞI başlayır. Səbəb glow-dur: o, tam ekranı bir neçə dəfə
+## bulandıran keçiddir və `hdr_2d` ilə birlikdə kadr buferini RGBA16F-ə
+## qaldırır — yəni hər kadr iki dəfə çox yaddaş zolağı yeyir. Masaüstü GPU-da
+## bu ölçülə bilmir (fərq çalışmalar arasındakı səpələnmədən kiçikdir),
+## mobil GPU-da isə adətən ən böyük tək xərcdir.
+##
+## Oyunçu istəsə menyudan YÜKSƏK-ə qaldıra bilər — qərar ondadır, sadəcə
+## ilkin dəyər təhlükəsiz tərəfə əyilir.
+static func default_quality() -> Quality:
+	return Quality.LOW if OS.has_feature("mobile") else Quality.HIGH
+
+
+## Rejimin ƏN QISA təsviri — ana ekrandakı dar kart üçün.
+##
+## [method mode_note] tam qaydadır və vərəqin geniş sətrinə sığır; ana
+## ekranın rejim kartı isə cəmi 300 px enindədir və uzun mətn orada kəsilir.
+static func mode_brief(mode: int) -> String:
+	match mode:
+		Mode.SOLO: return "10 mikrob · sona qalan udur"
+		Mode.DUO: return "5 cüt · dirilmə var"
+		Mode.TRIO: return "3v3 · üç raund"
+		_: return "6 mikrob · matç yoxdur"
+
+
+## Rejimin bir sətirlik qaydası — menyu kartında göstərilir.
+static func mode_note(mode: int) -> String:
+	match mode:
+		Mode.SOLO: return "10 mikrob · qab quruyur · sona qalan udur"
+		Mode.DUO: return "5 cüt · yoldaşın səni dirildir · sona qalan cüt udur"
+		Mode.TRIO: return "3v3 · dar qab · üç raundun ikisini udan qalib"
+		_: return "matç yoxdur · girdin, oynadın · gözləmə yoxdur"
 
 
 ## Xam ədədi növə çevirir; tanınmayan hər şey kirpikliyə düşür.
@@ -409,6 +547,9 @@ enum MF {
 	          ##         bir float göndərmək faza keçidlərində səhv riskini silir
 	ALIVE,    ## int   — sağ qalan mikrob sayı
 	PLACE,    ## int   — baxanın yeri (0 = hələ sağdır)
+	TEAM,     ## int   — baxanın komandası (-1 komandasız)
+	SCORE_US, ## int   — ÜÇLÜK: baxanın komandasının udduğu raund sayı
+	SCORE_EM, ## int   — ÜÇLÜK: rəqibin udduğu raund sayı
 }
 ## Snapshot-dakı mikrob sətri.
 ##
@@ -470,6 +611,12 @@ enum GFlag {
 	SPECIES_SHIFT = 1, SPECIES_MASK = 6,
 	CHARGE_SHIFT = 3, CHARGE_MASK = 120,
 	SUPER = 128,
+	## Komanda nömrəsi — bit 8-10, yəni 0..7. SIFIR "komandasız" deməkdir,
+	## komanda isə `team + 1` kimi yazılır.
+	##
+	## İKİ bit BƏS ETMİR: CÜT-də beş komanda var (5 × 2 = 10 mikrob), iki bit
+	## isə cəmi dördünü daşıyır. design/MODES.md §4 iki bit deyirdi — səhvdir.
+	TEAM_SHIFT = 8, TEAM_MASK = 1792,
 }
 enum SF { ID, COLOR, X, Y, DX, DY }
 
@@ -528,7 +675,16 @@ enum FF { ID, X, Y }
 ## hər snapshot-da geri sıçrayar. Eyni səbəbdən axın sahəsi də yalnız
 ## mövqedən asılıdır (bax [method current_at]).
 static func dish_radius(mode: int, t: float) -> float:
-	if mode != Mode.SOLO:
+	# ÜÇLÜK öz ölçüləri ilə işləyir: dar qab, tez quruma, qısa raund.
+	# Böyük qabda üç nəfər bir-birini axtarmaqla raundu bitirərdi.
+	if mode == Mode.TRIO:
+		if t <= TRIO_DRY_DELAY:
+			return TRIO_RADIUS
+		var kt := clampf((t - TRIO_DRY_DELAY) / TRIO_DRY_TIME, 0.0, 1.0)
+		return lerpf(TRIO_RADIUS, TRIO_END_RADIUS, smoothstep(0.0, 1.0, kt))
+
+	# CÜT eyni qabı TƏK QALAN ilə bölüşür — ayrı arena deyil, ayrı QAYDADIR.
+	if mode != Mode.SOLO and mode != Mode.DUO:
 		return WORLD_RADIUS
 	if t <= DRY_DELAY:
 		return WORLD_RADIUS
@@ -551,9 +707,31 @@ static func dry_period(depth: float) -> float:
 	return DRY_GAIN_PERIOD / (1.0 + maxf(depth, 0.0) / DRY_RAMP)
 
 
-## Kameranın göstərdiyi dünya sahəsi — ekranın qısa kənarı boyunca.
+## Kameranın göstərdiyi dünya sahəsi — 16:9 ekranın qısa kənarı boyunca.
 static func view_span(capacity: int) -> float:
 	return VIEW_SPAN_BASE + (germ_radius(capacity) - BASE_RADIUS) * VIEW_SPAN_PER_RADIUS
+
+
+## Oyunçunun gördüyü dünya SAHƏSİ (kvadrat piksel) — hər ekranda eyni.
+static func view_area(capacity: int) -> float:
+	var s := view_span(capacity)
+	return s * s * VIEW_ASPECT_REF
+
+
+## Kameranın miqyası: sahəni sabit saxlayan zoom.
+##
+## Ekranın forması yalnız sahənin FORMASINI dəyişir, ölçüsünü yox: geniş
+## ekran enli və alçaq, kvadrata yaxın ekran dar və hündür görür.
+static func camera_zoom(capacity: int, viewport: Vector2) -> float:
+	return camera_zoom_span(view_span(capacity), viewport)
+
+
+## Eyni hesab, amma hazır `span` ilə — kamera yumşaq keçid üçün onu
+## interpolyasiya edir (bax [method Arena._update_camera]).
+static func camera_zoom_span(span: float, viewport: Vector2) -> float:
+	var px := maxf(viewport.x * viewport.y, 1.0)
+	var area := maxf(span * span * VIEW_ASPECT_REF, 1.0)
+	return sqrt(px / area)
 
 
 ## Oyunçuya göndərilən sahənin radiusu (area of interest).

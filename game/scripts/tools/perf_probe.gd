@@ -15,12 +15,19 @@ extends Node
 ## sıçrayışları nəticəni korlamasın.
 const WARMUP := 2.0
 
+## 60 FPS büdcəsi (saniyə).
+const BUDGET := 1.0 / 60.0
+
 var duration := 20.0
 
 var _frames: Array[float] = []
 var _elapsed := 0.0
 var _warmup_left := WARMUP
 var _peak_draw := 0
+var _over := 0        ## 16.7 ms-i aşan kadr sayı
+var _over2 := 0       ## 33.3 ms-i aşan kadr sayı
+var _worst := 0.0
+var _worst_at := 0.0
 
 
 func _process(delta: float) -> void:
@@ -30,6 +37,16 @@ func _process(delta: float) -> void:
 
 	_elapsed += delta
 	_frames.append(delta)
+	# Sıçrayışın NƏ VAXT olduğu ölçüsü qədər vacibdir: başlanğıcda bir dəfə
+	# olan sıçrayış shader kompilyasiyasıdır, oyun ortasında təkrarlanan isə
+	# əsl problemdir. Orta rəqəm ikisini də gizlədir.
+	if delta > BUDGET:
+		_over += 1
+		if delta > _worst:
+			_worst = delta
+			_worst_at = _elapsed
+	if delta > BUDGET * 2.0:
+		_over2 += 1
 	_peak_draw = maxi(_peak_draw,
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)))
 
@@ -60,12 +77,18 @@ func _report() -> void:
 	print("  Orta          : %6.2f FPS  (%.2f ms)" % [1.0 / avg, avg * 1000.0])
 	print("  1%% ən pis     : %6.2f FPS  (%.2f ms)" % [1.0 / p99, p99 * 1000.0])
 	print("  Ən pis kadr   : %6.2f FPS  (%.2f ms)" % [1.0 / worst, worst * 1000.0])
+	# Büdcəni aşan kadrlar — telefonda "sürüşmə" kimi görünən şey budur.
+	print("  Büdcəni aşan  : %d kadr > 16.7 ms, %d kadr > 33 ms (%d kadrdan)" % [
+		_over, _over2, _frames.size()])
+	if _worst > 0.0:
+		print("  Ən pis sıçrayış: %.1f ms, ölçmənin %.1f-ci saniyəsində" % [
+			_worst * 1000.0, _worst_at])
 	print("  Çəkiliş çağ.  : %d (pik)" % _peak_draw)
 	print("  Node sayı     : %d" % int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)))
 	print("  Statik yaddaş : %.1f MB" % (Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0))
 
 	# 60 FPS = 16.67 ms. Mobil üçün hədəf budur.
-	var budget := 16.67
+	var budget := BUDGET * 1000.0
 	print("  60 FPS büdcəsindən istifadə: %.0f%% (orta), %.0f%% (1%% ən pis)" % [
 		avg * 1000.0 / budget * 100.0, p99 * 1000.0 / budget * 100.0])
 

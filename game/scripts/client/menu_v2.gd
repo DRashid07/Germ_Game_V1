@@ -50,8 +50,23 @@ const PAD := 34.0
 ## Sağ sütunun eni və hündürlüyü (1280×720 bazasında ölçülüb).
 const COL_W := 560.0
 const COL_H := 486.0
-const BTN_W := 380.0
-const PLAY_H := 112.0
+## OYNA — aşağı-mərkəzdə, ekranın lövbəri.
+const BTN_W := 340.0
+const PLAY_H := 104.0
+## Rejim kartı — OYNA-nın sağında, eyni hündürlükdə.
+const MODE_W := 300.0
+## Mikrobun altındakı ad lövhəsi.
+const PLATE := Vector2(330.0, 76.0)
+## Sol lentin düyməsi (Brawl Stars-da Brawlers/Shop/Social).
+const RAIL := Vector2(126.0, 116.0)
+## Vərəqdəki böyük növ kartı və rejim sətri.
+const CARD_BIG := Vector2(300.0, 440.0)
+const GRID_GAP := 30.0
+const ROW_W := 700.0
+const ROW_H := 104.0
+const ROW_GAP := 14.0
+## Rejimlərin rəng nişanları — [constant Palette.GERM_COLORS] indeksləri.
+const MODE_TINT := [1, 3, 7, 4]
 const CARD := Vector2(176.0, 96.0)
 
 ## Səhnədəki mikrobun neçə dəfə böyüdüldüyü. Oyunda radius 30 pikseldir —
@@ -81,14 +96,21 @@ var _nick: LineEdit
 var _addr: LineEdit
 var _pill: Label
 var _play: Button
-var _species_title: Label
-var _species_note: Label
-var _species_super: Label
 var _mode_card: Button
 var _mode_name: Label
 var _mode_note: Label
 var _settings_panel: PanelContainer
+var _quality_btn: Button
 var _cards: Array[Button] = []
+var _mode_rows: Array[Button] = []
+## Mikrobun altındakı ad lövhəsi — kimlik obyektə bağlıdır, ayrı sütuna yox.
+var _plate_name: Label
+var _plate_super: Label
+## Tam ekran vərəq: MİKROBLAR və REJİMLƏR eyni çərçivəni paylaşır.
+var _sheet: Control
+var _sheet_title: Label
+var _sheet_species: Control
+var _sheet_modes: Control
 
 ## Qoşulma gedirmi. OYNA düyməsi bu vəziyyəti ÖZÜ göstərir — ayrıca status
 ## sətri və "LƏĞV ET" düyməsi yoxdur (köhnə menyuda hər ikisi vardı və menyunu
@@ -114,10 +136,11 @@ func _ready() -> void:
 	_build_top_bar()
 	_load_settings()
 	_build_stage()
-	_build_right_column()
-	_build_hint()
+	_build_home()
+	_build_sheet()
 	_refresh_species()
 	_refresh_mode()
+	_refresh_quality()
 
 	Net.connected_to_server.connect(_on_connected)
 	Net.connection_failed.connect(_on_connect_failed)
@@ -142,6 +165,12 @@ func _process(delta: float) -> void:
 	var at := Vector2(_travelled, 0.0)
 	_germ.apply(at, 0.0, GERM_BALLS, GERM_CAPACITY, false, true)
 	_stage.position = _stage_centre() - at * _stage.scale.x
+	# Ad lövhəsi podiumun ALT kənarına oturur; podium ekran ölçüsündən
+	# asılıdır, ona görə yeri hər kadr yenilənir.
+	var plate := get_node_or_null("Plate") as Control
+	if plate != null:
+		plate.position = Vector2(_stage_centre().x - PLATE.x * 0.5,
+			_stage_centre().y + _dish_radius() - 142.0)
 
 	if _motes != null:
 		# Zərrəciklər QABIN üstündə qalır, mikrobla getmir: mikrob ekranda
@@ -156,8 +185,16 @@ func _process(delta: float) -> void:
 ## Tam mərkəzdə DEYİL — sağ tərəf növ kartlarına və OYNA düyməsinə lazımdır,
 ## mikrob isə onların altında qalmamalıdır. Brawl Stars-da da brawler mərkəzdən
 ## sola sürüşüb: sağ yarı həmişə hərəkət sahəsidir.
+## Podium MƏRKƏZDƏDİR.
+##
+## Brawl Stars-da fiqur ekranın ortasındadır və bütün idarələr onun
+## ÇEVRƏSİNDƏ halqa qurur: yuxarı-sol kimlik, yuxarı-sağ sistem,
+## aşağı-mərkəz PLAY, aşağı-sağ rejim, yan lentlər bölmələr.
+##
+## Əvvəl mikrob solda, mətn sütunu sağda idi — o düzüm fiquru səhnənin
+## sahibi yox, sadəcə sol yarının bəzəyi edirdi.
 func _stage_centre() -> Vector2:
-	return Vector2(size.x * 0.30, size.y * 0.52)
+	return Vector2(size.x * 0.5, size.y * 0.44)
 
 
 func _dish_radius() -> float:
@@ -266,9 +303,11 @@ func _build_top_bar() -> void:
 	_nick.add_theme_stylebox_override("focus", _underline_style())
 	who.add_child(_nick)
 
-	var tip := Hud._make_label(13, Palette.TEXT_MUTED)
-	tip.text = "adı dəyişmək üçün toxun"
-	who.add_child(tip)
+	# Alt yazı ("adı dəyişmək üçün toxun") SİLİNİB.
+	#
+	# Brawl Stars-ın yuxarı zolağında heç bir izahedici cümlə yoxdur. Ad
+	# fokus alanda alt xətt çıxır (bax `_underline_style`) — yazıla biləcəyi
+	# elə oradan bilinir, hər açılışda təkrar deməyə ehtiyac yoxdur.
 
 	# ── server vəziyyəti ──
 	# Menyu açılan kimi serverə qoşulma yoxlanılır (bax [method _probe_server]),
@@ -278,8 +317,10 @@ func _build_top_bar() -> void:
 	_pill.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	_pill.offset_top = 34.0
 	_pill.offset_bottom = 78.0
-	_pill.offset_right = -(PAD + 80.0)
-	_pill.offset_left = -(PAD + 80.0 + 320.0)
+	# Dişlinin solunda bitir — sabit ofsetlə qoyulsaydı, uzun mətn düymənin
+	# altına girərdi.
+	_pill.offset_right = -(PAD + 78.0)
+	_pill.offset_left = -(PAD + 78.0 + 320.0)
 	_pill.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_pill.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(_pill)
@@ -322,6 +363,29 @@ func _build_settings_panel() -> void:
 	box.add_theme_constant_override("separation", 8)
 	_settings_panel.add_child(box)
 
+	# QRAFİKA — telefonda ən böyük yük glow və HDR kadr buferidir, ona görə
+	# seçim ayarların ƏN ÜSTÜNDƏDİR: kəsmə yaşayan oyunçu onu axtarmamalıdır.
+	var gcap := Hud._make_label(18, Palette.TEXT_MUTED)
+	gcap.text = "Qrafika"
+	box.add_child(gcap)
+
+	_quality_btn = Button.new()
+	_quality_btn.custom_minimum_size = Vector2(420, 48)
+	_quality_btn.add_theme_stylebox_override("normal", _ghost_style(Palette.PANEL_BORDER))
+	_quality_btn.add_theme_stylebox_override("hover", _ghost_style(Palette.DISH_EDGE))
+	_quality_btn.add_theme_stylebox_override("pressed", _ghost_style(Palette.PANEL_BORDER))
+	_quality_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_quality_btn.pressed.connect(func() -> void:
+		Sfx.play("ui_click")
+		Net.quality = Const.quality_from(1 - int(Net.quality))
+		_save_settings()
+		_refresh_quality())
+	box.add_child(_quality_btn)
+
+	var ghint := Hud._make_label(14, Palette.TEXT_MUTED)
+	ghint.text = "Aşağı: işıq effektləri sönür. Oyuna təsiri yoxdur."
+	box.add_child(ghint)
+
 	var caption := Hud._make_label(18, Palette.TEXT_MUTED)
 	caption.text = "Server ünvanı"
 	box.add_child(caption)
@@ -344,116 +408,85 @@ func _build_settings_panel() -> void:
 ##
 ## Aşağıya bağlanıb, yuxarıya yox: OYNA baş barmağın çatdığı yerdə qalmalıdır,
 ## ekran nə qədər hündür olsa da.
-func _build_right_column() -> void:
-	var col := Control.new()
-	col.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	col.offset_right = -PAD
-	col.offset_left = -(PAD + COL_W)
-	col.offset_bottom = -PAD
-	col.offset_top = -(PAD + COL_H)
-	add_child(col)
-
-	_species_title = Hud._make_label(40, Palette.TEXT)
-	_species_title.theme_type_variation = "Heading"
-	_species_title.position = Vector2(0, 0)
-	_species_title.size = Vector2(COL_W, 42)
-	col.add_child(_species_title)
-
-	## Növün NƏ ETDİYİ. Seçim oyuna təsir etmir (sürət, ölçü, ölüm qaydaları
-	## eynidir), ona görə mətn üstünlük vəd etmir — yalnız hərəkəti təsvir edir.
-	# Superin adı — növün adının altında, oyunçunun rəngində.
+## ANA EKRAN — mikrobun ÇEVRƏSİNDƏKİ halqa.
+##
+## Zonalar Brawl Stars-ın menyusundan götürülüb, hər birinin işi saxlanılıb:
+##   • mərkəz        — fiqur; adı və superi ONUN üstündəki lövhədə
+##   • aşağı-mərkəz  — OYNA, ekranın lövbəri
+##   • aşağı-sağ     — rejim; «nə oynayıram» və «başla» bir qərardır
+##   • sol lent      — MİKROBLAR (Brawl Stars-da Brawlers/Shop/Social)
+##   • aşağı-sol     — MƏŞQ; ən az prioritetli yuva
+func _build_home() -> void:
+	# ── AD LÖVHƏSİ ──
 	#
-	# Seçim artıq zövq məsələsi deyil: hər növün öz superi var və oyunçu nə
-	# seçdiyini menyuda BİLMƏLİDİR. Kartın üstündə yer yoxdur, ona görə ad
-	# seçilən növün başlığının altındadır.
-	_species_super = Hud._make_label(17, Palette.GERM_COLORS[1])
-	_species_super.position = Vector2(0, 42)
-	_species_super.size = Vector2(COL_W, 24)
-	col.add_child(_species_super)
+	# Kimlik obyektə bağlıdır, ekranın başqa küncünə yox: Brawl Stars da rank
+	# və gücü fiqurun üstündə saxlayır. Yeri hər kadr yenilənir, çünki podium
+	# ekran ölçüsündən asılıdır (bax [method _process]).
+	var plate := PanelContainer.new()
+	plate.name = "Plate"
+	plate.custom_minimum_size = Vector2(PLATE.x, PLATE.y)
+	plate.size = PLATE
+	plate.add_theme_stylebox_override("panel", _panel_style())
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(plate)
 
-	_species_note = Hud._make_label(18, Palette.TEXT_MUTED)
-	_species_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_species_note.position = Vector2(0, 66)
-	_species_note.size = Vector2(COL_W, 56)
-	col.add_child(_species_note)
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 0)
+	pv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	plate.add_child(pv)
 
-	# Kartlar KONTEYNERSİZ yerləşdirilir. Səbəb: seçilmiş kart 4 piksel
-	# QALXIR (bax [method _refresh_species]), konteyner isə uşağın mövqeyini
-	# hər layout-da geri qaytarardı — qalxma heç vaxt görünməzdi.
-	const GAP := 14.0
-	var row_w := CARD.x * float(Const.SPECIES_COUNT) + GAP * float(Const.SPECIES_COUNT - 1)
-	for i in Const.SPECIES_COUNT:
-		var kind := Const.species_from(i)
-		var card := _make_card(kind)
-		card.position = Vector2((COL_W - row_w) * 0.5 + float(i) * (CARD.x + GAP), 132.0)
-		card.size = CARD
-		card.pressed.connect(func() -> void:
-			Sfx.play("ui_click")
-			Net.species = kind
-			_save_settings()
-			_swap_germ()
-			_refresh_species())
-		col.add_child(card)
-		_cards.append(card)
+	_plate_name = Hud._make_label(30, Palette.TEXT)
+	_plate_name.theme_type_variation = "Heading"
+	_plate_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pv.add_child(_plate_name)
 
-	# Rejim lövhəsi — OYNA düyməsinin üstündə.
-	#
-	# Brawl Stars-da oyun rejimi düymənin üstündədir: oyunçu NƏYƏ girdiyini
-	# basmadan əvvəl bilir. Burada rejim birdir, amma sual eynidir — dünyada
-	# neçə nəfər var, nə qədər davam edir.
-	# REJİM SEÇİCİSİ — OYNA düyməsinin üstündə.
-	#
-	# Brawl Stars-da hadisə kartı məhz oradadır: oyunçu NƏYƏ girdiyini basmadan
-	# əvvəl bilir. Yeri əvvəldən bu iş üçün saxlanmışdı, indi doldurulur.
-	#
-	# Kart basılanda növbəti rejimə keçir. İki rejim var, ona görə növbə ilə
-	# keçmək bəsdir — üçüncüsü gələndə sürüşən lentə çevriləcək.
-	_mode_card = Button.new()
-	_mode_card.position = Vector2(0, 246)
-	_mode_card.size = Vector2(COL_W, 52)
-	_mode_card.add_theme_stylebox_override("normal", _ghost_style(Palette.PANEL_BORDER))
-	_mode_card.add_theme_stylebox_override("hover", _ghost_style(Palette.DISH_EDGE))
-	_mode_card.add_theme_stylebox_override("pressed", _ghost_style(Palette.PANEL_BORDER))
-	_mode_card.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	_mode_card.pressed.connect(func() -> void:
+	_plate_super = Hud._make_label(16, Palette.GERM_COLORS[1])
+	_plate_super.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pv.add_child(_plate_super)
+
+	# ── SOL LENT ──
+	var rail := Button.new()
+	rail.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
+	rail.offset_left = PAD
+	rail.offset_right = PAD + RAIL.x
+	rail.offset_top = -RAIL.y * 0.5
+	rail.offset_bottom = RAIL.y * 0.5
+	rail.add_theme_stylebox_override("normal", _panel_style())
+	rail.add_theme_stylebox_override("hover", _panel_style(Palette.DISH_EDGE))
+	rail.add_theme_stylebox_override("pressed", _panel_style())
+	rail.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	rail.pressed.connect(func() -> void:
 		Sfx.play("ui_click")
-		Net.mode = Const.Mode.ENDLESS if Net.mode == Const.Mode.SOLO else Const.Mode.SOLO
-		_save_settings()
-		_refresh_mode())
-	col.add_child(_mode_card)
-	_squash(_mode_card, Vector2(COL_W, 52))
+		_open_sheet("species"))
+	add_child(rail)
 
-	_mode_name = Hud._make_label(24, Palette.GERM_COLORS[1])
-	_mode_name.theme_type_variation = "Heading"
-	_mode_name.position = Vector2(14, 2)
-	_mode_name.size = Vector2(COL_W - 28, 28)
-	_mode_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mode_card.add_child(_mode_name)
+	var ricon := TextureRect.new()
+	ricon.texture = load(_ICONS[int(Const.Species.CILIATE)])
+	ricon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ricon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ricon.modulate = Palette.GERM_COLORS[0]
+	ricon.position = Vector2(0, 16)
+	ricon.size = Vector2(RAIL.x, 52)
+	ricon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rail.add_child(ricon)
 
-	_mode_note = Hud._make_label(14, Palette.TEXT_MUTED)
-	_mode_note.position = Vector2(14, 28)
-	_mode_note.size = Vector2(COL_W - 96, 20)
-	_mode_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mode_card.add_child(_mode_note)
+	var rlab := Hud._make_label(14, Palette.TEXT_MUTED)
+	rlab.text = "MİKROBLAR"
+	rlab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rlab.position = Vector2(0, 76)
+	rlab.size = Vector2(RAIL.x, 22)
+	rail.add_child(rlab)
 
-	# "DƏYİŞ ›" — kartın BASILA BİLDİYİNİ bildirən yeganə əlamət.
+	# ── AŞAĞI-MƏRKƏZ: OYNA ──
 	#
-	# Onsuz kart sadəcə lövhə kimi oxunur: növ kartlarının seçilmiş halı var,
-	# bunun isə yoxdur, ona görə oyunçu ikinci rejimin varlığını heç bilməz.
-	# Brawl Stars-da hadisə kartının yanındakı ox eyni işi görür.
-	var swap := Hud._make_label(14, Palette.TEXT_MUTED)
-	swap.text = "DƏYİŞ ›"
-	swap.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	swap.position = Vector2(COL_W - 96, 16)
-	swap.size = Vector2(82, 20)
-	swap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mode_card.add_child(swap)
-
-	# OYNA — ekranın ən böyük obyekti və yeganə DOLU laym ləkəsi.
+	# Ekranın yeganə DOLU laym ləkəsi və ən böyük obyekti.
 	_play = Button.new()
 	_play.text = "OYNA"
-	_play.position = Vector2(COL_W - BTN_W, 310)
-	_play.size = Vector2(BTN_W, PLAY_H)
+	_play.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	_play.offset_left = -BTN_W * 0.5
+	_play.offset_right = BTN_W * 0.5
+	_play.offset_top = -(PAD + PLAY_H)
+	_play.offset_bottom = -PAD
 	_play.add_theme_font_size_override("font_size", 46)
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		_play.add_theme_color_override(state, Color("06140A"))
@@ -464,14 +497,63 @@ func _build_right_column() -> void:
 	_play.pressed.connect(func() -> void:
 		Sfx.play("ui_click")
 		_on_play())
-	col.add_child(_play)
+	add_child(_play)
 	_squash(_play, Vector2(BTN_W, PLAY_H))
 
+	# ── AŞAĞI-SAĞ: rejim ──
+	_mode_card = Button.new()
+	_mode_card.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_mode_card.offset_right = -PAD
+	_mode_card.offset_left = -(PAD + MODE_W)
+	_mode_card.offset_top = -(PAD + PLAY_H)
+	_mode_card.offset_bottom = -PAD
+	_mode_card.add_theme_stylebox_override("normal", _panel_style())
+	_mode_card.add_theme_stylebox_override("hover", _panel_style(Palette.DISH_EDGE))
+	_mode_card.add_theme_stylebox_override("pressed", _panel_style())
+	_mode_card.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_mode_card.pressed.connect(func() -> void:
+		Sfx.play("ui_click")
+		_open_sheet("modes"))
+	add_child(_mode_card)
+	_squash(_mode_card, Vector2(MODE_W, PLAY_H))
+
+	var mcap := Hud._make_label(13, Palette.TEXT_MUTED)
+	mcap.text = "REJİM"
+	mcap.position = Vector2(16, 10)
+	mcap.size = Vector2(MODE_W - 110, 18)
+	mcap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mode_card.add_child(mcap)
+
+	var mch := Hud._make_label(15, Palette.TEXT_MUTED)
+	mch.text = "DƏYİŞ ›"
+	mch.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	mch.position = Vector2(MODE_W - 106, 10)
+	mch.size = Vector2(90, 20)
+	mch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mode_card.add_child(mch)
+
+	_mode_name = Hud._make_label(26, Palette.GERM_COLORS[1])
+	_mode_name.theme_type_variation = "Heading"
+	_mode_name.position = Vector2(16, 32)
+	_mode_name.size = Vector2(MODE_W - 32, 34)
+	_mode_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mode_card.add_child(_mode_name)
+
+	_mode_note = Hud._make_label(15, Palette.TEXT_MUTED)
+	_mode_note.position = Vector2(16, 68)
+	_mode_note.size = Vector2(MODE_W - 32, 24)
+	_mode_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mode_card.add_child(_mode_note)
+
+	# ── AŞAĞI-SOL: MƏŞQ ──
 	var practice := Button.new()
-	practice.text = "MƏŞQ (offline)"
-	practice.position = Vector2(COL_W - BTN_W, 434)
-	practice.size = Vector2(BTN_W, 52)
-	practice.add_theme_font_size_override("font_size", 21)
+	practice.text = "MƏŞQ · offline"
+	practice.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	practice.offset_left = PAD
+	practice.offset_right = PAD + 216.0
+	practice.offset_top = -(PAD + 56.0)
+	practice.offset_bottom = -PAD
+	practice.add_theme_font_size_override("font_size", 19)
 	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		practice.add_theme_color_override(state, Palette.TEXT_MUTED)
 	practice.add_theme_stylebox_override("normal", _ghost_style(Palette.PANEL_BORDER))
@@ -481,25 +563,197 @@ func _build_right_column() -> void:
 	practice.pressed.connect(func() -> void:
 		Sfx.play("ui_click")
 		_practice())
-	col.add_child(practice)
-	_squash(practice, Vector2(BTN_W, 52))
+	add_child(practice)
+	_squash(practice, Vector2(216.0, 56.0))
 
 
-## Qaydanın iki sətri — sol aşağıda, mikrobun altında.
+# ---------------------------------------------------------------- vərəq
+
+## MİKROBLAR və REJİMLƏR — eyni çərçivəni paylaşan iki tam ekran vərəq.
 ##
-## Brawl Stars-da orada naviqasiya lenti durur (Mağaza, Brawler-lər, Xəbərlər).
-## Bizdə o bölmələr yoxdur, ona görə yer oyunun QAYDASINA verilir: oyun tanış
-## deyil və menyu onu bir dəfə izah etməlidir.
-func _build_hint() -> void:
-	var hint := Hud._make_label(19, Palette.TEXT_MUTED)
-	hint.text = "Qida ye — böyü.  Rəqibə top at — onu doldur.\n" \
-		+ "Tutumu aşan mikrob PARTLAYIR."
-	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	hint.offset_left = PAD
-	hint.offset_bottom = -PAD
-	hint.offset_top = -(PAD + 72.0)
-	hint.offset_right = PAD + 620.0
-	add_child(hint)
+## Brawl Stars-ın Brawlers və Events ekranlarının qarşılığı. Ana ekranda
+## saxlanılsaydılar, oyunçu OYNA-ya çatana qədər on yeddi elementin arasından
+## keçərdi; burada isə hər ekranın bir işi var.
+func _build_sheet() -> void:
+	_sheet = Control.new()
+	_sheet.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sheet.visible = false
+	add_child(_sheet)
+
+	var dim := ColorRect.new()
+	dim.color = Palette.BG_OUTER
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sheet.add_child(dim)
+
+	_sheet_title = Hud._make_label(36, Palette.TEXT)
+	_sheet_title.theme_type_variation = "Heading"
+	_sheet_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sheet_title.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_sheet_title.offset_top = 88.0
+	_sheet_title.offset_bottom = 140.0
+	_sheet.add_child(_sheet_title)
+
+	var back := Button.new()
+	back.text = "‹ GERİ"
+	back.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	back.offset_left = PAD
+	back.offset_right = PAD + 170.0
+	back.offset_top = -(PAD + 52.0)
+	back.offset_bottom = -PAD
+	back.add_theme_font_size_override("font_size", 20)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		back.add_theme_color_override(state, Palette.TEXT_MUTED)
+	back.add_theme_stylebox_override("normal", _ghost_style(Palette.PANEL_BORDER))
+	back.add_theme_stylebox_override("hover", _ghost_style(Palette.DISH_EDGE))
+	back.add_theme_stylebox_override("pressed", _ghost_style(Palette.PANEL_BORDER))
+	back.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	back.pressed.connect(func() -> void:
+		Sfx.play("ui_click")
+		_close_sheet())
+	_sheet.add_child(back)
+
+	_sheet_species = Control.new()
+	_sheet_species.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sheet_species.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sheet.add_child(_sheet_species)
+	_build_species_grid()
+
+	_sheet_modes = Control.new()
+	_sheet_modes.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sheet_modes.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sheet.add_child(_sheet_modes)
+	_build_mode_list()
+
+
+## Üç növ yan-yana — Brawl Stars-ın Brawlers şəbəkəsi.
+##
+## Kartda CANLI mikrob var, ikona yox: növ seçimi görünüşə görə edilir və
+## kirpiklinin dalğası ilə amöbin sürünməsi arasındakı fərq yalnız hərəkətdə
+## görünür.
+func _build_species_grid() -> void:
+	var total := CARD_BIG.x * 3.0 + GRID_GAP * 2.0
+	for i in Const.SPECIES_COUNT:
+		var kind := Const.species_from(i)
+		var card := Button.new()
+		card.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		card.offset_left = -total * 0.5 + float(i) * (CARD_BIG.x + GRID_GAP)
+		card.offset_right = card.offset_left + CARD_BIG.x
+		card.offset_top = -CARD_BIG.y * 0.5 + 22.0
+		card.offset_bottom = card.offset_top + CARD_BIG.y
+		card.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		card.pressed.connect(func() -> void:
+			Sfx.play("ui_click")
+			Net.species = kind
+			_save_settings()
+			_swap_germ()
+			_refresh_species()
+			_close_sheet())
+		_sheet_species.add_child(card)
+		_cards.append(card)
+
+		var stage := Node2D.new()
+		stage.position = Vector2(CARD_BIG.x * 0.5, 130.0)
+		stage.scale = Vector2(1.45, 1.45) \
+			* (Const.BASE_RADIUS / Const.germ_radius(GERM_CAPACITY))
+		card.add_child(stage)
+		var g := GermVisual.new()
+		g.setup(i, "", true, kind)
+		stage.add_child(g)
+		g.apply(Vector2.ZERO, 0.0, GERM_BALLS, GERM_CAPACITY, false, true)
+
+		var nm := Hud._make_label(28, Palette.TEXT)
+		nm.theme_type_variation = "Heading"
+		nm.text = _species_name(kind)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nm.position = Vector2(0, 252)
+		nm.size = Vector2(CARD_BIG.x, 36)
+		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(nm)
+
+		var sp := Hud._make_label(15, Palette.GERM_COLORS[1])
+		sp.text = "SUPER · " + _species_super_name(kind)
+		sp.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		sp.position = Vector2(0, 292)
+		sp.size = Vector2(CARD_BIG.x, 22)
+		sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(sp)
+
+		var note := Hud._make_label(15, Palette.TEXT_MUTED)
+		note.text = _species_note_for(kind)
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		note.position = Vector2(16, 328)
+		note.size = Vector2(CARD_BIG.x - 32, 64)
+		note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(note)
+
+
+## Rejimlər ŞAQULİ siyahıdır, şəbəkə deyil.
+##
+## Brawl Stars-ın Events ekranı da belədir: rejimlər bərabər deyil, sıralıdır —
+## sonsuz arena giriş, ÜÇLÜK isə ən dar oyundur. Göz yuxarıdan aşağı bir dəfə keçir.
+func _build_mode_list() -> void:
+	var n := Const.Mode.size()
+	var h := ROW_H * float(n) + ROW_GAP * float(n - 1)
+	for i in n:
+		var mode := Const.mode_from(i)
+		var row := Button.new()
+		row.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+		row.offset_left = -ROW_W * 0.5
+		row.offset_right = ROW_W * 0.5
+		row.offset_top = -h * 0.5 + 30.0 + float(i) * (ROW_H + ROW_GAP)
+		row.offset_bottom = row.offset_top + ROW_H
+		row.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		row.pressed.connect(func() -> void:
+			Sfx.play("ui_click")
+			Net.mode = mode
+			_save_settings()
+			_refresh_mode()
+			_close_sheet())
+		_sheet_modes.add_child(row)
+		_mode_rows.append(row)
+
+		var sw := ColorRect.new()
+		sw.color = Palette.GERM_COLORS[MODE_TINT[i]]
+		sw.position = Vector2(20, (ROW_H - 60.0) * 0.5)
+		sw.size = Vector2(60, 60)
+		sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(sw)
+
+		var nm := Hud._make_label(26, Palette.TEXT)
+		nm.theme_type_variation = "Heading"
+		nm.text = Const.mode_name(int(mode))
+		nm.position = Vector2(100, 18)
+		nm.size = Vector2(ROW_W - 120, 34)
+		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(nm)
+
+		var note := Hud._make_label(15, Palette.TEXT_MUTED)
+		note.text = Const.mode_note(int(mode))
+		note.position = Vector2(100, 54)
+		note.size = Vector2(ROW_W - 120, 24)
+		note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(note)
+
+
+## Vərəq açılanda podium GİZLƏNİR.
+##
+## [GermVisual] öz `z_index`-ini 2 qoyur (oyunda öz mikrobun rəqiblərin
+## üstündə çəkilməlidir), ona görə vərəq onu ADİ ağac sırası ilə örtə bilmir —
+## mikrob kartların üstündə qalırdı.
+func _open_sheet(which: String) -> void:
+	_stage.visible = false
+	_sheet_title.text = "MİKROBLAR" if which == "species" else "REJİMLƏR"
+	_sheet_species.visible = which == "species"
+	_sheet_modes.visible = which != "species"
+	_sheet.visible = true
+	_refresh_species()
+	_refresh_mode()
+
+
+func _close_sheet() -> void:
+	_sheet.visible = false
+	_stage.visible = true
 
 
 ## Giriş animasiyası.
@@ -560,34 +814,50 @@ func _swap_germ() -> void:
 ##
 ## Bir sətir MƏCBURİDİR: oyunçu nəyə girdiyini basmadan əvvəl bilməlidir.
 ## Menyunun onsuz da yazılmış qaydasıdır (bax sinif şərhi, 3-cü bənd).
+## Keyfiyyət düyməsinin yazısı və rəngi.
+func _refresh_quality() -> void:
+	if _quality_btn == null:
+		return
+	_quality_btn.text = "QRAFİKA: %s" % Const.quality_name(int(Net.quality))
+	_quality_btn.add_theme_color_override("font_color",
+		Palette.TEXT if Net.quality == Const.Quality.HIGH else Palette.WARNING)
+
+
 func _refresh_mode() -> void:
-	if Net.mode == Const.Mode.SOLO:
-		_mode_name.text = "TƏK QALAN"
-		_mode_name.add_theme_color_override("font_color", Palette.WARNING)
-		_mode_note.text = "10 mikrob · qab quruyur · sona qalan udur"
-	else:
-		_mode_name.text = "SONSUZ ARENA"
-		_mode_name.add_theme_color_override("font_color", Palette.GERM_COLORS[1])
-		_mode_note.text = "matç yoxdur · girdin, oynadın · gözləmə yoxdur"
+	# Ad və qayda [Const]-dan gəlir: rejim əlavə edəndə menyu özü yenilənir.
+	_mode_name.text = Const.mode_name(int(Net.mode))
+	_mode_note.text = Const.mode_brief(int(Net.mode))
+	# Sonsuz arena sakit mavidir, matçlı rejimlər isə xəbərdaredici narıncı:
+	# matç girdiyin kimi bitmir, oyunçu bunu basmadan əvvəl bilməlidir.
+	var col := Palette.GERM_COLORS[1] if Net.mode == Const.Mode.ENDLESS else Palette.WARNING
+	_mode_name.add_theme_color_override("font_color", col)
+
+	for i in _mode_rows.size():
+		var on := Const.mode_from(i) == Net.mode
+		var row := _mode_rows[i]
+		for state in ["normal", "hover", "pressed"]:
+			row.add_theme_stylebox_override(state, _card_style(on))
+		var nm := row.get_child(1) as Label
+		nm.add_theme_color_override("font_color",
+			Palette.TEXT if on else Color(0.62, 0.72, 0.71))
 
 
 func _refresh_species() -> void:
-	_species_title.text = _species_name(Net.species)
-	_species_super.text = "SUPER: " + _species_super_name(Net.species)
-	_species_note.text = _species_note_for(Net.species)
+	_plate_name.text = _species_name(Net.species)
+	_plate_super.text = "SUPER · " + _species_super_name(Net.species)
 	for i in _cards.size():
 		var on := Const.species_from(i) == Net.species
 		var card := _cards[i]
 		for state in ["normal", "hover", "pressed"]:
 			card.add_theme_stylebox_override(state, _card_style(on))
-		var icon := card.get_child(0) as TextureRect
-		icon.modulate = Palette.GERM_COLORS[0] if on else Color(0.45, 0.55, 0.55)
-		var name_lbl := card.get_child(1) as Label
-		name_lbl.add_theme_color_override("font_color",
+		# Ad və super seçiləndə işıqlanır — kart sırasında hansının aktiv
+		# olduğu yalnız çərçivədən yox, mətnin özündən də oxunmalıdır.
+		var nm := card.get_child(1) as Label
+		nm.add_theme_color_override("font_color",
 			Palette.TEXT if on else Color(0.62, 0.72, 0.71))
-		# Seçilmiş kart QALXIR. Yalnız rəng fərqi kifayət etmirdi: üç kart
-		# yan-yana olanda göz hansının aktiv olduğunu formadan daha tez tutur.
-		card.position.y = 128.0 if on else 132.0
+		var sp := card.get_child(2) as Label
+		sp.add_theme_color_override("font_color",
+			Palette.GERM_COLORS[1] if on else Color(0.42, 0.52, 0.52))
 
 
 static func _species_name(kind: Const.Species) -> String:
@@ -654,7 +924,7 @@ func _probe_server() -> void:
 	get_tree().create_timer(PROBE_TIMEOUT).timeout.connect(func() -> void:
 		if token != _probe_token or _joining or Net.is_connected_to_server():
 			return
-		_set_pill("server cavab vermir — MƏŞQ oyna", Palette.WARNING))
+		_set_pill("server cavab vermir", Palette.WARNING))
 
 
 func _on_play() -> void:
@@ -703,7 +973,7 @@ func _on_connected() -> void:
 
 func _on_connect_failed() -> void:
 	_set_joining(false)
-	_set_pill("server yatıb — MƏŞQ oyna", Palette.WARNING)
+	_set_pill("server yatıb", Palette.WARNING)
 
 
 func _on_disconnected() -> void:
@@ -758,6 +1028,9 @@ func _load_settings() -> void:
 	# Ayar faylı əl ilə redaktə oluna bilər — dəyər çərçivəyə salınır.
 	Net.species = Const.species_from(int(cfg.get_value("player", "species", 0)))
 	Net.mode = Const.mode_from(int(cfg.get_value("player", "mode", 0)))
+	# İlkin dəyər CİHAZDAN çıxır (telefonda aşağı), sonra oyunçunun seçimi.
+	Net.quality = Const.quality_from(int(cfg.get_value(
+		"video", "quality", int(Const.default_quality()))))
 	_addr.text = str(cfg.get_value("net", "address", _addr.text))
 
 
@@ -766,6 +1039,7 @@ func _save_settings() -> void:
 	cfg.set_value("player", "nickname", _clean_nick())
 	cfg.set_value("player", "species", int(Net.species))
 	cfg.set_value("player", "mode", int(Net.mode))
+	cfg.set_value("video", "quality", int(Net.quality))
 	cfg.set_value("net", "address", _addr.text.strip_edges())
 	cfg.save(SETTINGS_PATH)
 

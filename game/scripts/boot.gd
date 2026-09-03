@@ -9,6 +9,8 @@ extends Node
 
 
 func _ready() -> void:
+	_keep_landscape()
+	get_window().size_changed.connect(_keep_landscape)
 	var args := OS.get_cmdline_user_args()
 	if args.has("--simtest"):
 		get_tree().quit(SimTest.run())
@@ -52,6 +54,15 @@ func _start_practice(args: PackedStringArray) -> void:
 	if not mode.is_empty():
 		Net.mode = Const.mode_from(int(mode))
 
+	# `--quality <0|1>` — qrafika səviyyəsi (0 yüksək, 1 aşağı).
+	#
+	# `--species` və `--mode` ilə eyni səbəb: məşq menyunu keçir, yəni
+	# `settings.cfg` oxunmur. Onsuz aşağı keyfiyyətin görüntüsünü təkrarlana
+	# bilən şəkildə yoxlamaq mümkün deyil.
+	var q := _arg_value(args, "--quality", "")
+	if not q.is_empty():
+		Net.quality = Const.quality_from(int(q))
+
 	# `--at x,y` — mikrobu xəritənin müəyyən yerində doğurur (yalnız yoxlama).
 	# `configure_practice`-dən ƏVVƏL oxunmalıdır: yerli dünya mikrobu məhz
 	# orada yaradır. Sonra qoyulsaydı proqnoz yeni yerdə, server isə köhnə
@@ -71,6 +82,29 @@ func _start_practice(args: PackedStringArray) -> void:
 
 	_setup_screenshot(args)
 	_setup_perf(args)
+
+
+## Pəncərə portret olanda kadrı YATAY saxlayır.
+##
+## Oyun yataydır və telefonda oriyentasiya kilidlidir, amma masaüstündə və
+## brauzerdə pəncərə portret ola bilər. `expand` rejimi o halda görüş sahəsini
+## ŞAQULİ genişləndirir: 720×1280 pəncərədə viewport 1280×2275 olur — HUD-un
+## künclərə bağlı elementləri bir-birindən qopur, minimap sağ kənardan kəsilir,
+## yazılar isə 56%-ə kiçilir.
+##
+## `keep` isə eyni 1280×720 kadrı bütöv saxlayıb yanlarına zolaq qoyur: yazı
+## yenə kiçikdir (720 px enə 1280 px dizayn sığmır — bu fizikadır), amma düzüm
+## pozulmur və heç nə kəsilmir.
+##
+## Yatay pəncərələrdə `expand` qalır: ultra-geniş ekranda ƏLAVƏ görüş sahəsi
+## verir və 2400×1080-də düzgün işləyir.
+func _keep_landscape() -> void:
+	var w := get_window()
+	var want := Window.CONTENT_SCALE_ASPECT_EXPAND
+	if w.size.y > w.size.x:
+		want = Window.CONTENT_SCALE_ASPECT_KEEP
+	if w.content_scale_aspect != want:
+		w.content_scale_aspect = want
 
 
 ## Növün görüntü stendi — oyun məntiqi olmadan tək mikrob (bax [SpeciesPreview]).

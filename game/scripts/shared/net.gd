@@ -32,6 +32,8 @@ var species := Const.Species.CILIATE
 
 ## Menyuda seçilmiş rejim — dünyaya girərkən bir dəfə serverə göndərilir.
 var mode := Const.Mode.ENDLESS
+## Qrafika keyfiyyəti — YALNIZ client tərəfdə işlədilir, şəbəkəyə getmir.
+var quality := Const.default_quality()
 
 var _peer: MultiplayerPeer = null
 ## Serverdə lobby-ni saxlayır; client-də həmişə null.

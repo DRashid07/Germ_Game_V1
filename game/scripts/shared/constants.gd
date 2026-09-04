@@ -413,6 +413,32 @@ static func super_time(species: int) -> float:
 		_: return 0.0
 
 
+## Superin işlədilməsi üçün lazım olan ƏN AZ top sayı.
+##
+## Yalnız kirpiklidə mənalıdır: trixosist MADDƏDİR, [constant TRICHO_COST]
+## top xərcləyir və [method Sim.GermState.super_ready] oyunçunun öz superi ilə
+## acından ölməsinin qarşısını alır. Qalan iki superin top qiyməti yoxdur.
+static func super_min_balls(species: int) -> int:
+	if species == int(Species.CILIATE):
+		return TRICHO_COST + MIN_BALLS + 1
+	return MIN_BALLS
+
+
+## Doluluq TAMDIR, amma super yenə işləmirsə — SƏBƏBİ. İşləyirsə boş sətir.
+##
+## Qaydanın özü [method Sim.GermState.super_ready]-dədir, burada onun İZAHI
+## durur: qaydanı simulyasiya oxuyur, izahı isə HUD, və izah şəbəkəyə çıxmır.
+##
+## Bu mətn olmadan kirpikli 4 topda ölü düymə ilə qalırdı: doluluq 15/15,
+## halqa tam dolu, oyunçu basır və HEÇ NƏ olmur — nə effekt, nə səs, nə səbəb.
+## Atəş düyməsi 4 topda hələ işlək olduğuna görə bu, tamamilə adi vəziyyətdir.
+static func super_block_reason(species: int, balls: int) -> String:
+	var need := super_min_balls(species)
+	if balls < need:
+		return "SUPER ÜÇÜN %d TOP LAZIMDIR" % need
+	return ""
+
+
 ## Xam ədədi rejimə çevirir; tanınmayan hər şey sonsuz arenaya düşür.
 ##
 ## Növdəki [method species_from] ilə eyni səbəb: dəyər client-dən gəlir və
@@ -492,7 +518,22 @@ static func mode_brief(mode: int) -> String:
 		Mode.SOLO: return "10 mikrob · sona qalan udur"
 		Mode.DUO: return "5 cüt · dirilmə var"
 		Mode.TRIO: return "3v3 · üç raund"
-		_: return "6 mikrob · matç yoxdur"
+		# Sayı [method mode_capacity]-dən çıxır: burada "6 mikrob" yazılırdı —
+		# o, TRIO_GERMS-in rəqəmidir, səhvən köçürülmüşdü. Sonsuz arenanın
+		# tutumu WORLD_CAPACITY-dir və REJİMLƏR vərəqi ilə ziddiyyət yaranırdı.
+		_: return "%d mikrob · matç yoxdur" % WORLD_CAPACITY
+
+
+## Matç başlayanda ekrana çıxan QALİBİYYƏT şərti.
+##
+## Rejimə görə fərqlənməlidir: "sona qalan udur" ÜÇLÜK-də sadəcə yalandır
+## (orada raund hesabı həll edir), CÜT-də isə qalib tək mikrob yox, CÜTDÜR.
+## Əvvəl üç rejimdə də eyni sətir yazılırdı.
+static func mode_goal(mode: int) -> String:
+	match mode:
+		Mode.DUO: return "Sona qalan cüt udur"
+		Mode.TRIO: return "Üç raundun ikisini udan qalib"
+		_: return "Sona qalan udur"
 
 
 ## Rejimin bir sətirlik qaydası — menyu kartında göstərilir.

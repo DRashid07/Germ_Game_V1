@@ -212,6 +212,16 @@ func _build_background() -> void:
 
 	# Bioluminessensiya — oyundakı ilə eyni ayar (bax [method Arena._build_glow]).
 	# Menyu ilə oyun arasında görüntü kəsiyi olmamalıdır: eyni mikrob, eyni işıq.
+	#
+	# Keyfiyyət ayarı da EYNİ olmalıdır və bu, sonradan düzəldilib: arena
+	# `Net.quality`-ni oxuyurdu, menyu isə yox — nəticədə "QRAFİKA: AŞAĞI"
+	# düyməsi elə öz ekranında heç nə dəyişmirdi. Oyunçu basır, ekran eyni
+	# qalır, deməli düymə ölü sayılır. Üstəlik ən bahalı ekran (bloom-lu menyu)
+	# zəif telefonda bahalı qalırdı.
+	_apply_quality()
+	if Net.quality == Const.Quality.LOW:
+		return
+
 	var env := Environment.new()
 	env.background_mode = Environment.BG_CANVAS
 	env.glow_enabled = true
@@ -253,8 +263,26 @@ func _build_stage() -> void:
 	# Ad BOŞDUR: növün adı ayrıca, öz tipoqrafiyası ilə yazılır — mikrobun
 	# başının üstündəki kiçik yazı menyuda oxunmur.
 	_germ.setup(MENU_COLOR, "", true, Net.species)
+	_sink_germ()
 	_stage.add_child(_germ)
 	_germ.apply(Vector2.ZERO, 0.0, GERM_BALLS, GERM_CAPACITY, false, true)
+
+
+## Mikrobu İNTERFEYSİN ALTINA salır.
+##
+## [method GermVisual.setup] özünə `z_index = 2` yazır ("öz mikrobun həmişə
+## başqalarının üstündədir") — oyunda doğrudur, menyuda isə yox: buradakı
+## panellər adi Control-lardır, yəni sıfırdadır. Nəticədə ayaqlının
+## aksopodiyaları ad lövhəsindəki `SUPER · AKSOPODİYA TORU` yazısını, ayaqların
+## uclarındakı toplar isə ayarlar panelinin içini örtürdü.
+##
+## Sıfırda sıra AĞACDAN çıxır: səhnə panellərdən əvvəl əlavə olunur, deməli
+## onların altında qalır. Menyuda mikrob eksponatdır, idarə deyil.
+##
+## Ayrıca funksiyadır, çünki `setup` növ dəyişəndə TƏKRAR çağırılır
+## ([method _swap_germ]) və hər dəfə z-i yenidən yazır.
+func _sink_germ() -> void:
+	_germ.z_index = 0
 
 
 # ---------------------------------------------------------------- yuxarı zolaq
@@ -806,6 +834,7 @@ func _swap_germ() -> void:
 	_germ.queue_free()
 	_germ = GermVisual.new()
 	_germ.setup(MENU_COLOR, "", true, Net.species)
+	_sink_germ()
 	_stage.add_child(_germ)
 	_germ.apply(Vector2(_travelled, 0.0), 0.0, GERM_BALLS, GERM_CAPACITY, false, true)
 
@@ -816,11 +845,26 @@ func _swap_germ() -> void:
 ## Menyunun onsuz da yazılmış qaydasıdır (bax sinif şərhi, 3-cü bənd).
 ## Keyfiyyət düyməsinin yazısı və rəngi.
 func _refresh_quality() -> void:
+	_apply_quality()
 	if _quality_btn == null:
 		return
 	_quality_btn.text = "QRAFİKA: %s" % Const.quality_name(int(Net.quality))
 	_quality_btn.add_theme_color_override("font_color",
 		Palette.TEXT if Net.quality == Const.Quality.HIGH else Palette.WARNING)
+
+
+## HDR kadr buferi və zərrəcik sıxlığı — DƏRHAL, düymə basılan kadrda.
+##
+## Glow-un özü `WorldEnvironment`-dədir və o, [method _build_background]-da bir
+## dəfə qurulur; menyu yenidən qurulmadığı üçün seçim növbəti açılışdan tam
+## işləyir. Bufer və zərrəciklər isə elə indi dəyişir, yəni düymə basılan kimi
+## ekranda gözlə görünən fərq olur — oyunçu ayarın işlədiyini bilir.
+func _apply_quality() -> void:
+	var low := Net.quality == Const.Quality.LOW
+	get_viewport().use_hdr_2d = not low
+	if _motes != null:
+		_motes.count = 26 if low else 54
+		_motes.rebuild()
 
 
 func _refresh_mode() -> void:

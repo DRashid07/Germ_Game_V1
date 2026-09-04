@@ -67,6 +67,11 @@ var _result_rule: ColorRect
 
 var _local_color := Palette.TEXT
 var _warn_t := 0.0
+## ÜÇLÜK-ün raund hesabı — nəticə ekranı da onu göstərməlidir, ona görə
+## [method set_match]-dan saxlanılır.
+var _trio := false
+var _score_us := 0
+var _score_them := 0
 
 
 func build(base_tex: Texture2D, knob_tex: Texture2D) -> void:
@@ -367,7 +372,14 @@ static func _make_label(font_size: int, color: Color) -> Label:
 	l.add_theme_font_size_override("font_size", font_size)
 	l.add_theme_color_override("font_color", color)
 	l.add_theme_color_override("font_outline_color", Palette.OUTLINE)
-	l.add_theme_constant_override("outline_size", 6)
+	# Kontur ŞRİFTƏ NİSBƏTDƏDİR, sabit 6 px deyil.
+	#
+	# Sabit qalanda kiçik yazılar boğulurdu: 18 px-lik "Səviyyə 1" portret
+	# pəncərədə (miqyas 56%) tünd ləkəyə çevrilirdi, 64 px-lik nəticə başlığında
+	# isə eyni 6 px nazik qalırdı. Kontur oxunaqlılıq üçündür — hərfin özündən
+	# qalın olmamalıdır.
+	l.add_theme_constant_override("outline_size",
+		clampi(roundi(float(font_size) * 0.22), 3, 12))
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
@@ -380,7 +392,31 @@ func set_local_color(c: Color) -> void:
 	super_button.set_local_color(c)
 
 
+## Qısa müddətli izah — daimi xəbərdarlıqları MÜVƏQQƏTİ olaraq üstələyir.
+##
+## Oyunçunun BASDIĞI düymənin cavabı üçündür ("super üçün 5 top lazımdır").
+## Daimi xəbərdarlıqlar ([method update_gauge]) vəziyyəti təsvir edir və hər
+## kadr yenidən yazılır; bu isə HADİSƏYƏ cavabdır və özündən sonra keçib
+## getməlidir, yoxsa oyunçu təhlükə yazısını itirər.
+const HINT_TIME := 2.0
+
+var _hint := ""
+var _hint_t := 0.0
+
+
+## [param text] boşdursa heç nə etmir — səbəbsiz yanıb-sönmə olmasın.
+func flash_hint(text: String) -> void:
+	if text.is_empty():
+		return
+	_hint = text
+	_hint_t = HINT_TIME
+	_set_warning(text)
+
+
 func _process(delta: float) -> void:
+	if _hint_t > 0.0:
+		_hint_t = maxf(0.0, _hint_t - delta)
+
 	# Xəbərdarlıq yazısı yanıb-sönür: hərəkət diqqəti mətndən tez çəkir.
 	if _warn_lbl.visible:
 		_warn_t += delta
@@ -413,6 +449,10 @@ func update_gauge(balls: int, capacity: int) -> void:
 	# "DOLURSAN — TOP AT!" görünürdü, halbuki artıq atmağa mikrob yoxdur.
 	if _result.visible:
 		_warn_lbl.visible = false
+	elif _hint_t > 0.0:
+		# Basılmış düymənin cavabı təhlükə yazısını qısa müddət üstələyir:
+		# oyunçu məhz indi soruşub, cavab da indi gəlməlidir.
+		_set_warning(_hint)
 	elif _drying:
 		_set_warning("QURUYUR — mərkəzə get")
 	elif balls >= capacity - 1:
@@ -474,6 +514,13 @@ func hide_message() -> void:
 func show_result(result: Dictionary) -> void:
 	hide_message()
 	_warn_lbl.visible = false
+	# Oyun ekranı SÖNÜR — nəticə tək qalır.
+	#
+	# Örtük 0.82 alfalıdır, yəni altındakı hər şey oxunaqlı qalırdı: göstərici,
+	# liderlər cədvəli, minimap, atəş və super düymələri nəticə mətni ilə
+	# yarışırdı. Halbuki bu ekranda oyunçunun edə biləcəyi heç nə yoxdur.
+	_safe_root.visible = false
+	move_stick.visible = false
 	var killer := str(result.get("killer", ""))
 	var age := int(float(result.get("age", 0.0)))
 	var won := bool(result.get("won", false))
@@ -529,6 +576,14 @@ func show_result(result: Dictionary) -> void:
 		step.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	else:
 		_result_title.scale = Vector2.ONE
+	# ÜÇLÜK-də matçı YER yox, RAUND HESABI həll edir — nəticə də onu deməlidir.
+	#
+	# Hesab yalnız oyun ekranının sağ küncündə vardı və nəticə açılanda o künc
+	# də sönür, yəni matçın əsas rəqəmi heç yerdə qalmırdı (design/MODES.md §11
+	# onu başlıqda tələb edir).
+	if _trio:
+		lead = "RAUND HESABI  %d — %d\n%s" % [_score_us, _score_them, lead]
+
 	_result_body.text = "%s\n\nPartlatdığın mikrob: %d\nÇatdığın tutum: %d (səviyyə %d)\nYaşadın: %d:%02d\n\nMenyuya qayıdılır..." % [
 		lead,
 		int(result.get("pops", 0)),
@@ -546,7 +601,13 @@ func show_result(result: Dictionary) -> void:
 ## [param us] və [param them] yalnız ÜÇLÜK-də mənalıdır: udulan raund sayı.
 func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool,
 		us := 0, them := 0, round_no := 1) -> void:
-	if phase == Const.Phase.COUNTDOWN:
+	# Nəticə lövhəsi açıqdırsa mərkəzdəki yazı SUSUR.
+	#
+	# Yoxsa ÜÇLÜK-də növbəti raundun geriyə sayımı nəticə mətninin arxasından
+	# görünür və iki mesaj eyni yeri paylaşır.
+	if _result.visible:
+		hide_message()
+	elif phase == Const.Phase.COUNTDOWN:
 		# Sayım gedərkən mərkəzdəki HƏR İKİ sətir bu funksiyanındır.
 		#
 		# Yalnız rəqəmi yazıb alt sətri başqasına buraxsaq, orada əvvəlki
@@ -560,10 +621,25 @@ func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool,
 		_sub_lbl.visible = true
 
 	var trio := mode == Const.Mode.TRIO
+	_trio = trio
+	_score_us = us
+	_score_them = them
 	_alive_lbl.text = "SAĞ: %d" % alive
 	_alive_lbl.visible = phase == Const.Phase.PLAYING and not trio
-	_score_lbl.text = "RAUND %d   %d — %d" % [round_no, us, them]
+	# Ayırıcı BOŞLUQ deyil, "·"-dır.
+	#
+	# `"RAUND %d   %d — %d"` üç boşluqla yazılırdı və bu şriftdə boşluq ~3 px
+	# çıxır: ekranda "RAUND1 0 — 0" oxunurdu, yəni raund nömrəsi hesaba
+	# yapışırdı. Görünən ayırıcı bunu şriftdən asılı olmaqdan çıxarır.
+	_score_lbl.text = "RAUND %d  ·  %d — %d" % [round_no, us, them]
 	_score_lbl.visible = trio and phase != Const.Phase.WAITING
+
+	# DÜNYA ƏHALİSİ matçlı rejimdə yazılmır — orada mənalı olan SAĞ SAYIDIR.
+	#
+	# İkisi yan-yana duranda ekran özü ilə ziddiyyətə düşürdü ("Dünyada 8
+	# mikrob" / "SAĞ: 10" — CÜT-də dirilmə gözləyən fərqi), TƏK QALAN-da isə
+	# sadəcə eyni rəqəmi iki dəfə yazırdı.
+	_pop_lbl.visible = false
 
 	# Quruma xəbərdarlığı burada YAZILMIR — yalnız bayraq qoyulur.
 	#

@@ -380,6 +380,22 @@ var aim := 0.0
 ## Serverin bayrağından gəlir (bax [enum Const.GFlag]); görüntü qatı onu
 ## özü hesablamır, çünki rəqibin superini yalnız server bilir.
 var super_on := false
+
+## Superin görüntü ağırlığı 0..1 — bayrağın ARDINCA sürünür.
+##
+## Bayraq ikilidir və başqa cür ola da bilməz: qalan vaxt şəbəkəyə çıxmır,
+## cəmi bir bit gedir. Amma ikili bayrağı birbaşa çəkəndə 4 saniyəlik tor və
+## 2.5 saniyəlik qabıq tam gücdə PEYDA OLUR və tam gücdə YOX OLUR — ekranda
+## bu, effektin sınması kimi oxunur.
+##
+## Ona görə bit hədəfdir, çəkilən isə ona doğru sürünən ədəddir. Şəbəkəyə
+## sıfır bayt əlavə olunur.
+var _super_fade := 0.0
+
+## Sönmə açılmadan yavaşdır: açılış hadisədir (dərhal görünməlidir), bağlanma
+## isə keçiddir.
+const SUPER_FADE_IN := 9.0
+const SUPER_FADE_OUT := 4.5
 var alive := true
 var safe := false
 ## Partladı. [method apply] bundan sonra görüntünü geri qaytarmır — öz
@@ -736,6 +752,14 @@ func _process(delta: float) -> void:
 		return
 	_t += delta
 	_flash = maxf(0.0, _flash - delta)
+
+	# Superin görüntüsü bayrağın ardınca sürünür — bax [member _super_fade].
+	var want := 1.0 if super_on else 0.0
+	if not is_equal_approx(_super_fade, want):
+		var rate := SUPER_FADE_IN if super_on else SUPER_FADE_OUT
+		_super_fade = move_toward(_super_fade, want, delta * rate)
+		queue_redraw()
+
 	_track_motion(delta)
 	match species:
 		Const.Species.HELIOZOAN:
@@ -1115,14 +1139,27 @@ func _draw() -> void:
 			Color(Palette.TEXT, 0.35), 2.5, true)
 
 	# ---- super ----
-	if super_on:
+	if _super_fade > 0.004:
 		match species:
 			Const.Species.AMOEBA:
-				_draw_cyst(r)
+				_draw_cyst(r, _super_fade)
 			Const.Species.HELIOZOAN:
-				_draw_net(r)
+				_draw_net(r, _super_fade)
 			_:
 				pass
+
+	# ---- yoldaş nişanı ----
+	#
+	# Ad rəngi TƏK BAŞINA bəs etmir: döyüşdə göz gövdələrə baxır, adlara yox,
+	# üstəlik ad mikrobun üstündə kiçik yazıdır və dolu ekranda itir. Halqa isə
+	# siluetin öz kənarındadır — "bura atma" mesajı gövdənin özündən gəlir.
+	#
+	# Doğuş qalxanından ayrılır: qalxan KƏSİK və fırlanır, yoldaş halqası isə
+	# bütöv və sakitdir. Rəng də heç bir oyunçunun rəngi deyil
+	# ([constant Palette.ALLY]).
+	if is_ally:
+		draw_arc(Vector2.ZERO, r + SHIELD_GAP * 0.55, 0.0, TAU, 40,
+			Color(Palette.ALLY, 0.72), 2.6, true)
 
 	if safe:
 		# Doğuş qalxanı — fırlanan kəsik halqa. Atəş açan kimi sönür.
@@ -1485,14 +1522,30 @@ func _draw_cilia(r: float, rush: float, heading: float) -> void:
 	# Dalğa getdiyi istiqamətin əksinə qaçır — mikrob suyu geri itələyir.
 	var flow := heading + PI
 
+	# Köklər MEMBRANIN üstündə oturur, təsəvvüri dairənin yox.
+	#
+	# Gövdə hərəkətdə ellipsə çevrilir ([method _membrane] eyni `stretch`/
+	# `squash` cütünü tətbiq edir), köklər isə dairədə qalırdı: ellipsin en
+	# kəsiyində kirpiklər membrandan qopub havada üzürdü, uzun uclarında isə
+	# gövdənin İÇİNƏ girib itirdi. Ekranda "mikrob tük tökür" kimi oxunurdu.
+	var stretch := 1.0 + STRETCH_MAX * rush
+	var squash := 1.0 / stretch
+	var axis := Vector2.from_angle(heading)
+	var side := Vector2(-axis.y, axis.x)
+
 	var pts := PackedVector2Array()
 	for i in n:
 		var a := TAU * float(i) / float(n)
 		var phase := _t * beat - a * CILIA_WAVES
-		var out := Vector2.from_angle(a)
+		var circle := Vector2.from_angle(a)
+		# Çölə istiqamət ellipsin NORMALIDIR: dairənin normalı eyni əmsalların
+		# TƏRSİ ilə miqyaslanır, yoxsa kirpik səthə dik çıxmır.
+		var out := (axis * (circle.dot(axis) / stretch)
+			+ side * (circle.dot(side) / squash)).normalized()
 		var tangent := Vector2(-out.y, out.x)
 
-		var root := out * (r * 0.97)
+		var base := circle * (r * 0.97)
+		var root := axis * (base.dot(axis) * stretch) + side * (base.dot(side) * squash)
 		var bend := sin(phase) * sweep
 		# Ön tərəfdəki kirpiklər arxadakılardan daha az açılır: axın oradan gəlir.
 		var lean := 0.45 + 0.55 * (0.5 - 0.5 * cos(a - flow))
@@ -1598,8 +1651,19 @@ func _draw_inner_balls(r: float) -> void:
 			# Tünd kontur ulduzun BÖYÜDÜLMÜŞ nüsxəsi ilə verilir, xətlə yox:
 			# dolğun forma kənar yumşaltmadan da təmiz çıxır və çəkiliş
 			# çağırışı baxımından xətdən ucuzdur.
-			draw_colored_polygon(_star(p, dot * 1.58, a), Palette.OUTLINE)
-			draw_colored_polygon(_star(p, dot * 1.25, a), tint if i % 2 == 0 else _light)
+			#
+			# Əmsallar 1.58 / 1.25 idi, yəni tünd halqa topun öz enindən qalın
+			# çıxırdı: oyun içi ölçüdə (r ≈ 30 px) amöbin topları tutqun ləkəyə
+			# dönürdü və SAYILA BİLMİRDİ — halbuki say həm sursat, həm candır.
+			# Sistin içində, gövdə tündləşəndə vəziyyət daha da pisləşirdi.
+			# İndi kontur nazik haşiyədir, parlaq hissə isə böyükdür.
+			draw_colored_polygon(_star(p, dot * 1.42, a), Palette.OUTLINE)
+			draw_colored_polygon(_star(p, dot * 1.30, a), tint if i % 2 == 0 else _light)
+			# İşıq nöqtəsi dairələrdəki ilə eyni səbəbdəndir: forma yox, PARLAQ
+			# NÖQTƏ sayılır. Ulduzda yoxdur idi.
+			if lit:
+				draw_circle(p - Vector2(dot * 0.26, dot * 0.26), dot * 0.30,
+					Color(Palette.TEXT, 0.75))
 			continue
 		draw_circle(p, dot, Color(_light, 0.95))
 		if lit:
@@ -1614,18 +1678,21 @@ func _draw_inner_balls(r: float) -> void:
 ##
 ## Rəng mikrobun öz rəngindən çıxarılır, amma TÜNDLƏŞDİRİLİR: sist yatmış
 ## haldır, işıq saçmır. Bütün oyunda yeganə "sönmüş" mikrob budur.
-func _draw_cyst(r: float) -> void:
-	var shell := r + SHIELD_GAP * 0.5
-	# İki qat: bayırda tünd mineral, içəridə solğun işıq — qabıq qalın oxunmalıdır.
-	draw_circle(Vector2.ZERO, shell + 3.0, Color(Palette.OUTLINE, 0.55))
-	draw_arc(Vector2.ZERO, shell, 0.0, TAU, 40, _shadow.lerp(Palette.TEXT, 0.30), 7.0, true)
-	draw_arc(Vector2.ZERO, shell - 5.0, 0.0, TAU, 36, Color(_light, 0.30), 2.0, true)
+## [param fade] 0..1 — qabıq bağlanarkən və açılarkən keçid (bax [member _super_fade]).
+func _draw_cyst(r: float, fade := 1.0) -> void:
+	# Qabıq həm SOLUR, həm də QAPANIR: açılan sist gövdəyə yaxınlaşıb itir.
+	# Tək alfa ilə o, sadəcə şəffaflaşardı və "açıldı" hissi verməzdi.
+	var shell := r + SHIELD_GAP * 0.5 * fade
+	draw_circle(Vector2.ZERO, shell + 3.0, Color(Palette.OUTLINE, 0.55 * fade))
+	draw_arc(Vector2.ZERO, shell, 0.0, TAU, 40,
+		Color(_shadow.lerp(Palette.TEXT, 0.30), fade), 7.0, true)
+	draw_arc(Vector2.ZERO, shell - 5.0, 0.0, TAU, 36, Color(_light, 0.30 * fade), 2.0, true)
 	# Qabığın "tikişləri" — mineral lövhələr. Fırlanmır: sist tərpənmir.
 	for i in 8:
 		var ang := TAU * float(i) / 8.0
 		var from := Vector2.from_angle(ang) * (shell - 6.0)
 		var to := Vector2.from_angle(ang) * (shell + 2.0)
-		draw_line(from, to, Color(Palette.OUTLINE, 0.7), 3.0)
+		draw_line(from, to, Color(Palette.OUTLINE, 0.7 * fade), 3.0)
 
 
 ## Aksopodiya toru — ayaqlının superi.
@@ -1633,22 +1700,32 @@ func _draw_cyst(r: float) -> void:
 ## Şüalar uzanır, uclarındakı kinetosistlər parlayır. Torun SƏRHƏDİ də
 ## çəkilir: oyunçu qidanın hansı məsafədən axdığını, rəqib isə hara girməli
 ## OLMADIĞINI görməlidir — görünməyən sahə ədalətsiz olardı.
-func _draw_net(r: float) -> void:
+## [param fade] 0..1 — tor açılarkən və yığılarkən keçid (bax [member _super_fade]).
+func _draw_net(r: float, fade := 1.0) -> void:
 	var reach := r * Const.NET_RADIUS
-	# Sərhəd — nazik, nəbz vuran halqa. Doldurulmur: içəridəki hər şeyi örtərdi.
+	# Sərhəd — nəbz vuran halqa. Doldurulmur: içəridəki hər şeyi örtərdi.
+	#
+	# Alfa 0.14–0.24-dən 0.34–0.50-yə qaldırılıb və qalınlıq 2.5 → 3.5.
+	# Əvvəlki dəyərlərdə sərhəd ekranda praktiki olaraq görünmürdü — yalnız
+	# 3× böyüdülmüş şəkildə seçilirdi. Halqa isə torun ƏN VACİB hissəsidir:
+	# rəqib hara girməli OLMADIĞINI ondan öyrənir, görünməyən sahə isə tələdir.
 	var pulse := 0.5 + 0.5 * sin(_t * 3.4)
-	draw_arc(Vector2.ZERO, reach, 0.0, TAU, 72, Color(_light, 0.14 + 0.10 * pulse), 2.5, true)
-	draw_arc(Vector2.ZERO, reach * 0.66, 0.0, TAU, 56, Color(_light, 0.07 + 0.05 * pulse), 1.6, true)
+	draw_arc(Vector2.ZERO, reach, 0.0, TAU, 72,
+		Color(_light, (0.34 + 0.16 * pulse) * fade), 3.5, true)
+	draw_arc(Vector2.ZERO, reach * 0.66, 0.0, TAU, 56,
+		Color(_light, (0.14 + 0.08 * pulse) * fade), 1.8, true)
 
 	# Uzanan şüalar. Ayaqların ÖZÜ deyil — onlar yerdə qalır; bunlar tordur.
+	# Yığılanda şüalar da GERİ ÇƏKİLİR: tor sadəcə şəffaflaşmır, bağlanır.
 	var n := 16
 	for i in n:
 		var ang := TAU * float(i) / float(n) + _t * 0.20
 		var dir := Vector2.from_angle(ang)
 		# Uzunluq növbə ilə dəyişir: bərabər uzunluqlu şüalar çarx kimi görünür.
 		var len := reach * (0.72 + 0.28 * sin(_t * 2.2 + float(i) * 1.3))
-		draw_line(dir * (r * 0.98), dir * len, Color(_light, 0.42), 2.0)
-		draw_circle(dir * len, 3.2, Color(Palette.TEXT, 0.55))
+		len = lerpf(r * 0.98, len, fade)
+		draw_line(dir * (r * 0.98), dir * len, Color(_light, 0.42 * fade), 2.0)
+		draw_circle(dir * len, 3.2, Color(Palette.TEXT, 0.55 * fade))
 
 
 ## Sivri uclu orqanella. Uc sayı tək deyil, CÜTDÜR (14 nöqtə = 7 uc) və

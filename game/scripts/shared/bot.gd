@@ -9,8 +9,14 @@ extends RefCounted
 ## Bot heç bir imtiyaza malik deyil — insan oyunçu ilə eyni [Sim.PlayerInput]
 ## strukturunu doldurur və eyni məhdudiyyətlərə tabedir.
 
+## Adlar OYUNDAKI OBYEKTLƏRİN adları ilə üst-üstə düşməməlidir.
+##
+## Siyahıda "Spor" vardı, meydanda isə həqiqi Spor pikapı gəzir (TƏK QALAN və
+## CÜT rejimlərində) — liderlər cədvəlindəki "Spor" ilə yerdəki spor eyni söz
+## idi və nəticə ekranı "Səni partladan: Spor" yazanda cümlə iki cür oxunurdu.
+## Yerinə "Sitoz" qoyulub.
 const BOT_NAMES := [
-	"Amöb", "Koks", "Basil", "Spiral", "Vibrio", "Spor", "Nüvə", "Plazma",
+	"Amöb", "Koks", "Basil", "Spiral", "Vibrio", "Sitoz", "Nüvə", "Plazma",
 	"Toksin", "Mikoz", "Virion", "Koloniya", "Flagel", "Zülal", "Bakter",
 ]
 

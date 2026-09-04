@@ -17,6 +17,8 @@ const MARGIN := 1.08
 var layout := 0
 
 var _cam: Camera2D
+## Başlıq və əfsanə — AYRICA node-da, maneə sprite-larından yuxarı z-də.
+var _legend: Node2D
 
 
 func _ready() -> void:
@@ -33,6 +35,13 @@ func _ready() -> void:
 	_cam.make_current()
 
 	_spawn_sprites()
+
+	# Əfsanə sprite-lardan SONRA və daha yüksək z-də qurulur — bax
+	# [method _spawn_sprites]-dəki izah.
+	_legend = Node2D.new()
+	_legend.z_index = 5
+	add_child(_legend)
+	_legend.draw.connect(_draw_legend)
 
 
 ## Maneələri OYUNDAKI sprite-larla çəkir.
@@ -58,6 +67,14 @@ func _spawn_sprites() -> void:
 		spr.scale = Vector2.ONE * (o.z / Arena.BLOB_SPRITE_RADIUS)
 		if int(o.w) != DishMap.Kind.VENT:
 			spr.rotation = float(o.x + o.y) * 0.01
+		# Sprite-lar BAŞLIQ VƏ ƏFSANƏNİN ALTINDA qalır.
+		#
+		# Godot-da uşaqlar valideynin `_draw`-ından SONRA çəkilir, ona görə
+		# `_draw`-dakı panel sprite-ların altında qalırdı: ARXİPELAQ düzümündə
+		# "KOL" sözü tamamilə, "KÖVRƏK" isə yarısına qədər örtülürdü — halbuki
+		# stendin bütün mənası əfsanəni oxumaqdır. Panel indi ayrıca uşaqdadır
+		# (bax [method _build_legend]) və sıfırdan yuxarı z-də durur.
+		spr.z_index = 0
 		add_child(spr)
 
 
@@ -66,6 +83,8 @@ func _process(_delta: float) -> void:
 	var k := minf(vp.x, vp.y) / (Const.WORLD_RADIUS * 2.0 * MARGIN)
 	_cam.zoom = Vector2(k, k)
 	queue_redraw()
+	if _legend != null:
+		_legend.queue_redraw()
 
 
 func _draw() -> void:
@@ -107,17 +126,20 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2(-w * 0.5, -h2 * 0.5), Vector2(w, h2)),
 		Color(Palette.TEXT, 0.55), false, 5.0)
 
-	# Başlıq və əfsanənin arxasına panel: maneə sprite-ları düzümdən asılı
-	# olaraq bura düşə bilir və yazını oxunmaz edir. Panel düzümdən asılı
-	# deyil, ona görə stend HƏR düzümdə oxunaqlı qalır.
-	draw_rect(Rect2(Vector2(-r * 1.02, -r * 1.02), Vector2(r * 0.86, r * 0.72)),
-		Color(Palette.BG_OUTER, 0.82))
+
+## Başlıq və əfsanə. Sprite-lardan yuxarı z-də olan AYRI node çəkir, ona görə
+## düzüm nə olursa olsun yazı örtülmür (bax [method _spawn_sprites]).
+func _draw_legend() -> void:
+	var r := Const.WORLD_RADIUS
+	# Yazıların arxasına panel — maneələr düzümdən asılı olaraq bura düşür.
+	_legend.draw_rect(Rect2(Vector2(-r * 1.02, -r * 1.02), Vector2(r * 0.86, r * 0.72)),
+		Color(Palette.BG_OUTER, 0.92))
 
 	var label := "%d — %s" % [layout, DishMap.layout_name(layout)]
 	var font := ThemeDB.fallback_font
-	draw_string(font, Vector2(-r * 0.95, -r * 0.86), label,
+	_legend.draw_string(font, Vector2(-r * 0.95, -r * 0.86), label,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 120, Palette.TEXT)
-	draw_string(font, Vector2(-r * 0.95, -r * 0.72),
+	_legend.draw_string(font, Vector2(-r * 0.95, -r * 0.72),
 		"%d maneə · çərçivə = bir ekran" % DishMap.obstacles().size(),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 76, Palette.TEXT_MUTED)
 
@@ -126,9 +148,9 @@ func _draw() -> void:
 	for kind in [DishMap.Kind.MUCUS, DishMap.Kind.BUSH, DishMap.Kind.BRITTLE,
 			DishMap.Kind.VENT]:
 		var col := _kind_color(kind)
-		draw_circle(Vector2(-r * 0.90, y - 22.0), 26.0, Color(col, 0.35))
-		draw_arc(Vector2(-r * 0.90, y - 22.0), 26.0, 0.0, TAU, 24, col, 4.0, true)
-		draw_string(font, Vector2(-r * 0.80, y), DishMap.kind_name(kind),
+		_legend.draw_circle(Vector2(-r * 0.90, y - 22.0), 26.0, Color(col, 0.35))
+		_legend.draw_arc(Vector2(-r * 0.90, y - 22.0), 26.0, 0.0, TAU, 24, col, 4.0, true)
+		_legend.draw_string(font, Vector2(-r * 0.80, y), DishMap.kind_name(kind),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 64, col)
 		y += r * 0.11
 

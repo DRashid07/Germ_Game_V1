@@ -1,24 +1,41 @@
 class_name SuperButton
 extends Control
-## Super düyməsi — atəş düyməsinin ÜSTÜNDƏ, eyni sağ baş barmaq üçün.
+## Super düyməsi — atəş düyməsinin YANINDA (solunda), eyni sağ baş barmaq üçün.
 ##
 ## Yeri Brawl Stars-dan götürülüb və orada həll olunmuş bir problemə cavabdır:
 ## yatay tutulan telefonda iki barmaq artıq doludur (sol joystick, sağ atəş).
 ## Üçüncü düymə ayrıca yerə qoyulsaydı, oyunçu ya hərəkətdən, ya atəşdən
-## əl çəkməli olardı. Atəş düyməsinin bir az yuxarısında isə EYNİ barmaq
-## ikisinə də çatır — hərəkət solda toxunulmaz qalır.
+## əl çəkməli olardı. Atəşin bir az yanında isə EYNİ barmaq ikisinə də çatır —
+## hərəkət solda toxunulmaz qalır. (Dəqiq yer və niyə YUXARI yox, YAN olduğu:
+## [method Hud._build_controls].)
 ##
-## Düymə ÜÇ vəziyyət göstərir və üçü də oyunçuya lazımdır:
+## Düymə DÖRD vəziyyət göstərir və dördü də oyunçuya lazımdır:
 ##   • sönük halqa   — super hazır deyil
 ##   • dolan halqa   — nə qədər qalıb (dəymə, qida, partlatma doldurur)
+##   • KİLİDLİ halqa — doluluq tamdır, amma qiyməti ödəyə bilmirsən
 ##   • yanıb-sönən   — hazırdır, bas
+##
+## KİLİDLİ hal ayrıca çəkilir və bu, sonradan əlavə olunub: əvvəl dolu-amma-
+## hazır-olmayan düymə də oyunçunun öz rəngi ilə TAM halqa çəkirdi, yəni
+## "hazır"dan yalnız zəif nəbzlə fərqlənirdi. Kirpikli 4 topda məhz belə
+## qalırdı — halqa dolu, basırsan, heç nə olmur, səbəb də yoxdur
+## (bax [method Const.super_block_reason]).
 ##
 ## Toxunuşun BAŞLANĞICI [method _gui_input] ilə tutulur (yalnız düymənin
 ## üstündə), BURAXILMASI isə [method _input] ilə — barmaq düymədən kənara
 ## sürüşüb qalxsa belə. Eyni səbəb [FireButton]-dakı kimidir: itən buraxılma
 ## düyməni "basılı" ilişdirir.
 
-signal used    ## Basılan an; super hazırdırsa oyun onu işə salır
+signal used       ## Basıldı və super hazırdır — oyun onu işə salır
+## Basıldı, doluluq TAMDIR, amma super işlədilə bilmir. HUD səbəbi yazır.
+##
+## Ayrıca siqnaldır, çünki bu, boş basılış DEYİL: oyunçu yanan düymə görüb
+## basıb və cavab almalıdır. Sönük düymə isə heç nə göndərmir — orada
+## gözlənti də yoxdur.
+signal blocked
+
+## Rədd cavabının nə qədər göründüyü.
+const DENY_TIME := 0.45
 
 @export var radius := 54.0
 
@@ -28,6 +45,7 @@ var _color := Palette.TEXT
 var _touch_index := -1
 var _pressed := false
 var _t := 0.0
+var _deny_t := 0.0
 
 
 func _ready() -> void:
@@ -38,9 +56,17 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	# Yanıb-sönmə YALNIZ hazır olanda hesablanır: sönük düymənin öz saatı
 	# olmasının mənası yoxdur və hər kadr yenidən çəkiliş tələb edərdi.
+	if _deny_t > 0.0:
+		_deny_t = maxf(0.0, _deny_t - delta)
+		queue_redraw()
 	if _ready_now:
 		_t += delta
 		queue_redraw()
+
+
+## Doluluq tamdır, amma super işləmir — kilidli haldır.
+func _is_locked() -> bool:
+	return _charge >= 0.999 and not _ready_now
 
 
 ## Oyunçunun rəngi — hazır düymə məhz onunla yanır, ona görə ekranda
@@ -90,10 +116,13 @@ func _input(event: InputEvent) -> void:
 func _press() -> void:
 	_pressed = true
 	queue_redraw()
-	# Hazır olmayan düymə səs də vermir, siqnal da: boş basılış "işlədi"
-	# hissi verməməlidir.
 	if _ready_now:
 		used.emit()
+	elif _is_locked():
+		# Doluluq tamdır, amma qiyməti ödənmir: oyunçuya SƏBƏB borcludur.
+		# Sönük (hələ dolmamış) düymə isə susur — orada gözlənti yoxdur.
+		_deny_t = DENY_TIME
+		blocked.emit()
 
 
 func _release() -> void:
@@ -110,11 +139,18 @@ func release() -> void:
 func _draw() -> void:
 	var c := size * 0.5
 	var r := radius
-	var scale := 0.93 if _pressed and _ready_now else 1.0
+	var scale := 0.93 if _pressed and (_ready_now or _is_locked()) else 1.0
 	r *= scale
 
 	# Fon — atəş düyməsi ilə eyni material, bir az kiçik.
 	draw_circle(c, r, Color(Palette.PANEL, 0.72))
+
+	# Rədd cavabı — kilidli düyməyə basanda qırmızı halqa sönür.
+	# Basılışın CAVABSIZ qalmaması üçündür: səbəb yazısı HUD-da çıxır, amma
+	# barmağın altındakı düymə də dərhal nəsə deməlidir.
+	if _deny_t > 0.0:
+		var k := _deny_t / DENY_TIME
+		draw_arc(c, r + 6.0, 0.0, TAU, 40, Color(Palette.DANGER, 0.85 * k), 4.0, true)
 
 	if _ready_now:
 		# Hazır: dolu halqa + nəbz. Nəbz yalnız BURADA var, ona görə göz onu
@@ -124,6 +160,18 @@ func _draw() -> void:
 		draw_arc(c, r, 0.0, TAU, 44, _color, 5.0, true)
 		draw_circle(c, r * 0.42, Color(_color, 0.85 + 0.15 * pulse))
 		draw_arc(c, r * 0.66, 0.0, TAU, 28, Color(Palette.TEXT, 0.45 + 0.25 * pulse), 2.0, true)
+	elif _is_locked():
+		# KİLİDLİ: halqa doludur, amma oyunçunun RƏNGİNDƏ DEYİL.
+		#
+		# Rəng fərqi burada bəzək deyil, yeganə oxunan siqnaldır: forma
+		# "hazır" ilə eynidir (tam halqa), ona görə fərqi rəng daşımalıdır.
+		# Nəbz də yoxdur — hərəkət yalnız işlək düymədə olmalıdır.
+		draw_arc(c, r, 0.0, TAU, 44, Color(Palette.TEXT_MUTED, 0.75), 5.0, true)
+		# Üstündən kilid xətti — atəş düyməsindəki "sursat yoxdur" xətti ilə
+		# eyni dildir, oyunçu onu artıq tanıyır (bax [method FireButton._draw]).
+		var d := Vector2(r * 0.42, r * 0.42)
+		draw_line(c - d, c + d, Color(Palette.TEXT_MUTED, 0.85), 5.0, true)
+		draw_circle(c, r * 0.30, Color(Palette.TEXT_MUTED, 0.20))
 	else:
 		# Dolur: boş halqa + dolan qövs. Qövs YUXARIDAN başlayır və saat
 		# istiqamətində gedir — dolma istiqaməti gözə tanış olmalıdır.

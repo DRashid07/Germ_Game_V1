@@ -49,8 +49,15 @@ func _draw() -> void:
 	# xəritə isə dəyişmir. Xəritənin bütün mənası məhz o sualdır.
 	if wet_radius < Const.WORLD_RADIUS - 1.0:
 		var wr := wet_radius * k
-		draw_circle(c, wr, Color(Palette.DISH, 0.55))
-		draw_arc(c, wr, 0.0, TAU, 40, Color(Palette.WARNING, 0.85), 2.0, true)
+		# QURU halqa tündləşdirilir, yaş sahə isə toxunulmaz qalır.
+		#
+		# Əvvəl əksinə idi — yaş dairənin üstünə `DISH@0.55` çəkilirdi, yəni
+		# içi ilə çölü demək olar eyni rəngdə qalırdı və sərhəd yalnız 2 px-lik
+		# xətt idi. Halbuki xəritənin bu hissəsi "hara qaçım" sualına cavab
+		# verir: TƏHLÜKƏLİ sahə seçilməlidir, təhlükəsiz olan yox.
+		draw_circle(c, r, Color(Palette.DANGER, 0.20))
+		draw_circle(c, wr, Color(Palette.DISH, 0.95))
+		draw_arc(c, wr, 0.0, TAU, 40, Color(Palette.WARNING, 0.95), 2.5, true)
 
 	# Maneələr — oriyentir üçün sönük ləkələr.
 	#
@@ -71,9 +78,20 @@ func _draw() -> void:
 		var p: Vector2 = c + Vector2(dot[0]) * k
 		var col: Color = dot[1]
 		var mine: bool = dot[2]
+		var ally: bool = dot.size() > 3 and bool(dot[3])
 		draw_circle(p, 4.5 if mine else 3.0, col)
 		if mine:
-			draw_arc(p, 7.0, 0.0, TAU, 16, Color(Palette.FOCUS, 0.9), 1.5, true)
+			# Halqa AĞDIR, kəhrəba deyil.
+			#
+			# Əvvəl `Palette.FOCUS` idi və yaş zonanın sərhədi `Palette.WARNING` —
+			# ikisi də kəhrəba, yəni matçın sonunda öz nöqtən daralan sərhədə
+			# qarışırdı. Xəritədə oyunçunun ƏN ÇOX axtardığı şey özüdür.
+			draw_arc(p, 7.0, 0.0, TAU, 16, Color(Palette.TEXT, 0.95), 1.8, true)
+		elif ally:
+			# YOLDAŞ halqası — komanda rejimlərinin ikinci tanıma kanalı
+			# (birincisi ad rəngi, üçüncüsü membrandakı halqadır).
+			# Onsuz xəritədə yoldaş rəqibdən heç cür seçilmirdi.
+			draw_arc(p, 6.0, 0.0, TAU, 16, Color(Palette.ALLY, 0.95), 1.8, true)
 
 
 ## Maneə növünün xəritə rəngi.

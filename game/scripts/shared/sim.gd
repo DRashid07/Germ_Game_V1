@@ -91,13 +91,15 @@ class GermState:
 	## basıb dərhal acından partlayardı — düymə ona xilas vəd edib öldürərdi.
 	##
 	## Qalan iki superin top qiyməti yoxdur (onların qiyməti vaxt və riskdir),
-	## ona görə şərt yalnız kirpikliyə aiddir.
+	## ona görə şərt praktikada yalnız kirpikliyə aiddir.
+	##
+	## Döşəmənin ÖZÜ [method Const.super_min_balls]-dadır: HUD həmin rəqəmi
+	## oyunçuya yazmalıdır ([method Const.super_block_reason]) və iki yerdə
+	## saxlanılsaydı, biri dəyişəndə düymə yenidən səbəbsiz susardı.
 	func super_ready() -> bool:
 		if charge < Const.SUPER_MAX or super_t > 0.0:
 			return false
-		if species == Const.Species.CILIATE:
-			return balls - Const.TRICHO_COST >= Const.MIN_BALLS + 1
-		return true
+		return balls >= Const.super_min_balls(int(species))
 
 	## Amöb qabığın içindədir: top səkir, metabolizm dayanır, tərpənmir.
 	func in_cyst() -> bool:

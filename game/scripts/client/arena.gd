@@ -15,6 +15,13 @@ extends Node2D
 
 const SNAP_BUFFER_MAX := 24
 const FX_LIFETIME := 0.26
+## Effekt sprite-ı neçə dəfə böyüyür və ömrünün NEÇƏNCİ hissəsində.
+##
+## Böyümə sönmədən qabaqda getməlidir — səbəb [method _spawn_fx]-dədir.
+## Çağıranlar başlanğıc miqyası bu ədədə görə seçir ki, SONDA diametr həqiqi
+## sahəyə bərabər olsun (bax [method _flush_fx]-in SUPER budağı).
+const FX_GROW := 1.7
+const FX_GROW_RATIO := 0.35
 
 ## Bağlantı kəsiləndə neçə dəfə və hansı aralıqla qayıtmağa çalışırıq.
 ## Serverin saxladığı müddətə (Lobby.REJOIN_GRACE = 20 s) sığmalıdır.
@@ -497,6 +504,7 @@ func _build_hud() -> void:
 	_hud.set_local_color(Palette.germ_color(my_color))
 	_hud.fire_button.fired.connect(_on_fire_pressed)
 	_hud.super_button.used.connect(_on_super_pressed)
+	_hud.super_button.blocked.connect(_on_super_blocked)
 
 
 func _init_prediction() -> void:
@@ -541,6 +549,10 @@ func _sync_shown() -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
+	# Oyun bitibsə basış yığılmamalıdır: yenidən qoşulanda mikrob öz-özünə
+	# superi işlədərdi.
+	if not _finished and not _reconnecting:
+		_poll_super_key()
 
 	_tick_accum += delta
 	var steps := 0
@@ -644,6 +656,11 @@ func _sample_input() -> Sim.PlayerInput:
 	# ([method World.accept_input]). İkisi eyni qaydanı tətbiq etməlidir,
 	# yoxsa proqnoz serverdən qabağa düşür və sayım bitəndə mikrob geri sıçrayır.
 	if _phase == Const.Phase.COUNTDOWN:
+		# Sayım boyu yığılan basılışlar ATILIR, saxlanmır: yoxsa səbirsizlikdən
+		# düyməyə toxunan oyunçu "BAŞLADI" yazısı ilə eyni kadrda superini
+		# istəmədən xərcləyərdi.
+		_super_flag = false
+		_fire_flag = false
 		return Sim.PlayerInput.make(_seq, Vector2.ZERO, me.aim, false, false)
 	return Sim.PlayerInput.make(_seq, move, aim, _fire_requested(), _super_requested())
 
@@ -696,14 +713,36 @@ func _on_fire_pressed() -> void:
 func _super_requested() -> bool:
 	var v := _super_flag
 	_super_flag = false
+	return v
+
+
+## Klaviatura kənarı HƏR KADR yoxlanılır, hər tick yox.
+##
+## Tick saniyədə 30 dəfədir, kadr isə 60+ — yoxlama tick-in içində olanda
+## 33 ms-dən qısa toxunuş iki kadrın arasına düşüb tamamilə itirdi. Ölçülüb:
+## bir kadrlıq basış altı cəhdin dördündə işləmədi, səkkiz kadr saxlananda
+## isə hər dəfə işlədi. Düymə siqnalı ilə eyni bayrağa yığılır ki, aşağıda
+## bir yerdən oxunsun.
+func _poll_super_key() -> void:
 	var key := Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_Q)
-	var edge := key and not _super_key_held
+	if key and not _super_key_held:
+		_super_flag = true
 	_super_key_held = key
-	return v or edge
 
 
 func _on_super_pressed() -> void:
 	_super_flag = true
+
+
+## Doluluq tamdır, amma super işləmir: oyunçuya SƏBƏBİ deyilir.
+##
+## Kirpiklidə bu, adi haldır — trixosist iki top xərcləyir, ona görə beşdən
+## az topla işləmir ([method Const.super_min_balls]), atəş düyməsi isə dörd
+## topda hələ işləkdir. Yəni oyunçu tamamilə normal vəziyyətdə yanan düyməyə
+## basıb heç bir cavab almırdı.
+func _on_super_blocked() -> void:
+	_hud.flash_hint(Const.super_block_reason(int(me.species), me.balls))
+	Sfx.play("blunk", 0.0, -4.0)
 
 
 ## Avtomatik giriş — şəbəkə testində insansız client üçün.
@@ -915,7 +954,10 @@ func _on_you_burst(result: Dictionary) -> void:
 	# Yer yalnız matçlı rejimdə var: sonsuz arenada sıralama anlayışı yoxdur.
 	if _mode != Const.Mode.ENDLESS:
 		result["place"] = _place
-		result["total"] = Const.WORLD_CAPACITY
+		# Tutum REJİMDƏN çıxır: ÜÇLÜK altı mikrobla oynanır və nəticə ekranı
+		# "10 mikrobdan · 6-cı YER" yazırdı — üstəlik arxadakı HUD eyni anda
+		# "Dünyada 6 mikrob" göstərirdi.
+		result["total"] = Const.mode_capacity(int(_mode))
 	if _finished:
 		return
 	_finished = true
@@ -1154,7 +1196,7 @@ func _on_phase_changed() -> void:
 			# tərəfindən hər kadr yenilənir. Burada da yazsaq, iki sahib olar.
 			pass
 		Const.Phase.PLAYING:
-			_hud.show_message("BAŞLADI", "Sona qalan udur")
+			_hud.show_message("BAŞLADI", Const.mode_goal(int(_mode)))
 			get_tree().create_timer(1.4).timeout.connect(_hud.hide_message)
 			Sfx.play("level_up")
 		_:
@@ -1330,7 +1372,11 @@ func _update_minimap() -> void:
 		var v: GermVisual = _visuals[gid]["node"]
 		if not v.visible:
 			continue
-		dots.append([v.position, Palette.germ_color(v.color_index), gid == my_id])
+		# Dördüncü sahə YOLDAŞDIR: xəritədə hamı eyni dolu nöqtə idi, yəni
+		# komanda rejimlərində yoldaş rəqibdən seçilmirdi
+		# (bax [method Minimap._draw]).
+		dots.append([v.position, Palette.germ_color(v.color_index),
+			gid == my_id, v.is_ally])
 	_hud.minimap.broken = _broken
 	_hud.minimap.set_dots(dots)
 
@@ -1722,7 +1768,7 @@ func _flush_fx(render_time: float) -> void:
 					# miqyas elə seçilir ki, SONDA diametr sahəyə bərabər olsun.
 					# Effekt sahədən böyük olsaydı, oyunçu radiusu həmişə səhv
 					# öyrənərdi — ilk variantda məhz belə idi (ekranın yarısı).
-					_spawn_fx("burst", pos, reach * 2.0 / 256.0 / 1.7, col)
+					_spawn_fx("burst", pos, reach * 2.0 / 256.0 / FX_GROW, col)
 					_spawn_fx("spark", pos, 0.7, Palette.TEXT)
 					Sfx.play("burst", 0.0, -6.0)
 				else:
@@ -1804,18 +1850,38 @@ func _explode(pos: Vector2, radius: float, color_index: int, mine: bool) -> void
 	_fx.add_child(fx)
 
 
+## Effektlərin z-i — HƏR mikrobun üstündə.
+##
+## [GermVisual] özünə `1` (rəqib) və ya `2` (öz mikrobun) yazır, `_fx` qatı isə
+## sıfırda idi: nəticədə qığılcım, atəş effekti və TRİXOSİST BULUDU məhz onların
+## altında qalırdı — yəni superin təsir etdiyi mikroblar onun görüntüsünü
+## örtürdü. [BurstFx] bunu əvvəldən düz edirdi (`z_index = 3`), `_spawn_fx`-də
+## isə unudulmuşdu.
+const FX_Z := 3
+
+
 func _spawn_fx(kind: String, pos: Vector2, scale: float, color: Color) -> void:
 	var spr := Sprite2D.new()
 	spr.texture = _tex[kind]
 	spr.position = pos
 	spr.scale = Vector2(scale, scale)
 	spr.modulate = color
+	spr.z_index = FX_Z
 	_fx.add_child(spr)
 
+	# Böyümə SÖNMƏDƏN TEZ bitir.
+	#
+	# İkisi eyni müddətdə olanda effekt tam ölçüsünə məhz görünməz olduğu an
+	# çatırdı: trixosistin buludu ekranda ən böyüyü ~1/1.7 = 58% olurdu və
+	# oyunçu superin təsir radiusunu HƏMİŞƏ yarı boyda öyrənirdi. Halbuki
+	# [method Sim._use_super] radiusu qəsdən hadisə ilə göndərir ki, görüntü
+	# həqiqi sahə ilə eyni olsun — ölçü oradan öyrənilir.
+	var grow := FX_LIFETIME * FX_GROW_RATIO
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(spr, "modulate:a", 0.0, FX_LIFETIME)
-	tw.tween_property(spr, "scale", Vector2(scale * 1.7, scale * 1.7), FX_LIFETIME)
+	tw.tween_property(spr, "scale", Vector2(scale * FX_GROW, scale * FX_GROW), grow) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.chain().tween_callback(spr.queue_free)
 
 

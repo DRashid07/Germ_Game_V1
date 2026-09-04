@@ -67,6 +67,23 @@ func _ready() -> void:
 	_scatter(rng)
 
 
+## Sayı dəyişdikdən SONRA sahəni yenidən qurur.
+##
+## [member count] yalnız [method _ready]-də oxunur, ona görə ağaca girmiş
+## node-da onu dəyişmək tək başına heç nə etmir. Keyfiyyət ayarı isə düymə ilə
+## işlək vaxtı dəyişir (bax [method MenuV2._apply_quality]) və oyunçu fərqi
+## elə həmin kadrda görməlidir — yoxsa düymə ölü sayılır.
+func rebuild() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	_pos.resize(count)
+	_seed.resize(count)
+	for i in count:
+		_seed[i] = rng.randf() * TAU
+	_scatter(rng)
+	queue_redraw()
+
+
 ## Zərrəcikləri görüş sahəsinə bərabər səpir.
 func _scatter(rng: RandomNumberGenerator) -> void:
 	var half := span * FIELD_FACTOR

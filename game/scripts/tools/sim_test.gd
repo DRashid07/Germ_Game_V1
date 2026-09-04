@@ -36,6 +36,8 @@ static func run() -> int:
 	_test_team_bits_roundtrip()
 	_test_duo_teams()
 	_test_duo_revive()
+	_test_super_survives_packet_pileup()
+	_test_spawn_inside_wet_zone()
 	_test_trio_rounds()
 	_test_ranking_matches_board()
 	_test_super_consumed_once()
@@ -66,6 +68,7 @@ static func run() -> int:
 	_test_shot_starts_inside()
 	_test_obstacle_blocks_shot()
 	_test_map_layouts()
+	_test_arena_core_is_free()
 	_test_bush_hides()
 	_test_brittle_breaks()
 	_test_vent_pushes()
@@ -269,6 +272,42 @@ static func _test_map_layouts() -> void:
 		_check(buried == 0, "%s: cərəyan deşikləri əlçatandır (%d basdırılıb)"
 			% [label, buried])
 	DishMap.layout = keep
+
+
+## Qabın MƏRKƏZİ bloklayan maneədən azaddır — quruyan rejimlərin son arenası.
+##
+## Ən bahalı səhvlərdən biri məhz burada gizlənmişdi: hər düzümün mərkəzində
+## iri SELİK ləkəsi vardı (120–150 px), TƏK QALAN və CÜT-ün son yaş radiusu isə
+## 90 px-dir. Yəni matçın son mərhələsində oyun sahəsinin İÇİ bütövlükdə bərk
+## maneə olurdu və sağ qalanlar döyüşmək əvəzinə quru zonaya sıxılıb dolurdu.
+##
+## Test hər ÜÇ düzümü yoxlayır, təkcə işlədiləni yox: düzüm dəyişəndə səhv
+## səssizcə geri qayıtmamalıdır.
+static func _test_arena_core_is_free() -> void:
+	var keep := DishMap.layout
+	for which in 3:
+		DishMap.layout = which
+		var label := DishMap.layout_name(which)
+		var worst := INF
+		var guilty := ""
+		for o in DishMap.obstacles():
+			if not DishMap.blocks_germ(int(o.w)):
+				continue
+			# Maneənin kənarı ilə mərkəzi dairənin kənarı arasındakı boşluq.
+			var gap := Vector2(o.x, o.y).length() - o.z - DishMap.CORE_CLEAR
+			if gap < worst:
+				worst = gap
+				guilty = DishMap.kind_name(int(o.w))
+		_check(worst >= 0.0,
+			"%s: mərkəzi %.0f px bloklayan maneədən azaddır (ən yaxın %s, boşluq %.0f px)"
+				% [label, DishMap.CORE_CLEAR, guilty, worst])
+	DishMap.layout = keep
+
+	# Son yaş radius mərkəzi azad sahədən BÖYÜK ola bilməz, yoxsa qayda
+	# yuxarıdakı testdə deyil, oyunun içində pozulur.
+	_check(Const.SOLO_MIN_RADIUS <= DishMap.CORE_CLEAR,
+		"son yaş radius azad mərkəzə sığır (%.0f ≤ %.0f)"
+			% [Const.SOLO_MIN_RADIUS, DishMap.CORE_CLEAR])
 
 # ---------------------------------------------------------------- oyunun qaydası
 
@@ -1655,6 +1694,91 @@ static func _test_duo_teams() -> void:
 
 
 ## CÜT: yoldaşı sağ ikən ölüm müvəqqətidir, ikisi də ölsə cüt çıxır.
+## Bir tick aralığında gələn İKİ giriş paketi superi UDMUR.
+##
+## Serverin növbəsində oyunçu başına yalnız son giriş saxlanılır. Super isə
+## cəmi BİR tick göndərilir ([method Arena._super_requested]), ona görə
+## üstündən yazılan paket onu tamamilə itirirdi: oyunçu yanan düyməyə basırdı,
+## proqnoz effekti bir kadr göstərirdi, növbəti snapshot ləğv edirdi və
+## doluluq yerində qalırdı. Lokal WebSocket-də girişlərin 3.4%-i belə itirdi —
+## onlayn oyunda "ulti işləmir" şikayətinin kök səbəbi.
+##
+## Paketlərin yığılması normal haldır: client kadr sıçrayanda iki tick-i bir
+## kadrda göndərir, WebSocket isə onsuz da paketləri birləşdirir.
+static func _test_super_survives_packet_pileup() -> void:
+	# Növ AYAQLIDIR: onun superi `super_t` qoyur, yəni işə düşdüyü snapshot
+	# bayrağından da görünür — kirpiklidə effekt anidir və izi qalmır.
+	var pairs := [
+		["super BİRİNCİ paketdə", true, false],
+		["super İKİNCİ paketdə", false, true],
+	]
+	for case in pairs:
+		var world := World.new(77, Const.Mode.ENDLESS)
+		var g := world.add_player(A_ID, "A", Const.Species.HELIOZOAN)
+		g.charge = Const.SUPER_MAX
+		g.balls = Const.START_BALLS
+
+		var first := Sim.PlayerInput.make(1, Vector2.RIGHT, 0.0, false, bool(case[1]))
+		var second := Sim.PlayerInput.make(2, Vector2.RIGHT, 0.0, false, bool(case[2]))
+		world.accept_input(A_ID, first.to_array())
+		world.accept_input(A_ID, second.to_array())
+		world.tick(Const.TICK_DELTA)
+
+		_check(g.charge == 0 and g.super_t > 0.0,
+			"%s: iki paket bir tick-də gələndə super İŞLƏYİR (doluluq %d, super_t %.1f)"
+				% [String(case[0]), g.charge, g.super_t])
+
+	# Əks yoxlama: super basılmayıbsa, yığılan paketlər onu ÖZ-ÖZÜNƏ işə salmır.
+	var quiet := World.new(78, Const.Mode.ENDLESS)
+	var q := quiet.add_player(A_ID, "A", Const.Species.HELIOZOAN)
+	q.charge = Const.SUPER_MAX
+	quiet.accept_input(A_ID, Sim.PlayerInput.make(1, Vector2.RIGHT, 0.0, false, false).to_array())
+	quiet.accept_input(A_ID, Sim.PlayerInput.make(2, Vector2.RIGHT, 0.0, false, false).to_array())
+	quiet.tick(Const.TICK_DELTA)
+	_check(q.charge == Const.SUPER_MAX and q.super_t <= 0.0,
+		"basılmayan super öz-özünə işə düşmür (doluluq %d)" % q.charge)
+
+	# Emal olunan bayraq NÖVBƏTİ tick-ə keçmir — yoxsa bir basılış superi
+	# təkrar-təkrar işlədərdi.
+	var once := World.new(79, Const.Mode.ENDLESS)
+	var o := once.add_player(A_ID, "A", Const.Species.HELIOZOAN)
+	o.charge = Const.SUPER_MAX
+	once.accept_input(A_ID, Sim.PlayerInput.make(1, Vector2.RIGHT, 0.0, false, true).to_array())
+	once.tick(Const.TICK_DELTA)
+	o.charge = Const.SUPER_MAX
+	o.super_t = 0.0
+	once.tick(Const.TICK_DELTA)
+	_check(o.charge == Const.SUPER_MAX,
+		"bir basılış YALNIZ bir dəfə işləyir (doluluq %d)" % o.charge)
+
+
+## Oyunçu QURU zonada doğulmur — qabın kənarı ilk tick-i gözləmir.
+##
+## `sim.dish_radius` yalnız [method World.tick]-in içində qoyulurdu, oyunçu isə
+## `add_player` ilə ondan ƏVVƏL doğulur. İlkin dəyər `WORLD_RADIUS` (1200)
+## olduğuna görə ÜÇLÜK-də (yaş radius 700) doğuş dairəsinin üçdə ikisi quru
+## zonaya düşürdü: mikrob geriyə sayımda, tərpənə bilmədən top yığırdı.
+static func _test_spawn_inside_wet_zone() -> void:
+	for mode in [Const.Mode.SOLO, Const.Mode.DUO, Const.Mode.TRIO]:
+		var world := World.new(80, mode)
+		var wet := Const.dish_radius(int(mode), 0.0)
+		var dry := 0
+		var worst := 0.0
+		for gid in world.sim.germs:
+			var g: Sim.GermState = world.sim.germs[gid]
+			var d := g.pos.length()
+			if d > wet:
+				dry += 1
+				worst = maxf(worst, d - wet)
+		# Botlar `_keep_population` ilə gəlir, ona görə insanı da əlavə edirik.
+		var me := world.add_player(A_ID, "A")
+		if me.pos.length() > wet:
+			dry += 1
+			worst = maxf(worst, me.pos.length() - wet)
+		_check(dry == 0, "%s: heç kim quru zonada doğulmur (%d nəfər, ən dərini %.0f px)"
+			% [Const.mode_name(int(mode)), dry, worst])
+
+
 static func _test_duo_revive() -> void:
 	var world := World.new(42, Const.Mode.DUO)
 	world.add_player(A_ID, "A")

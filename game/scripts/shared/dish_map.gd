@@ -99,6 +99,23 @@ static func blocks_spawn(kind: int) -> bool:
 	return kind != Kind.BUSH
 
 
+## Qabın MƏRKƏZİ bloklayan maneədən AZAD qalmalıdır — bu radiusda.
+##
+## Səbəb quruyan qabdır. TƏK QALAN və CÜT-də yaş radius matçın sonunda
+## [constant Const.SOLO_MIN_RADIUS]-ə (90 px) düşür: həmin an oyun sahəsi
+## qabın mərkəzindəki KİÇİK dairədir. Orada bərk maneə dursa, sağ qalanların
+## hamısı eyni anda quru zonaya sıxılır və döyüşmədən, dolub partlayır —
+## yəni rejimin bütün son mərhələsi işləmir. Ölçülüb: CÜT matçının 217-ci
+## saniyəsində kəhrəba halqanın İÇİ tamamilə mavi şüşə idi.
+##
+## Üç düzümün üçündə də mərkəzdə iri ləkə var və o, lazımdır — dünyanın sabit
+## oriyentiridir. Ona görə ləkə QALIR, sadəcə KOL olur: görünür, gizlədir,
+## görüşü kəsir, amma bloklamır. Son döyüş kolun içində gedir.
+##
+## Qoruyucu: `SimTest._test_arena_core_is_free`.
+const CORE_CLEAR := 100.0
+
+
 ## Hansı düzüm işlədilir. 0 = indiki (halqalar).
 ##
 ## Dəyişmək HƏM client-i, HƏM serveri eyni anda dəyişməlidir — düzüm toqquşma
@@ -157,7 +174,8 @@ static func obstacles() -> Array[Vector4]:
 ## Xarici halqada cərəyan deşikləri var: kənara sıxışdırılan oyunçuya mərkəzə
 ## qayıtmaq üçün bir yol qalır.
 static func _build_rings(out: Array[Vector4]) -> void:
-	out.append(Vector4(0.0, 0.0, 120.0, float(Kind.MUCUS)))
+	# Mərkəz KOLDUR, bərk ləkə deyil — bax [constant CORE_CLEAR].
+	out.append(Vector4(0.0, 0.0, 120.0, float(Kind.BUSH)))
 	_ring(out, 5, 400.0, 78.0, 0.0, [Kind.MUCUS, Kind.BUSH])
 	_ring(out, 7, 760.0, 96.0, PI / 7.0, [Kind.MUCUS, Kind.BRITTLE, Kind.BUSH])
 	_ring(out, 9, 1045.0, 58.0, PI / 9.0, [Kind.MUCUS, Kind.MUCUS, Kind.VENT])
@@ -211,7 +229,8 @@ static func _add_bush(out: Array[Vector4], at: Vector2, radius: float) -> void:
 ## qalır — qovhaqov üçün.
 static func _build_islands(out: Array[Vector4]) -> void:
 	# Mərkəz ən böyükdür: dünyanın sabit oriyentiri olaraq qalır.
-	_island(out, Vector2(0.0, 0.0), 150.0, 4)
+	# Gövdəsi KOLDUR — bax [constant CORE_CLEAR].
+	_island(out, Vector2(0.0, 0.0), 150.0, 4, Kind.BUSH)
 	_island(out, Vector2(-520.0, -190.0), 118.0, 3)
 	_island(out, Vector2(430.0, -560.0), 96.0, 2)
 	_island(out, Vector2(690.0, 300.0), 132.0, 4)
@@ -231,8 +250,8 @@ static func _build_islands(out: Array[Vector4]) -> void:
 ## Daşların arasında bir KOL olur: adanın ətrafı təkcə maneə deyil, həm də
 ## gizlənəcək yerdir, yəni adaya yaxınlaşmaq risklidir.
 static func _island(out: Array[Vector4], at: Vector2, big: float,
-		pebbles: int) -> void:
-	out.append(Vector4(at.x, at.y, big, float(Kind.MUCUS)))
+		pebbles: int, core := Kind.MUCUS) -> void:
+	out.append(Vector4(at.x, at.y, big, float(core)))
 	for i in pebbles:
 		var a := TAU * fposmod(float(i) * 0.618034 + at.x * 0.0013, 1.0)
 		var d := big + 74.0 + float(i % 3) * 26.0
@@ -252,7 +271,8 @@ static func _island(out: Array[Vector4], at: Vector2, big: float,
 ## Qolun ucundakı ləkələr KÖVRƏKDİR: qolu sındırıb kəsmə yol açmaq olur, yəni
 ## düzüm oyun getdikcə dəyişir.
 static func _build_arms(out: Array[Vector4]) -> void:
-	out.append(Vector4(0.0, 0.0, 145.0, float(Kind.MUCUS)))
+	# Qolların çıxdığı mərkəz KOLDUR — bax [constant CORE_CLEAR].
+	out.append(Vector4(0.0, 0.0, 145.0, float(Kind.BUSH)))
 	for arm in 3:
 		var phase := TAU * float(arm) / 3.0
 		for i in 7:

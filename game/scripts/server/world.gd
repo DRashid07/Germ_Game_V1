@@ -90,6 +90,15 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	id = p_id
 	mode = p_mode
 	sim = Sim.new()
+	# Qabın kənarı elə İNDİ qurulur, ilk tick-i gözləmədən.
+	#
+	# Oyunçu [method add_player] ilə tick-dən ƏVVƏL doğulur və
+	# [method Sim.find_spawn] məhz bu radiusdan istifadə edir. İlkin dəyər
+	# `WORLD_RADIUS` (1200) idi, ÜÇLÜK-ün yaş radiusu isə 700 — yəni doğuş
+	# dairəsinin üçdə ikisi QURU zonaya düşürdü. Oyunçu geriyə sayımda,
+	# tərpənə bilmədən top yığmağa başlayırdı: doqquz çalışmanın altısı
+	# birinci saniyədə "QURUYUR — mərkəzə get" xəbərdarlığı ilə açılırdı.
+	sim.dish_radius = Const.dish_radius(int(mode), 0.0)
 	# Matçlı rejim oyunçu gözləyir; sonsuz arena isə həmişə açıqdır.
 	phase = Const.Phase.PLAYING if mode == Const.Mode.ENDLESS else Const.Phase.WAITING
 
@@ -230,14 +239,23 @@ func _end_round() -> void:
 	# ikincidə də üstün başlayardı və matç faktiki olaraq bir raundda həll
 	# olunardı.
 	round_no += 1
-	match_t = 0.0
 	_revive.clear()
+	# `match_t` və qabın radiusu [method _reset_round]-un içində sıfırlanır —
+	# doğuş yeri onlardan asılıdır, ona görə bir sahibi olmalıdır.
 	_reset_round()
 	_set_phase(Const.Phase.COUNTDOWN)
 
 
 ## Raund üçün dünyanı təzələyir: hamı diri, tam əhali, başlanğıc tutumu.
 func _reset_round() -> void:
+	# Qab ƏVVƏLCƏ genişlənir, sonra hamı doğulur.
+	#
+	# `_end_round` [method tick]-in İÇİNDƏ, `sim.dish_radius` yenilənməsindən
+	# ƏVVƏL çağırılır, yəni bura gələndə radius hələ də bitən raundun SON
+	# dəyəridir (ÜÇLÜK-də 220 px). Onsuz altı mikrob quruyub kiçilmiş qabın
+	# mərkəzinə — üstəlik maneənin üstünə — yığılırdı.
+	match_t = 0.0
+	sim.dish_radius = Const.dish_radius(int(mode), 0.0)
 	for gid in sim.germs.keys():
 		var g: Sim.GermState = sim.germs[gid]
 		g.balls = Const.START_BALLS
@@ -494,6 +512,29 @@ func accept_input(peer: int, packed: Array) -> void:
 	# Köhnəlmiş paketi atırıq — UDP-də sıra pozula bilər.
 	if inp.seq <= int(_last_seq.get(peer, 0)):
 		return
+	# BİR DƏFƏLİK bayraqlar köhnə paketdən yenisinə KEÇİR, onunla birlikdə
+	# atılmır.
+	#
+	# Növbədə oyunçu başına yalnız SON giriş saxlanılır, iki paketin bir tick
+	# aralığında gəlməsi isə adi haldır: client kadr sıçrayanda iki tick-i bir
+	# kadrda göndərir ([method Arena._process] beş tick-ə qədər bərabərləşdirir),
+	# WebSocket isə paketləri onsuz da yığır.
+	#
+	# Hərəkət üçün bunun əhəmiyyəti yoxdur — sonuncu mövqe onsuz da doğrudur.
+	# Atəş də bilinmirdi, çünki düymə basılı saxlanılır və növbəti tick onu
+	# təkrar göndərir. SUPER isə CƏMİ BİR tick göndərilir
+	# ([method Arena._super_requested]), ona görə üstündən yazılan paket onu
+	# tamamilə udurdu: oyunçu yanan düyməyə basırdı, proqnoz effekti bir kadr
+	# göstərirdi, növbəti snapshot onu ləğv edirdi və doluluq yerində qalırdı.
+	#
+	# Ölçülüb: LOKAL WebSocket bağlantısında (itkisiz şəbəkə, sıfır gecikmə)
+	# 50 saniyədə 1761 girişin 62-si belə atılırdı — 3.4%. Şəbəkə jitter-i ilə
+	# rəqəm yalnız böyüyür, yəni onlayn oyunda superin "işləməməsi" məhz burada
+	# doğulurdu.
+	var queued: Sim.PlayerInput = _inputs.get(peer)
+	if queued != null:
+		inp.fire = inp.fire or queued.fire
+		inp.use_super = inp.use_super or queued.use_super
 	_inputs[peer] = inp
 
 
@@ -729,7 +770,13 @@ func snapshot_for(peer: int) -> Array:
 		_near_food(_frame_food, eye, r2, food_n),
 		_near_flat(_frame_events, eye, r2, event_n),
 		_frame_board,
-		sim.germs.size(),
+		# ƏHALİ və SAĞ SAY eyni tərifdən çıxır ([method _alive_count]).
+		#
+		# Əvvəl bura `sim.germs.size()` gedirdi, matç sətrinə isə dirilmə
+		# gözləyənlər DAXİL olan say — nəticədə HUD-un iki qonşu sətri
+		# ziddiyyət yazırdı: "Dünyada 8 mikrob" və altında "SAĞ: 10".
+		# CÜT-də yoldaş öləndən dirilənə qədər 15 saniyə belə görünürdü.
+		_alive_count(),
 		sim.broken,
 		_match_row(peer),
 		[int(_last_seq.get(peer, 0)), g.cooldown if g != null else 0.0],
@@ -790,17 +837,32 @@ static func _near_shots(rows: Array, eye: Vector2, r2: float, limit: int) -> Pac
 
 ## Görüş sahəsindəki sətirləri süzür.
 ## Sıx ədəd axını kimi süzür — sətrin BİRİNCİ elementi mövqe, qalanı ədədlərdir.
+##
+## Hədd aşılanda ƏN YAXINLAR seçilir, ilk gələnlər yox — top və qida ilə eyni
+## qayda ([method _near_shots], [method _near_food]).
+##
+## Əvvəl sadəcə `break` idi və sıra `sim.events`-in doğulma sırası idi: bir
+## tick-də neçə hadisə varsa, ilk üçü keçirdi. Büdcə sıxılanda `event_n`
+## cəmi 3 ola bilir (bax [method snapshot_for]), yəni uzaqda partlayan üç
+## mikrob OYUNÇUNUN ÖZ SUPERİNİ paketdən çıxarırdı — basırdın, doluluq
+## sıfırlanırdı, amma ekranda heç nə olmurdu.
 static func _near_flat(rows: Array, eye: Vector2, r2: float, limit: int) -> PackedFloat32Array:
-	var out := PackedFloat32Array()
-	var n := 0
+	var near: Array = []
 	for row in rows:
-		if eye.distance_squared_to(row[0]) > r2:
+		var d := eye.distance_squared_to(row[0])
+		if d > r2:
 			continue
+		near.append([d, row])
+
+	if limit > 0 and near.size() > limit:
+		near.sort_custom(func(x, y) -> bool: return x[0] < y[0])
+		near.resize(limit)
+
+	var out := PackedFloat32Array()
+	for e in near:
+		var row: Array = e[1]
 		for i in range(1, row.size()):
 			out.push_back(float(row[i]))
-		n += 1
-		if limit > 0 and n >= limit:
-			break
 	return out
 
 

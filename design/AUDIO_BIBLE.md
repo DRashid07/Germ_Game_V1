@@ -126,3 +126,42 @@ function createEject(spec) {
 Müddət `SOUND_SPECS`-də verilir və `limit` ilə məhdudlaşır. `eject` üçün
 `strictLimit: true` qoyulub: saniyədə ~3 top atılır, klip 130 ms-i keçsə
 səslər üst-üstə düşür.
+
+---
+
+## 5. Şinlər və oyunçunun sürgüləri
+
+Üç şin var və hamısı kodda qurulur
+([`Settings._ensure_buses`](../game/scripts/shared/settings.gd)), `default_bus_layout.tres`
+faylı ilə yox: resurs redaktordan asılıdır, kod isə şərh oluna bilir.
+
+```
+UI  ─┐
+SFX ─┴→ Master → cihaz
+```
+
+| Şin | Nə gedir | İlkin |
+|---|---|---|
+| `UI` | `ui_click` | 80% |
+| `SFX` | qalan 9 klip | 100% |
+| `Master` | hamısı | 90% |
+
+**Sürgü klipin öz səviyyəsinə TOXUNMUR.** Yuxarıdakı üçpilləli iyerarxiya
+(səviyyə 3 səsləri `−6 dB` ilə çalınır) şindən ƏVVƏLdir, yəni sürgü nə olursa
+olsun menyu toxunuşu ilə partlayış arasındakı nisbət qorunur. Hər klipə ayrıca
+dəyər verilsəydi, bu tarazlıq ilk sürüşdürmədə dağılardı.
+
+**`UI` niyə ayrıdır:** menyu toxunuşu ilə oyunun səsi bir-birinin işi deyil.
+Oyunçu arenada effektləri qısıb düymə cavabını saxlaya bilər, ya da əksinə.
+Tək şin olsaydı, "səsi azalt" hər ikisini birlikdə aparardı.
+
+**Səssiz rejim = `Master` sıfırda**, ayrıca bayraq yox: səviyyə geri
+qaldırılanda oyunçunun köhnə dəyəri olduğu yerdə qalır.
+
+**Musiqi şini YOXDUR, çünki musiqi yoxdur.** Heç nəyi idarə etməyən sürgü
+bütün ayarlar ekranına olan etibarı aparır. Trek gələndə `MUSIC` şini və bir
+sürgü sətri əlavə olunacaq — qalan hər şey hazırdır.
+
+**Titrəmə səsin əvəzi deyil, cütüdür.** Zərbə (22 ms), super (45), tutum
+artımı (60) və ölüm (160) — telefonda səs kəsilə bilər, ekran isə həmişə
+barmağın altındadır. Ayarlardan söndürülür.

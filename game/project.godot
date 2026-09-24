@@ -6,15 +6,26 @@ config_version=5
 [application]
 
 config/name="Germ Arena"
+; Ayarlar ekranı bunu oxuyur (bax [SettingsView]). `export_presets.cfg`-dəki
+; `version/name` ilə eyni saxlanmalıdır: oyunçunun dediyi versiya ilə mağazanın
+; yazdığı versiya fərqlənsə, xəta hesabatı hansı buraxılışa aiddir bilinmir.
+config/version="1.0"
 config/description="Onlayn io tipli mikrob arenası — 10 nəfərlik sonsuz dünya"
 run/main_scene="res://scenes/boot.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
+; Android-in GERİ jesti tətbiqi BİRBAŞA bağlamasın: matçda o, çıxış təsdiqini
+; açır (bax [Arena._notification]), menyuda isə əvvəl açıq vərəqi/ayarları
+; bağlayır və yalnız ana ekranda oyundan çıxır (bax [MenuV2._notification]).
+config/quit_on_go_back=false
 
 [autoload]
 
 Const="*res://scripts/shared/constants.gd"
 Net="*res://scripts/shared/net.gd"
+; Sıra vacibdir: Settings səs şinlərini yaradır, Sfx isə hovuzunu MƏHZ o
+; şinlərə bağlayır — sonra gəlsəydi, kanallar mövcud olmayan şinə yazardı.
+Settings="*res://scripts/shared/settings.gd"
 Sfx="*res://scripts/client/sfx.gd"
 
 [display]

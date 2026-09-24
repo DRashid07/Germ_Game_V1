@@ -25,6 +25,8 @@ var _touch_index := -1
 var _cooldown_ratio := 0.0   ## 1 = təzəcə atıb, 0 = növbətiyə hazır
 var _has_ammo := true
 var _color := Palette.TEXT
+var _press_scale := 1.0
+var _press_tween: Tween = null
 
 
 func _ready() -> void:
@@ -52,6 +54,7 @@ func set_state(ratio: float, has_ammo: bool) -> void:
 func cancel() -> void:
 	_touch_index = -1
 	held = false
+	_animate_press(false)
 	queue_redraw()
 
 
@@ -63,6 +66,7 @@ func _gui_input(event: InputEvent) -> void:
 		if t.pressed and _touch_index == -1:
 			_touch_index = t.index
 			held = true
+			_animate_press(true)
 			fired.emit()
 			queue_redraw()
 			accept_event()
@@ -77,11 +81,26 @@ func _input(event: InputEvent) -> void:
 			cancel()
 
 
+## Basış 0.94-ə tez oturur, buraxılış back-out ilə bir az aşırıb yerinə gəlir.
+## Rəng dəyişməsi tək qalsaydı barmağın altındakı cavab görünmürdü; node-un
+## öz `scale`-ı isə anchor/pivot səbəbindən düyməni küncə sürüşdürürdü, ona görə
+## yalnız çəkilən radius miqyaslanır.
+func _animate_press(down: bool) -> void:
+	if _press_tween != null and _press_tween.is_valid():
+		_press_tween.kill()
+	_press_tween = create_tween()
+	var step := _press_tween.tween_method(func(v: float) -> void:
+		_press_scale = v
+		queue_redraw(), _press_scale, 0.94 if down else 1.0, 0.06 if down else 0.16)
+	if not down:
+		step.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
 # ---------------------------------------------------------------- görüntü
 
 func _draw() -> void:
 	var c := size * 0.5
-	var r := radius
+	var r := radius * _press_scale
 	var ready := _cooldown_ratio <= 0.001 and _has_ammo
 	var accent := _color if _has_ammo else Palette.DANGER
 

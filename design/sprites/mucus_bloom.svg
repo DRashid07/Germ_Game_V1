@@ -1,70 +1,61 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
-  <!-- BİŞMİŞ KÖLGƏ — vahid işıq yuxarı-soldan, kölgə aşağı-sağa.
-       Kodda çəkilmirdi, çünki ölçmə göstərdi: hər maneə üçün iki
-       `draw_circle` = iki çəkiliş çağırışı, 15 bərk maneə üçün 30 çağırış.
-       Teksturada isə PULSUZDUR — sprite onsuz da çəkilir.
-       İki qat: yumşaq qat hündürlüyü, sıx kontakt halqası döşəməyə harada
-       toxunduğunu deyir. -->
-  <g>
-    <circle cx="177" cy="187" r="131" fill="#04090B" opacity="0.17"/>
-    <circle cx="169" cy="175" r="122" fill="#04090B" opacity="0.34"/>
-  </g>
-  <g transform="translate(32,32)">
-  <!-- Maneə növü 3: KOLONİYA. Bir-birinin üstünə minmiş xırda hüceyrələr.
-       Xarici dairə mucus_blob.svg ilə EYNİDİR (r=120, eyni haşiyə) — toqquşma
-       dairəsi dəyişmir. Fərq SIXLIQDADIR: ləkə hamar, qabıq bucaqlı, koloniya
-       isə dənəvərdir. Üç naxış bir baxışda ayrılır. -->
+  <!-- DƏNƏVƏR SELİK — mucus_blob ilə eyni üç üzlü hündürlük və eyni r=120
+       siluet. Fərq yalnız üst materialdadır: hüceyrə koloniyası xəritədə
+       oriyentir verir, işıq istiqamətini isə dəyişmir. -->
   <defs>
-    <clipPath id="domeClip">
-      <circle cx="128" cy="128" r="118"/>
-    </clipPath>
-    <radialGradient id="bloom" cx="42%" cy="38%" r="66%">
-      <stop offset="0%" stop-color="#1B414C"/>
-      <stop offset="70%" stop-color="#15313A"/>
-      <stop offset="100%" stop-color="#0F262E"/>
+    <radialGradient id="castShadow" cx="46%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#020608" stop-opacity="0.48"/>
+      <stop offset="58%" stop-color="#020608" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#020608" stop-opacity="0"/>
     </radialGradient>
-    <clipPath id="bloomClip">
-      <circle cx="128" cy="128" r="118"/>
-    </clipPath>
+    <radialGradient id="contactShadow" cx="45%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#020608" stop-opacity="0.44"/>
+      <stop offset="68%" stop-color="#020608" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#020608" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="side" x1="25%" y1="18%" x2="78%" y2="100%">
+      <stop offset="0%" stop-color="#19434D"/>
+      <stop offset="48%" stop-color="#0F2A32"/>
+      <stop offset="100%" stop-color="#06151A"/>
+    </linearGradient>
+    <radialGradient id="top" cx="34%" cy="27%" r="76%">
+      <stop offset="0%" stop-color="#346E7B"/>
+      <stop offset="48%" stop-color="#224D58"/>
+      <stop offset="100%" stop-color="#14313A"/>
+    </radialGradient>
+    <clipPath id="bodyClip"><circle cx="160" cy="160" r="120"/></clipPath>
+    <clipPath id="topClip"><ellipse cx="151" cy="145" rx="108" ry="106"/></clipPath>
   </defs>
-  <circle cx="128" cy="128" r="120" fill="url(#bloom)" stroke="#245562" stroke-width="5"/>
-  <!-- Hüceyrələr. Hamısı kəsilir: heç biri haşiyəni aşmır. -->
-  <g clip-path="url(#bloomClip)">
-    <g fill="#1E4A56" stroke="#275E6E" stroke-width="2.5" opacity="0.9">
-      <circle cx="96" cy="88" r="26"/>
-      <circle cx="150" cy="76" r="19"/>
-      <circle cx="176" cy="118" r="24"/>
-      <circle cx="112" cy="132" r="30"/>
-      <circle cx="70" cy="150" r="21"/>
-      <circle cx="158" cy="170" r="26"/>
-      <circle cx="108" cy="192" r="22"/>
-      <circle cx="196" cy="186" r="15"/>
-      <circle cx="52" cy="98" r="14"/>
-      <circle cx="200" cy="66" r="13"/>
-      <circle cx="62" cy="200" r="13"/>
+
+  <ellipse cx="176" cy="192" rx="132" ry="111" fill="url(#castShadow)"/>
+  <ellipse cx="171" cy="182" rx="117" ry="101" fill="url(#contactShadow)"/>
+  <circle cx="160" cy="160" r="120" fill="url(#side)" stroke="#081A20" stroke-width="5"/>
+  <g clip-path="url(#bodyClip)">
+    <path d="M45 154 C62 222 111 272 183 278 C228 282 264 260 282 221 L282 282 L38 282Z" fill="#061217" opacity="0.36"/>
+    <path d="M52 126 C66 82 103 50 148 41" fill="none" stroke="#3F7F8D" stroke-width="5" stroke-linecap="round" opacity="0.40"/>
+  </g>
+
+  <ellipse cx="151" cy="145" rx="108" ry="106" fill="url(#top)" stroke="#2D626E" stroke-width="5"/>
+  <g clip-path="url(#topClip)">
+    <!-- Böyük və xırda koloniyalar növbələşir; eyni ölçülü dairələr uzaqdan
+         tekstura yox, polka-dot kimi görünürdü. -->
+    <g fill="#285D68" stroke="#3A7885" stroke-width="3" opacity="0.96">
+      <circle cx="109" cy="92" r="25"/><circle cx="159" cy="76" r="18"/>
+      <circle cx="193" cy="111" r="23"/><circle cx="139" cy="135" r="29"/>
+      <circle cx="84" cy="151" r="20"/><circle cx="181" cy="167" r="25"/>
+      <circle cx="127" cy="195" r="20"/><circle cx="211" cy="187" r="14"/>
+      <circle cx="69" cy="105" r="13"/><circle cx="208" cy="72" r="12"/>
     </g>
-    <!-- Hər hüceyrənin sol-yuxarı parıltısı — işıq mənbəyi ART_BIBLE §1-dədir. -->
-    <g fill="#3A7B8C" opacity="0.35">
-      <circle cx="88" cy="80" r="9"/>
-      <circle cx="145" cy="70" r="6"/>
-      <circle cx="168" cy="110" r="8"/>
-      <circle cx="103" cy="123" r="10"/>
-      <circle cx="64" cy="144" r="7"/>
-      <circle cx="150" cy="162" r="9"/>
-      <circle cx="101" cy="185" r="7"/>
+    <g fill="#72AFBA" opacity="0.35">
+      <circle cx="101" cy="84" r="8"/><circle cx="153" cy="70" r="6"/>
+      <circle cx="186" cy="103" r="8"/><circle cx="130" cy="125" r="10"/>
+      <circle cx="77" cy="145" r="7"/><circle cx="173" cy="159" r="9"/>
+      <circle cx="120" cy="188" r="7"/>
+    </g>
+    <g fill="#0A252C" opacity="0.42">
+      <circle cx="119" cy="101" r="7"/><circle cx="202" cy="120" r="6"/>
+      <circle cx="150" cy="147" r="8"/><circle cx="190" cy="178" r="7"/>
     </g>
   </g>
-  <!-- GÜNBƏZ HƏCMİ. Vahid işıq yuxarı-soldan gəlir (bax ART_BIBLE §2b).
-       Üç element: yuxarı-solda rim işığı, aşağı-sağda daxili oklüziya,
-       ortada yaş parıltı. HAMISI siluetin İÇİNDƏDİR — siluet toqquşma izidir
-       (r=120) və bir piksel də dəyişə bilməz, yoxsa amöb "keçirəm" deyib
-       görünməyən kənara dəyər. -->
-  <g clip-path="url(#domeClip)">
-    <circle cx="176" cy="184" r="116" fill="none" stroke="#07141A" stroke-width="46" opacity="0.40"/>
-    <path d="M 44 150 A 98 98 0 0 1 150 44" fill="none" stroke="#5A98A8" stroke-width="8"
-          stroke-linecap="round" opacity="0.42"/>
-    <ellipse cx="96" cy="86" rx="36" ry="23" fill="#6FB0C0" opacity="0.13"
-             transform="rotate(-28 96 86)"/>
-  </g>
-  </g>
+  <path d="M62 141 C67 85 104 48 161 40 C190 36 214 43 232 54" fill="none" stroke="#76B5C1" stroke-width="7" stroke-linecap="round" opacity="0.56"/>
 </svg>

@@ -1,46 +1,61 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
-  <!-- BİŞMİŞ KÖLGƏ — vahid işıq yuxarı-soldan, kölgə aşağı-sağa.
-       Kodda çəkilmirdi, çünki ölçmə göstərdi: hər maneə üçün iki
-       `draw_circle` = iki çəkiliş çağırışı, 15 bərk maneə üçün 30 çağırış.
-       Teksturada isə PULSUZDUR — sprite onsuz da çəkilir.
-       İki qat: yumşaq qat hündürlüyü, sıx kontakt halqası döşəməyə harada
-       toxunduğunu deyir. -->
-  <g>
-    <circle cx="177" cy="187" r="131" fill="#04090B" opacity="0.17"/>
-    <circle cx="169" cy="175" r="122" fill="#04090B" opacity="0.34"/>
-  </g>
-  <g transform="translate(32,32)">
-  <!-- Selik ləkəsi (maneə). Radiusu 120-dir (256/2 − 8 haşiyə):
-       kodda `scale = radius / 120` ilə hər ölçüyə uyğunlaşdırılır. -->
+  <!-- BLOKLAYAN SELİK — kölgə + tünd yan üz + işıqlı üst üz eyni sprite-dadır.
+       Xarici gövdə r=120 və mərkəzi (160,160) olaraq qalır: görünən sərhəd
+       toqquşma dairəsindən kənara çıxmır. Üst üz yuxarı-sola 22% hündürlük
+       hissi verəcək qədər qalxır, amma baza dairəsi silueti qoruyur. -->
   <defs>
-    <clipPath id="domeClip">
-      <circle cx="128" cy="128" r="118"/>
-    </clipPath>
-    <radialGradient id="mucus" cx="42%" cy="38%" r="66%">
-      <stop offset="0%" stop-color="#1D4450"/>
-      <stop offset="70%" stop-color="#16333B"/>
-      <stop offset="100%" stop-color="#102830"/>
+    <radialGradient id="castShadow" cx="46%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#020608" stop-opacity="0.48"/>
+      <stop offset="58%" stop-color="#020608" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#020608" stop-opacity="0"/>
     </radialGradient>
+    <radialGradient id="contactShadow" cx="45%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#020608" stop-opacity="0.44"/>
+      <stop offset="68%" stop-color="#020608" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#020608" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="side" x1="25%" y1="18%" x2="78%" y2="100%">
+      <stop offset="0%" stop-color="#1B4650"/>
+      <stop offset="48%" stop-color="#102C34"/>
+      <stop offset="100%" stop-color="#07161B"/>
+    </linearGradient>
+    <radialGradient id="top" cx="34%" cy="27%" r="76%">
+      <stop offset="0%" stop-color="#397381"/>
+      <stop offset="48%" stop-color="#25515D"/>
+      <stop offset="100%" stop-color="#15333C"/>
+    </radialGradient>
+    <clipPath id="bodyClip"><circle cx="160" cy="160" r="120"/></clipPath>
+    <clipPath id="topClip"><ellipse cx="151" cy="145" rx="108" ry="106"/></clipPath>
   </defs>
-  <circle cx="128" cy="128" r="120" fill="url(#mucus)" stroke="#245562" stroke-width="5"/>
-  <g fill="#245562" opacity="0.35">
-    <circle cx="92" cy="96" r="15"/>
-    <circle cx="160" cy="118" r="11"/>
-    <circle cx="112" cy="158" r="13"/>
-    <circle cx="168" cy="172" r="8"/>
-    <circle cx="74" cy="140" r="7"/>
+
+  <!-- Kölgə -LIGHT_DIR = aşağı-sağ istiqamətindədir. Yumşaq geniş qat hündürlüyü,
+       sıx ellips isə döşəməyə təması göstərir; əlavə draw çağırışı yoxdur. -->
+  <ellipse cx="176" cy="192" rx="132" ry="111" fill="url(#castShadow)"/>
+  <ellipse cx="171" cy="182" rx="117" ry="101" fill="url(#contactShadow)"/>
+
+  <!-- Yan üz bütöv toqquşma siluetidir. Aşağı-sağa doğru tündləşməsi divarı
+       yastı ləkədən ayırır; düz künc yox, qalın selik damcısı kimi qalır. -->
+  <circle cx="160" cy="160" r="120" fill="url(#side)" stroke="#081A20" stroke-width="5"/>
+  <g clip-path="url(#bodyClip)">
+    <path d="M45 154 C62 222 111 272 183 278 C228 282 264 260 282 221 L282 282 L38 282Z" fill="#061217" opacity="0.34"/>
+    <path d="M52 126 C66 82 103 50 148 41" fill="none" stroke="#3F7F8D" stroke-width="5" stroke-linecap="round" opacity="0.42"/>
   </g>
-  <!-- GÜNBƏZ HƏCMİ. Vahid işıq yuxarı-soldan gəlir (bax ART_BIBLE §2b).
-       Üç element: yuxarı-solda rim işığı, aşağı-sağda daxili oklüziya,
-       ortada yaş parıltı. HAMISI siluetin İÇİNDƏDİR — siluet toqquşma izidir
-       (r=120) və bir piksel də dəyişə bilməz, yoxsa amöb "keçirəm" deyib
-       görünməyən kənara dəyər. -->
-  <g clip-path="url(#domeClip)">
-    <circle cx="176" cy="184" r="116" fill="none" stroke="#07141A" stroke-width="46" opacity="0.40"/>
-    <path d="M 44 150 A 98 98 0 0 1 150 44" fill="none" stroke="#5A98A8" stroke-width="8"
-          stroke-linecap="round" opacity="0.42"/>
-    <ellipse cx="96" cy="86" rx="36" ry="23" fill="#6FB0C0" opacity="0.13"
-             transform="rotate(-28 96 86)"/>
+
+  <!-- Üst üz siluetin daxilində yuxarı-sola oturur; sağ-alt tərəfdə 26 px-ə
+       yaxın yan bant açıq qalır. -->
+  <ellipse cx="151" cy="145" rx="108" ry="106" fill="url(#top)" stroke="#2E6571" stroke-width="5"/>
+  <g clip-path="url(#topClip)">
+    <g fill="#4A8490" opacity="0.31">
+      <circle cx="105" cy="105" r="15"/><circle cx="171" cy="119" r="11"/>
+      <circle cx="123" cy="163" r="13"/><circle cx="180" cy="176" r="8"/>
+      <circle cx="82" cy="149" r="7"/>
+    </g>
+    <g fill="#0D2931" opacity="0.42">
+      <circle cx="111" cy="112" r="7"/><circle cx="176" cy="124" r="5"/>
+      <circle cx="129" cy="170" r="6"/>
+    </g>
+    <ellipse cx="111" cy="87" rx="38" ry="21" fill="#76B2BE" opacity="0.17" transform="rotate(-24 111 87)"/>
   </g>
-  </g>
+  <!-- İşıq qövsü yalnız yuxarı-sol tərəfdədir; tam haşiyə səthi yenə yastı edərdi. -->
+  <path d="M62 141 C67 85 104 48 161 40 C190 36 214 43 232 54" fill="none" stroke="#78B8C4" stroke-width="7" stroke-linecap="round" opacity="0.58"/>
 </svg>

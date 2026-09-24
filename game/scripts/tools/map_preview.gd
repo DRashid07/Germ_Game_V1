@@ -19,10 +19,14 @@ var layout := 0
 var _cam: Camera2D
 ## Başlıq və əfsanə — AYRICA node-da, maneə sprite-larından yuxarı z-də.
 var _legend: Node2D
+var _floor: Texture2D
+var _canopies: Array[Sprite2D] = []
+var _vent_swirls: Array[Sprite2D] = []
 
 
 func _ready() -> void:
 	DishMap.layout = layout
+	_floor = load("res://assets/sprites/dish_floor.svg")
 	var bg := ColorRect.new()
 	bg.color = Palette.BG_OUTER
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -60,13 +64,13 @@ func _spawn_sprites() -> void:
 	var tex := {}
 	for name in Arena.BLOB_ORDER:
 		tex[name] = load("res://assets/sprites/mucus_%s.svg" % name)
+	tex["bush_top"] = load("res://assets/sprites/mucus_bush_top.svg")
+	tex["vent_swirl"] = load("res://assets/sprites/mucus_vent_swirl.svg")
 	for o in DishMap.obstacles():
 		var spr := Sprite2D.new()
 		spr.texture = tex[Arena._blob_texture(o)]
 		spr.position = Vector2(o.x, o.y)
 		spr.scale = Vector2.ONE * (o.z / Arena.BLOB_SPRITE_RADIUS)
-		if int(o.w) != DishMap.Kind.VENT:
-			spr.rotation = float(o.x + o.y) * 0.01
 		# Sprite-lar BAŞLIQ VƏ ƏFSANƏNİN ALTINDA qalır.
 		#
 		# Godot-da uşaqlar valideynin `_draw`-ından SONRA çəkilir, ona görə
@@ -77,11 +81,38 @@ func _spawn_sprites() -> void:
 		spr.z_index = 0
 		add_child(spr)
 
+		# Oyundakı ikinci qatlar da stenddə olmalıdır: yoxsa kolun örtülməsi və
+		# cərəyanın fırlanan içi yalnız practice kadrında yoxlanardı. Baza sprite
+		# fırlanmır — işıq yuxarı-solda sabitdir.
+		if int(o.w) == DishMap.Kind.BUSH:
+			var top := Sprite2D.new()
+			top.texture = tex["bush_top"]
+			top.position = spr.position
+			top.scale = spr.scale
+			top.z_index = 1
+			add_child(top)
+			_canopies.append(top)
+		elif int(o.w) == DishMap.Kind.VENT:
+			var swirl := Sprite2D.new()
+			swirl.texture = tex["vent_swirl"]
+			swirl.position = spr.position
+			swirl.scale = spr.scale
+			swirl.z_index = 1
+			swirl.set_meta("phase", fposmod(o.x * 0.013 + o.y * 0.021, TAU))
+			add_child(swirl)
+			_vent_swirls.append(swirl)
+
 
 func _process(_delta: float) -> void:
 	var vp := get_viewport_rect().size
 	var k := minf(vp.x, vp.y) / (Const.WORLD_RADIUS * 2.0 * MARGIN)
 	_cam.zoom = Vector2(k, k)
+	var clock := Time.get_ticks_msec() * 0.001
+	for i in _canopies.size():
+		_canopies[i].rotation = sin(clock * 1.15 + float(i) * 1.73) * 0.030
+		_canopies[i].skew = sin(clock * 0.83 + float(i) * 1.21) * 0.018
+	for swirl in _vent_swirls:
+		swirl.rotation = float(swirl.get_meta("phase", 0.0)) + clock * 0.72
 	queue_redraw()
 	if _legend != null:
 		_legend.queue_redraw()
@@ -89,23 +120,36 @@ func _process(_delta: float) -> void:
 
 func _draw() -> void:
 	var r := Const.WORLD_RADIUS
-	draw_circle(Vector2.ZERO, r, Palette.DISH)
+	draw_circle(Vector2.ZERO, r + 500.0, Palette.BG_VIGNETTE)
+	draw_circle(Vector2.ZERO, r + 260.0, Palette.BG_OUTER)
+	draw_texture_rect(_floor, Rect2(-r, -r, r * 2.0, r * 2.0), false)
 
-	# Şəbəkə və halqalar — oyundakı ilə eyni ölçüdə.
+	# Şəbəkə və 400 px-lik bevel — oyundakı eyni tək-batch quruluşu.
 	var step := 200.0
 	var lines := PackedVector2Array()
+	var cols := PackedColorArray()
 	var n := int(r / step)
 	for i in range(-n, n + 1):
 		var x := float(i) * step
 		var h := sqrt(maxf(r * r - x * x, 0.0))
-		lines.push_back(Vector2(x, -h))
-		lines.push_back(Vector2(x, h))
-		lines.push_back(Vector2(-h, x))
-		lines.push_back(Vector2(h, x))
-	draw_multiline(lines, Color(Palette.GRID, 0.55), 3.0)
+		var fade := 1.0 - pow(absf(x) / r, 1.6)
+		var base := Color(Palette.GRID, 0.38 * fade)
+		lines.append_array(PackedVector2Array([
+			Vector2(x, -h), Vector2(x, h), Vector2(-h, x), Vector2(h, x)]))
+		cols.append_array(PackedColorArray([base, base]))
+		if i % 2 == 0:
+			var hi := Color(Palette.DISH_EDGE, 0.20 * fade)
+			var lo := Color(Palette.OUTLINE, 0.24 * fade)
+			lines.append_array(PackedVector2Array([
+				Vector2(x - 2.5, -h), Vector2(x - 2.5, h),
+				Vector2(x + 2.5, -h), Vector2(x + 2.5, h),
+				Vector2(-h, x - 2.5), Vector2(h, x - 2.5),
+				Vector2(-h, x + 2.5), Vector2(h, x + 2.5)]))
+			cols.append_array(PackedColorArray([hi, lo, hi, lo]))
+	draw_multiline_colors(lines, cols, 3.0)
 	for i in 3:
 		draw_arc(Vector2.ZERO, r * (0.35 + 0.22 * float(i)), 0.0, TAU, 96,
-			Color(Palette.GRID, 0.5), 3.0, true)
+			Color(Palette.GRID, 0.30), 26.0, true)
 
 	# Maneələr — NÖVƏ görə rənglənir. Stendin bütün mənası budur: düzümə
 	# baxanda "harada gizlənmək olar, harada divar sındırmaq olar" sualı
@@ -118,7 +162,16 @@ func _draw() -> void:
 		draw_circle(at, o.z, Color(col, 0.12))
 		draw_arc(at, o.z, 0.0, TAU, 48, Color(col, 0.95), 4.0, true)
 
-	draw_arc(Vector2.ZERO, r, 0.0, TAU, 128, Palette.DISH_EDGE, 12.0, true)
+	# Qalxmış dodaq oyundakı eyni işıq oxu ilə göstərilir.
+	draw_arc(Vector2.ZERO, r - 18.0, 0.0, TAU, 128,
+		Color(Palette.OUTLINE, 0.48), 34.0, true)
+	draw_arc(Vector2.ZERO, r, 0.0, TAU, 128, Palette.DISH_EDGE, 17.0, true)
+	var light_a := Palette.LIGHT_DIR.angle()
+	var shadow_a := (-Palette.LIGHT_DIR).angle()
+	draw_arc(Vector2.ZERO, r - 4.0, light_a - 0.92, light_a + 0.92, 48,
+		Color(Palette.TEXT, 0.38), 5.0, true)
+	draw_arc(Vector2.ZERO, r + 5.0, shadow_a - 0.92, shadow_a + 0.92, 48,
+		Color(Palette.OUTLINE, 0.78), 9.0, true)
 
 	# Oyunçunun BİR ekranda gördüyü sahə — miqyas üçün.
 	var w := Const.VIEW_SPAN_BASE
@@ -161,10 +214,10 @@ func _draw_legend() -> void:
 static func _kind_color(kind: int) -> Color:
 	match kind:
 		DishMap.Kind.BUSH:
-			return Color("3E8A6B")
+			return Palette.BUSH
 		DishMap.Kind.BRITTLE:
-			return Color("B8763A")
+			return Palette.BRITTLE
 		DishMap.Kind.VENT:
-			return Color("E8A845")
+			return Palette.VENT
 		_:
 			return Palette.DISH_EDGE

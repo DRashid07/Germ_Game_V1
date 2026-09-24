@@ -6,26 +6,45 @@ extends Node
 ##
 ## Redaktoru açmadan tərtibatın doğru oturduğunu yoxlamaq üçündür.
 ## Headless rejimdə işləmir — həqiqi render tələb olunur.
+##
+## ── Kadr ardıcıllığı ─────────────────────────────────────────────────────
+## `--shot-count N --shot-every K` verilərsə, ilk kadrdan sonra hər K kadrda
+## bir daha çəkir və faylları `kadr_00.png`, `kadr_01.png` … adlandırır.
+##
+## Tək kadr ANİ hadisələri tuta bilmir: super 0.1–2.5 saniyə yaşayır,
+## partlayış 0.4 saniyə, doğuş pop-u 0.35 saniyə. Təsadüfi gecikmə ilə çəkilən
+## tək şəkildə effekt ya hələ başlamamışdı, ya artıq bitmişdi — və "görünmür"
+## şikayətini nə təsdiq, nə də təkzib etmək olurdu.
 
 var path := "shot.png"
 var delay_frames := 90
+## Neçə kadr çəkilir. 1 = köhnə davranış (fayl adı dəyişmir).
+var count := 1
+## Ardıcıllıqda iki kadr arasındakı kadr sayı.
+var every := 6
 
 var _frames := 0
+var _taken := 0
 
 
 func _process(_delta: float) -> void:
 	_frames += 1
-	if _frames < delay_frames:
+	if _frames < delay_frames + _taken * every:
 		return
 	set_process(false)
 	# Kadrın tam çəkilməsini gözləyirik, yoxsa boş şəkil alınır.
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
-	var err := img.save_png(path)
+	var out := _path_for(_taken)
+	var err := img.save_png(out)
 	if err == OK:
-		print("[shot] saxlanıldı: %s (%dx%d)" % [path, img.get_width(), img.get_height()])
+		print("[shot] saxlanıldı: %s (%dx%d)" % [out, img.get_width(), img.get_height()])
 	else:
 		printerr("[shot] saxlanmadı: %s" % error_string(err))
+	_taken += 1
+	if _taken < count:
+		set_process(true)
+		return
 
 	# Çıxış RENDER GERİ ÇAĞIRIŞININ İÇİNDƏN edilmir.
 	#
@@ -40,3 +59,9 @@ func _process(_delta: float) -> void:
 	# kadrdan çıxıb normal döngəyə qayıdırıq, sonra bağlayırıq.
 	await get_tree().process_frame
 	get_tree().quit()
+
+
+func _path_for(i: int) -> String:
+	if count <= 1:
+		return path
+	return "%s_%02d.%s" % [path.get_basename(), i, path.get_extension()]

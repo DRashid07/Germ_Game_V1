@@ -39,6 +39,20 @@ const BOARD_ROWS := 5
 const BOARD_ROW_H := 33.0
 const BOARD_BOTTOM := 74.0 + BOARD_ROWS * BOARD_ROW_H
 
+## Matçın içində AYARLAR YOXDUR — Brawl Stars-da olduğu kimi.
+##
+## Əvvəl yuxarı-mərkəzdə dişli vardı və tam ekran ayarları açırdı. Brawl
+## Stars döyüşdə heç bir sistem düyməsi göstərmir: ekranda yalnız döyüş var,
+## ayarlar isə ana ekrandadır. Səs və qrafika matçdan əvvəl bir dəfə qurulur,
+## döyüşün ortasında ona ehtiyac olmur — dişli isə hər matçda ekranın bir
+## parçasını tuturdu.
+##
+## ÇIXIŞ isə qalır, çünki sonsuz arenada matç bitmir: dişlidən əvvəl
+## oyunçunun yeganə yolu ölmək idi. Çıxış düymə deyil, sistem jestidir — ESC
+## və ya Android-in GERİ jesti bu təsdiqi açır (bax [method Arena._notification]).
+## Təsdiq ona görədir ki, GERİ jesti ekranın kənarından sürüşdürməklə edilir
+## və döyüşdə barmaq ora təsadüfən gedir.
+signal leave_confirmed()
 
 var move_stick: TouchStick
 var fire_button: FireButton
@@ -64,9 +78,19 @@ var _result: Control
 var _result_title: Label
 var _result_body: Label
 var _result_rule: ColorRect
+## Çıxış təsdiqi (bax [method toggle_leave_prompt]).
+var _leave: Control
+var _fps_lbl: Label
+## Kadr sayğacı saniyədə bir dəfə yenilənir — bax [method _process].
+var _fps_t := 0.0
 
 var _local_color := Palette.TEXT
 var _warn_t := 0.0
+var _bar_fill_target := 0.0
+var _bar_fill_shown := 0.0
+var _gauge_danger := false
+var _gauge_t := 0.0
+var _message_tween: Tween = null
 ## ÜÇLÜK-ün raund hesabı — nəticə ekranı da onu göstərməlidir, ona görə
 ## [method set_match]-dan saxlanılır.
 var _trio := false
@@ -92,7 +116,16 @@ func build(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 	_build_minimap()
 	_build_center()
 	_build_result()
+	_build_system()
 	_build_controls(base_tex, knob_tex)
+	# SONUNCU: çıxış təsdiqi atəş və super düymələrinin ÜSTÜNDƏ olmalıdır —
+	# ağacda sonra gələn həm üstdə çəkilir, həm toxunuşu birinci alır.
+	_build_leave_prompt()
+
+	apply_settings()
+	# Ayarlar artıq yalnız menyudadır, amma siqnala qoşulmaq ucuzdur və HUD-u
+	# gələcəkdə ayarı dəyişən hər yerə (məs. ilk açılış bələdçisi) hazır saxlayır.
+	Settings.changed.connect(apply_settings)
 
 	_apply_safe_area()
 	get_viewport().size_changed.connect(_apply_safe_area)
@@ -319,52 +352,175 @@ func _build_result() -> void:
 	_result.add_child(_result_body)
 
 
+## Yuxarı-mərkəz: kadr sayğacı (ayarlarda açılır).
+func _build_system() -> void:
+	_fps_lbl = _make_label(15, Palette.TEXT_MUTED)
+	_fps_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_fps_lbl.anchor_left = 0.5
+	_fps_lbl.anchor_right = 0.5
+	_fps_lbl.offset_left = -70.0
+	_fps_lbl.offset_right = 70.0
+	_fps_lbl.offset_top = 10.0
+	_fps_lbl.offset_bottom = 34.0
+	_fps_lbl.visible = false
+	_safe_root.add_child(_fps_lbl)
+
+
+## "MATÇDAN ÇIXIRSAN?" — GERİ jestinin təsdiqi (bax [signal leave_confirmed]).
+##
+## Oyun DAYANMIR: dünya serverdədir və bu pəncərə ora heç nə demir. Ona görə
+## örtük yarımşəffafdır və DAVAM ET böyük, sol tərəfdədir — oyunçunun ilk
+## refleksi geri qayıtmaqdır, çıxmaq yox.
+func _build_leave_prompt() -> void:
+	_leave = Control.new()
+	_leave.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_leave.visible = false
+	# Arxadakı atəş və super düymələrinə basılmasın.
+	_leave.mouse_filter = Control.MOUSE_FILTER_STOP
+	_root.add_child(_leave)
+
+	var dim := ColorRect.new()
+	dim.color = Color(Palette.BG_OUTER, 0.72)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_leave.add_child(dim)
+
+	var title := _make_label(40, Palette.TEXT)
+	title.theme_type_variation = "Heading"
+	title.text = "MATÇDAN ÇIXIRSAN?"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	title.offset_left = -400.0
+	title.offset_right = 400.0
+	title.offset_top = -120.0
+	title.offset_bottom = -64.0
+	ChunkyBox.stroke(title, 8, true)
+	_leave.add_child(title)
+
+	var note := _make_label(19, Palette.TEXT_MUTED)
+	note.text = "Mikrobun dünyadan silinir, qazandığın tutum itir."
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	note.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	note.offset_left = -400.0
+	note.offset_right = 400.0
+	note.offset_top = -58.0
+	note.offset_bottom = -28.0
+	_leave.add_child(note)
+
+	var stay := _prompt_button("DAVAM ET", Palette.MENU_BLUE, -250.0)
+	stay.pressed.connect(func() -> void:
+		Sfx.play("ui_click")
+		close_leave_prompt())
+	var go := _prompt_button("ÇIX", Palette.DANGER, 20.0)
+	go.pressed.connect(func() -> void:
+		Sfx.play("ui_click")
+		close_leave_prompt()
+		leave_confirmed.emit())
+
+
+func _prompt_button(label: String, face: Color, left: float) -> Button:
+	var b := Button.new()
+	b.text = label
+	b.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	b.offset_left = left
+	b.offset_right = left + 230.0
+	b.offset_top = 10.0
+	b.offset_bottom = 94.0
+	b.add_theme_font_size_override("font_size", 30)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(state, Palette.TEXT)
+	ChunkyBox.stroke(b, 6, true)
+	ChunkyBox.apply(b, face)
+	_leave.add_child(b)
+	return b
+
+
+## Təsdiqi açır və ya (açıqdırsa) bağlayır — GERİ jesti ikinci dəfə edilsə,
+## oyunçu fikrindən daşınıb deməkdir.
+func toggle_leave_prompt() -> void:
+	if _leave.visible:
+		close_leave_prompt()
+		return
+	# Barmaq joystickdə idisə, örtük onun "buraxıldı" hadisəsini udur və mikrob
+	# son istiqamətdə üzməyə davam edərdi.
+	release_sticks()
+	_leave.visible = true
+
+
+func close_leave_prompt() -> void:
+	_leave.visible = false
+
+
+func is_leave_prompt_open() -> bool:
+	return _leave.visible
+
+
 func _build_controls(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 	move_stick = TouchStick.new()
 	move_stick.base_texture = base_tex
 	move_stick.knob_texture = knob_tex
-	move_stick.anchor_left = 0.0
-	move_stick.anchor_right = 0.5
 	move_stick.anchor_top = STICK_ZONE_TOP
 	move_stick.anchor_bottom = 1.0
 	_root.add_child(move_stick)
 
 	fire_button = FireButton.new()
-	fire_button.anchor_left = 1.0
 	fire_button.anchor_top = 1.0
-	fire_button.anchor_right = 1.0
 	fire_button.anchor_bottom = 1.0
-	fire_button.offset_left = -(FIRE_BOX + FIRE_MARGIN_RIGHT)
-	fire_button.offset_right = -FIRE_MARGIN_RIGHT
 	fire_button.offset_top = -(FIRE_BOX + FIRE_MARGIN_BOTTOM)
 	fire_button.offset_bottom = -FIRE_MARGIN_BOTTOM
 	_safe_root.add_child(fire_button)
 
-	# Super — atəşin ÜSTÜNDƏ, bir az sağa sürüşmüş: baş barmaq qövs cızaraq
+	# Super — atəşin YANINDA, bir az yuxarı sürüşmüş: baş barmaq qövs cızaraq
 	# hərəkət edir, düz yuxarı yox.
 	super_button = SuperButton.new()
 	super_button.radius = SUPER_BOX * 0.5
-	super_button.anchor_left = 1.0
 	super_button.anchor_top = 1.0
-	super_button.anchor_right = 1.0
 	super_button.anchor_bottom = 1.0
-	# Super atəş düyməsinin ÜSTÜNDƏ deyil, YANINDA (solunda) durur.
-	#
-	# Üstdə olanda ekranın yuxarısına doğru 108 piksel uzanır və minimapın
-	# alt-sol üçdə birini örtürdü (104×53 kəsişmə) — 720 piksel hündürlükdə,
-	# yəni bütün 16:9 yatay pəncərələrdə. Sağ sütunda cədvəl, minimap və super
-	# üçün yer sadəcə çatmır.
-	#
-	# Yan tərəf həm də daha doğrudur: baş barmaq atəşdən superə üfüqi keçir,
-	# yuxarı uzanmır. Ekranın SAĞ yarısında qalır, yəni hərəkət joystickinin
-	# zonasına (sol yarı, bax [constant STICK_ZONE_TOP]) girmir.
-	var sx := FIRE_MARGIN_RIGHT + FIRE_BOX + SUPER_GAP
 	var sy := FIRE_MARGIN_BOTTOM + (FIRE_BOX - SUPER_BOX) * 0.5
-	super_button.offset_left = -(SUPER_BOX + sx)
-	super_button.offset_right = -sx
 	super_button.offset_top = -(SUPER_BOX + sy)
 	super_button.offset_bottom = -sy
 	_safe_root.add_child(super_button)
+
+	# Üfüqi yer [method apply_settings]-dədir: sol əl rejimi hamısını güzgüləyir.
+
+
+## Ayarları HUD-a tətbiq edir — qurulanda və hər dəyişiklikdə.
+##
+## Sol əl düzümü ekranın İKİ yarısını da dəyişir, tək düyməni yox: joystick
+## boş qalan yarıya keçməlidir, yoxsa hərəkət və atəş eyni baş barmağa düşər
+## və oyun oynanmaz olar.
+func apply_settings() -> void:
+	_fps_lbl.visible = Settings.show_fps
+
+	var lefty := Settings.left_handed
+
+	# ── hərəkət joysticki: boş qalan yarı ──
+	move_stick.anchor_left = 0.5 if lefty else 0.0
+	move_stick.anchor_right = 1.0 if lefty else 0.5
+
+	# ── atəş düyməsi ──
+	_pin_horizontal(fire_button, lefty, FIRE_MARGIN_RIGHT, FIRE_BOX)
+
+	# ── super: atəşin YAN tərəfində, mərkəzə doğru ──
+	#
+	# Üstündə DEYİL: orada 108 piksel yuxarı uzanıb minimapın alt-sol üçdə
+	# birini örtürdü (104×53 kəsişmə, bütün 16:9 yatay pəncərələrdə).
+	# Yan tərəf həm də daha doğrudur — baş barmaq atəşdən superə üfüqi keçir.
+	# Güzgüləndikdə də mərkəzə doğru qalır, yəni joystickin zonasına girmir.
+	_pin_horizontal(super_button, lefty,
+		FIRE_MARGIN_RIGHT + FIRE_BOX + SUPER_GAP, SUPER_BOX)
+
+
+## Bir idarəni ekranın sağ (adi) və ya sol (sol əl) kənarına bağlayır.
+##
+## [param margin] kənardan məsafə, [param box] elementin eni. Anchor-lar da
+## dəyişir, təkcə ofsetlər yox: 0 və 1 anchor-ları eyni ofsetlə ekranın
+## əks tərəflərini verir.
+static func _pin_horizontal(node: Control, lefty: bool, margin: float, box: float) -> void:
+	node.anchor_left = 0.0 if lefty else 1.0
+	node.anchor_right = 0.0 if lefty else 1.0
+	node.offset_left = margin if lefty else -(box + margin)
+	node.offset_right = (margin + box) if lefty else -margin
 
 
 static func _make_label(font_size: int, color: Color) -> Label:
@@ -414,6 +570,29 @@ func flash_hint(text: String) -> void:
 
 
 func _process(delta: float) -> void:
+	# Kadr sayğacı SANİYƏDƏ BİR yenilənir.
+	#
+	# Hər kadr yazılsaydı rəqəm oxunmaz sürətlə titrəyərdi və sayğacın özü
+	# ölçdüyü şeyə (kadr vaxtına) yük olardı — mətn yenidən düzülür.
+	if _fps_lbl.visible:
+		_fps_t += delta
+		if _fps_t >= 1.0:
+			_fps_t = 0.0
+			_fps_lbl.text = "%d FPS" % Engine.get_frames_per_second()
+
+	# Snapshot 30 Hz, ekran isə 60+ Hz-dir. Zolaq hədəfə eksponensial yaxınlaşır
+	# ki, doluluq pillə-pillə sıçramasın; sabit sürət böyük artımda gecikirdi.
+	_bar_fill_shown = lerpf(_bar_fill_shown, _bar_fill_target,
+		1.0 - exp(-delta * 10.0))
+	_bar.size.x = GAUGE_W * _bar_fill_shown
+	_gauge_t += delta
+	if _gauge_danger:
+		# 2 piksel ekranı oxunmaz etmir, amma DANGER rəngini hərəkətlə də deyir.
+		_bar.position = _bar_bg.position + Vector2(
+			sin(_gauge_t * 35.0) * 1.9, sin(_gauge_t * 47.0) * 0.8)
+	else:
+		_bar.position = _bar_bg.position
+
 	if _hint_t > 0.0:
 		_hint_t = maxf(0.0, _hint_t - delta)
 
@@ -436,7 +615,8 @@ func update_gauge(balls: int, capacity: int) -> void:
 	var col := Palette.fill_color(fill)
 	_gauge_lbl.add_theme_color_override("font_color", col)
 	_bar.color = col
-	_bar.size.x = GAUGE_W * fill
+	_bar_fill_target = fill
+	_gauge_danger = fill >= 0.85
 	_level_lbl.text = "Səviyyə %d" % Const.level_of(capacity)
 
 	# Üç təhlükə var və üçü də ölümcüldür: dolub partlamaq, acından partlamaq,
@@ -499,11 +679,21 @@ func show_message(text: String, sub := "") -> void:
 	_center_lbl.visible = true
 	_sub_lbl.text = sub
 	_sub_lbl.visible = not sub.is_empty()
+	# Bildiriş sadəcə peyda olmur: 0.72-dən back-out ilə aşıraraq gəlir.
+	# Uzun fade sınananda döyüş mesajı oxunana qədər hadisə artıq bitirdi.
+	if _message_tween != null and _message_tween.is_valid():
+		_message_tween.kill()
+	_center_lbl.pivot_offset = _center_lbl.size * 0.5
+	_center_lbl.scale = Vector2(0.72, 0.72)
+	_message_tween = create_tween()
+	_message_tween.tween_property(_center_lbl, "scale", Vector2.ONE, 0.24) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 func hide_message() -> void:
 	_center_lbl.visible = false
 	_sub_lbl.visible = false
+	_center_lbl.scale = Vector2.ONE
 
 
 ## Oyun bitdi — həm partlayanın, həm də qalibin ekranı.

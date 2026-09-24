@@ -15,10 +15,13 @@ Rəngi dəyişəndə həm oradakı sabit, həm bu sənəd yenilənməlidir.
 | Ad | Kod | İşlədilir |
 |---|---|---|
 | `BG_OUTER` | `#071012` | Qabın kənarından bayır — dünyanın sərhədi |
-| `DISH` | `#0C1A1E` | Qabın döşəməsi |
-| `DISH_EDGE` | `#1E4650` | Şüşə kənar (8 px qalınlıqda halqa) |
-| `GRID` | `#122A31` | Döşəmə şəbəkəsi və məsafə halqaları |
+| `BG_VIGNETTE` | `#020708` | Qabdan uzaqdakı bayır vinyeti |
+| `DISH` | `#12262C` | Qabın döşəməsi — qaranlıq orta ton |
+| `DISH_EDGE` | `#2B5963` | Qalxmış şüşə dodağın gövdəsi |
+| `GRID` | `#1A3942` | Döşəmə şəbəkəsi və 400 px-lik bevel işığı |
 | `MUCUS` / `MUCUS_EDGE` | `#16333B` / `#245562` | Selik ləkələri (maneə) |
+| `BUSH` / `BRITTLE` / `VENT` | `#4FCB72` / `#D09345` / `#F0B94E` | Xəritə növlərinin ikinci rəng kanalı |
+| `DRY_CRACK` / `STEAM` | `#81785C` / `#B9D8D0` | Quru çat və yalnız HIGH-da buxar |
 
 Fon QƏSDƏN aşağı kontrastdır: ekranda 10 mikrob, 50 qida topu və uçan toplar var —
 oxunaqlıq yalnız ön planın parlaq olması ilə qazanılır.
@@ -228,6 +231,48 @@ ardıcıllığı bunu edə bilməzdi.
 > **Çəkiliş sırası vacibdir.** Əvvəlcə bütün DOLU formalar, sonra bütün XƏTLƏR.
 > Qarışsa, hər mikrob 15-20 ayrıca çəkiliş çağırışı olur — mobil GPU-da əsas
 > məhdudiyyət məhz çağırış sayıdır.
+
+### Siluet, işıq və squash & stretch kontraktı
+
+Gövdə üç növdə də **tam tutqundur**. Kirpikli və ayaqlı əvvəl `0.30` alfa ilə
+çəkilirdi; döşəmə gövdənin içindən göründüyünə görə rəng parlaq olsa da siluet
+itirirdi. İndi xarici kontur həqiqi membranı — atəş qabarması və amöb ləçəkləri
+daxil — izləyir: eni `clamp(r × 0.10, 2.4, 6.0)`, rəngi `OUTLINE`, alfa `0.95`.
+
+İşıq bütün kodla çəkilən həcmlərdə `Palette.LIGHT_DIR = (-0.45, -0.89)`-dur.
+Gövdənin tünd tonu `base → OUTLINE 30%`, açıq tonu `base → ağ 28%`-dir. Açıq
+çoxbucaqlı `r × 0.10` içəri çəkilib işığa `r × 0.14` sürüşür; beləliklə ayrıca
+shader olmadan yuxarı-solda işıq bandı qalır. Aşağı-sağ rim həqiqi siluetin
+qövsünü izləyir: en `r × 0.06`, alfa `0.55`. Amöbin plazmagel və plazmazol
+qatları eyni iki-ton hesabını ayrı-ayrılıqda alır; iki material buna görə itməz.
+
+Kontakt kölgəsi gövdə siluetinin ellipsidir: `y × 0.62`, istiqamət
+`-LIGHT_DIR × r × 0.22`. Yumşaq qat `×1.15 / alfa 0.18`, sıx qat
+`×1.00 / alfa 0.45`-dir. Kölgə squash & stretch almır — node miqyası işlədilsə
+ad, kirpik və kölgə də uzanardı.
+
+| Hadisə | Membran reaksiyası | Müddət |
+|---|---|---|
+| Sürətlənmə | sabit `0.16` dartılmaya `+0.10`, cəm ən çox `0.26` | `0.18 s`, ease-out |
+| Zərbə | gələn ox üzrə `0.88`, ona dik `1.14` | `0.14 s`, elastic-out |
+| Atəş | nişan oxunda `0.94 / 1.06`, əksə `r × 0.06` geri təpmə | `0.12 s`, ease-out |
+| Doğuş | `0 → 1.12 → 1.0`, yerdə ellips halqa | `0.35 s`, back-out |
+| Boşdayanma | radius `1 + 0.018·sin(2.1t)`, yellənmə `±1.5°` | fasiləsiz, yalnız `rush < 0.05` |
+
+Keçici dartılma ilə sabit dartılmanın cəmi `0.26`-nı keçmir və istiqamətli
+hadisə `0.2 s`-dən uzun yaşamır. Topun membranı yerli yarmasının follow-through-u
+da əvvəlki `0.30 s`-dən `0.18 s`-ə endirilib; bu, squash deyil, yalnız dar çıxış
+nöqtəsinin sönən dalğasıdır.
+
+Növ fərqi xırda miqyasda ayrıca materialla oxunur: kirpik dibi `max(r × 0.040,
+1.15 px)`, ucu onun `15%`-i olan konusvari lentdir; ayaq əvvəl tünd
+`max(r × 0.14, 5.4 px)`, sonra parlaq `max(r × 0.065, 2.4 px)` keçiddir və basılı
+ucda tünd pəncə ləkəsi var; amöbin dar arxa uroid qabarması `0.16`-dır.
+
+Gərginlik `0.75`-ə çatanda kontur `DANGER`-ə doğru `6 Hz` nəbz vurur, rəng
+indeksindən çıxan `3–5` isti çat görünür və membran sürətdən asılı olmadan
+`±r × 0.015` titrəyir. Əvvəlki yalnız rəngə çalan titrəyiş dayanan rəqibi
+uzaqdan təhlükəsiz göstərirdi.
 
 ---
 
@@ -693,7 +738,7 @@ məhdudiyyətlə.
 > Bu məhdudiyyət üsluba uyğundur: selik damcı kimi qabarmalıdır, kub kimi
 > qalxmamalı. Petri qabında düz künc yoxdur.
 
-**Vahid işıq.** Bütün xəritə üçün bir açar işıq: `L = (-0.35, -0.94)` —
+**Vahid işıq.** Bütün xəritə üçün bir açar işıq: `L = (-0.45, -0.89)` —
 yuxarı-sol. Kölgə aşağı-sağa düşür.
 
 Maneələr artıq **fırladılmır**. Əvvəl hər ləkə `(o.x + o.y) * 0.01` radian
@@ -703,38 +748,57 @@ görə fırlanma **işığı da fırladırdı**: 26 maneənin hər birində iş�
 tərəfdən gəlirdi və qradiyent həcm yox, rəng ləkəsi kimi oxunurdu. Naxış
 variasiyası lazımdırsa, eyni istiqamətdə işıqlandırılmış ayrı sprite seçilir.
 
-**Kölgə sprite-a bişirilib**, kodda çəkilmir — səbəb ölçmədir (bax README,
-"Tələlər"). İki qat: yumşaq qat hündürlüyü, sıx kontakt halqası döşəməyə
-harada toxunduğunu deyir. Kölgə radiusla birlikdə miqyaslanır; əvvəl sabit
-10 piksel idi və 40 px-lik ləkə ilə 250 px-lik ləkə eyni kölgəni alırdı.
+**Bərk maneənin üç üzü sprite-a bişirilib**, kodda çəkilmir — səbəb ölçmədir
+(bax README, "Tələlər"). Düşən kölgə `-LIGHT_DIR` ilə aşağı-sağa gedir; r=120
+yan üz aşağı-sağa tündləşir; ellipsvari üst üz `(151,145)` mərkəzində
+`108×106` radiusla oturur. Beləliklə aşağı-sağda təxminən 26 px (radiusun
+22%-i) yan bant açılır, amma xarici toqquşma silueti yerindən tərpənmir.
+Kölgə və hündürlük radiusla birlikdə miqyaslanır; əvvəl sabit 10 piksel idi və
+40 px-lik ləkə ilə 250 px-lik ləkə eyni kölgəni alırdı.
 
 **Kol iki qatdır.** Baza mikrobun altında, **frondlar üstündə**
 ([`Arena._canopy`](../game/scripts/client/arena.gd)). Gizlənmə qaydası əvvəl
 yalnız serverdə mövcud idi — ekranda kolun içindəki mikrob kolun üstündə
 dayanırdı. İndi yarpaqlar onun üstündən keçir və "nəyinsə altındayam" izahsız
 oxunur. Üst sprite-ın **içi boşdur**: dolu qat gizlənəni tamamilə örtərdi.
+Kol yastı qalır — kölgə və yan üz almır — amma `BUSH=#4FCB72` doymuş yaşılı ilə
+döşəmədən ayrılır. Üst qat 16 yox, 28 əyri fronddur; `_process` onları
+`±0.030 rad` rotation və `±0.018` skew ilə yırğalayır. Baza sabitdir, ona görə
+keçilən sahənin özü sürüşmür.
 
 **Qabığın üç zədə vəziyyəti.** `BRITTLE_HP = 3` həmişə var idi, amma sprite heç
 vaxt dəyişmirdi — oyunçu neçə zərbə qaldığını bilmirdi. İndi zərbə sayı divar
 baytının boş bitlərində daşınır ([`DishMap.Wall`](../game/scripts/shared/dish_map.gd))
 və şəkil dəyişir: çatlar dərinləşir, kəhrəba genişlənir. Şəbəkəyə sıfır bayt.
 
-**Cərəyan deşiyi qabın mərkəzinə döndərilib.** Sprite "içəri sorulma"
-göstərirdi, qayda isə başqadır: `Sim._vent_push`-da `dir := (-c).normalized()`,
-yəni itələmə deşiyə yox, **qabın mərkəzinə** doğrudur. Rəsm qaydanı təkzib
-edirdi.
+**Cərəyan deşiyi mənfi hündürlükdür.** Sabit bazada yuxarı-sol daxili divar
+kölgədə, aşağı-sağ daxili divar işıqdadır — qalxmış maneənin tərsi. Baza daha
+qabın mərkəzinə döndərilmir, çünki bu, daxili işığı da fırladıb qlobal
+`LIGHT_DIR`-i pozurdu. Cərəyan ayrıca `mucus_vent_swirl.svg` qatındadır və
+`0.72 rad/san` fırlanır; ventlər azdır və eyni teksturada ardıcıl olduqları
+üçün bu, maneə başına yox, cəmi bir əlavə çəkiliş çağırışıdır. Simulyasiyadakı
+itələmə yenə qabın mərkəzinə doğrudur (`Sim._vent_push` toxunulmayıb).
 
 **Su iki dərinlikdədir.** 110 zərrəcik `80 + 30` kimi bölünür: dərin qat sönük,
 nazik və yavaş; səth qatı parlaq və sürətli. Göz fərqi ölçmür — dərinlik kimi
 oxuyur ([`WaterMotes.depth`](../game/scripts/client/water_motes.gd)).
 
-**Döşəmə** tək qradiyent teksturasıdır (`dish_floor.svg`): mərkəz açıq, kənar
-qaranlığa düşür — qab əyri şüşədir. Şəbəkə kənara doğru sönür, məsafə halqaları
-isə nazik xətt yox, enli və qırıq sediment zolağıdır (nazik tam halqa döşəmənin
-üstünə çəkilmiş UI elementi kimi oxunurdu).
+**Döşəmə** tək teksturadır (`dish_floor.svg`): mərkəz `#19363F`-dən kənarda
+`#071012`-yə düşür, üstündə yumşaq və təkrarlanmayan yeddi agar ləkəsi, ən
+üstdə bişmiş vinyet var. Şəbəkə kənara doğru sönür; hər 400 px-də yuxarı-sol
+işıq + aşağı-sağ kölgə eyni `draw_multiline_colors` batch-inə əlavə olunur.
+Məsafə halqaları nazik xətt yox, enli və qırıq sediment zolağıdır (nazik tam
+halqa döşəmənin üstünə çəkilmiş UI elementi kimi oxunurdu).
 
-**Şüşə divar** dörd hissədir: daxili menisk, gövdə, yuxarı-solda işıq qövsü,
-aşağı-sağda tünd dodaq. Simmetrik halqa həmişə yastı qalır.
+**Şüşə divar** dörd hissədir: 34 px daxili kölgə, 17 px gövdə, yuxarı-solda
+5 px işıq qövsü, aşağı-sağda 9 px tünd dodaq. Qövslər əl bucağından yox,
+`Palette.LIGHT_DIR`-dən çıxır; simmetrik halqa həmişə yastı qalır. Bayırda
+`BG_OUTER`-dən `BG_VIGNETTE=#020708`-ə iki pilləli düşmə gözü qaba çəkir.
+
+**Quruyan zona** kəhrəba örtükdən əlavə çat naxışıdır: HIGH-da 18, LOW-da 10
+deterministik çat eyni multiline çağırışında çəkilir. Nəbz yaş radius daraldıqca
+`2.2 → 7.0 rad/san` sürətlənir. Səkkiz buxar kəkili yalnız HIGH keyfiyyətdədir
+və hamısı bir əlavə multiline çağırışıdır; LOW-da massiv belə qurulmur.
 
 ---
 
@@ -754,12 +818,15 @@ deməli su sürüşdürür.
 
 | Parametr | Dəyər | Niyə |
 |---|---|---|
-| Say | 110 | Çoxu fonu "qar" kimi göstərir və mikrobların oxunmasına mane olur |
-| Rəng | `DISH_EDGE` → `TEXT` 30%, alfa 0.55 | Sönük olsa qat boş yerə hesablanır, parlaq olsa mikroblarla yarışır |
+| Say | HIGH `80 + 30`, LOW `34 + 14` | Çoxu fonu "qar" kimi göstərir və mikrobların oxunmasına mane olur |
+| Rəng | `DISH_EDGE` → `TEXT` 30%, alfa səthdə `0.40`, dərində `0.24` | Sönük olsa qat boş yerə hesablanır, parlaq olsa mikroblarla yarışır |
 | Cizgi | axın sürəti × 0.85 s | Qısası nöqtəyə bənzəyir, uzunu yağış kimi görünür |
 | Sahə | kameranın ətrafında ± 0.8 × ekran eni | Kənara çıxan zərrəcik əks tərəfdən qayıdır: sabit sıxlıq, sabit yaddaş |
 
-Bütün qat **bir** `draw_multiline` çağırışıdır.
+Bütün qat **bir** `draw_multiline_colors` çağırışıdır. HIGH-da hər cərəyan
+deşiyinə radial + spiral oxla sorulan **7** əlavə cizgi həmin batch-ə qoşulur;
+ayrıca node və çağırış açılmır. LOW-da sink massivi boşdur, yəni bu material
+işarəsi həm hesabdan, həm görüntüdən tam çıxır.
 
 ### Burulğan EKRANA SIĞMALIDIR
 
@@ -804,6 +871,7 @@ membran parçaları). Kod: [`burst_fx.gd`](../game/scripts/client/burst_fx.gd).
 | Parıltı | 75 ms | Membranın qopduğu an — "zərbə" hissi |
 | Bulud | 1.15 s | `burst.svg` radial qradiyenti; mikrobun ölçüsündən 3.5 misline açılır |
 | Üç dalğa | 0.7 s | 75 ms fasilə ilə; genişləndikcə həm sönür, həm nazilir |
+| Zərbə halqası | 0.40 s | Bütün partlayışları bir batch-də birləşdirən nazik geniş halqa |
 | Damcılar | 1.15 s | Sayı **top sayına** bərabərdir; hər biri qısa iz buraxır |
 | Membran parçaları | 1.15 s | 9 qövs, fırlanaraq uçur — bir `draw_multiline` |
 
@@ -822,58 +890,190 @@ olmur ([`World._free_color`](../game/scripts/server/world.gd)), ona görə rəng
 mikrobun kimliyidir və partlama hadisəsinə ayrıca id sahəsi əlavə etmək lazım
 deyil — snapshot-da hər bayt sayılır.
 
+### 6a. Döyüş VFX-i, kamera və UI juice
+
+Doqquz hadisə bir vizual dilə bağlanır. Doğuş pop-u Mərhələ 1-də membranın
+özündədir; qalan qısa döyüş effektləri
+[`JuiceFx`](../game/scripts/client/juice_fx.gd) içindədir:
+
+| Effekt | Müddət / say (HIGH → LOW) | Forma qərarı |
+|---|---|---|
+| Lülə alovu | `0.08 s`, `3 → 1` ləçək | membran yarığında, nişan oxunda |
+| Zərbə sıçrantısı | `0.22 s`, `8 → 4` qığılcım | gələn top oxunda `±0.58 rad` konus; radial deyil |
+| Partlayış halqası | `0.40 s`, `40 → 20` seqment | radius `0.82r → 3.07r`, cubic ease-out |
+| Qida udulması | `0.30 s`, `4 → 2` iz | kvadratik Bezier qövsü + membranda dalğa |
+| Tutum mükafatı | `0.62 s`, `12 → 6` şüa | `SUPER_READY` qızılı aura və halqa |
+| Kol xışıltısı | `0.52 s` | girişdə və çıxışda yalnız toxunulan üst frond; `sin(31t)·exp(-5.8t)` |
+| Qabıq qırıntısı | `0.52 s`, `6/12 → 3/6` parça | adi zərbədə konus, üçüncü zərbədə tam çevrə + qırıq toz halqası |
+| Cərəyan axını | fasiləsiz, vent başına `7 → 0` | mövcud su batch-ində deşiyə daralan spiral |
+| Doğuş | `0.35 s` | membran `0 → 1.12 → 1.0`, yerdə halqa; `GermVisual` |
+
+`JuiceFx` hadisə başına node yaratmır. Bütün aktiv hadisələri qalın alov/udulma,
+incə qığılcım və halqa olmaqla **üç** multiline massivinə yığır; deməli effekt
+sayı artsa da bu qatın pik çağırışı `≤3` qalır. `draw_circle` ilə hər zərrəciyi
+ayrıca çəkmək sınanmadı: bu layihədə hər primitiv ayrıca çağırışdır və 10
+mikroblu döyüşdə 350 həddini keçmək riski daşıyır.
+
+Kamera kanalları ayrıdır: `_shake` təsadüfi mövqe titrəyişidir, `_kick` isə
+topun səth nöqtəsindən qurbanın mərkəzinə gedən ox boyunca yönlü təpikdir.
+Təpik `16 px`-də məhdudlaşır və `70 px/san` sürətlə sönür. Yaxın rəqib
+partlayanda mövcud `_punch=0.07` qısa zoom verir. Ağ parıltı, `75 ms` vizual
+donma və uçan rəqəm toxunulmaz qalır; `Engine.time_scale` yenə işlədilmir.
+
+UI zamanları:
+
+| Element | Hərəkət |
+|---|---|
+| Atəş və menyu düymələri | basış `0.94` (60 ms), buraxılış `1.0` (160 ms, back-out) |
+| Super düyməsi | mövcud aşağıdan dolum + hazır nəbzi + halqa boyu işıq zolağı qorunur |
+| HUD doluluğu | hədəfə `1-exp(-10t)` ilə yaxınlaşır; `fill ≥ 0.85` olanda `±1.9 px` titrəyir |
+| Uçan rəqəm | `0.52 → 1.0`, `0.26 s` back-out; əvvəl oxunur, sonra sönür |
+| Mərkəz bildirişi | `0.72 → 1.0`, `0.24 s` back-out |
+| Növ kartı | basışda `0.94`; seçiləndə istirahət miqyası `1.035` |
+
+Yekun RTX 5050 ölçməsi (`1280×720`, vsync sönük, 12 s):
+
+| Rejim | Əvvəl / M2 / M3 orta | M3 1% ən pis | Çağırış piki əvvəl / M2 / M3 |
+|---|---:|---:|---:|
+| SONSUZ ARENA | `1.85 / 2.15 / 2.48 ms` | `3.70 ms` | `~230 / 188 / 196` |
+| TƏK QALAN | `2.82 / 2.93 / 2.35 ms` | `4.03 ms` | `~212 / 249 / 202` |
+
+Hər iki rejimdə `>16.7 ms` kadr sıfırdır və 350 çağırış həddi qorunur. Təsadüfi
+daha sıx TƏK QALAN çalışmasında eyni reviziya `263` pik göstərib; sənədləşən
+konservativ yuxarı ölçü budur və limitdən 87 çağırış aşağıdır.
+
 ---
 
 ## 6b. Menyu — yatay
 
 Oyun **yalnız yatay** oynanır (1280×720 baza). Menyu forma deyil, **vitrindir**:
-düzülüş Brawl Stars ana ekranının məntiqindən götürülüb, iqtisadiyyatı isə
-qəsdən götürülməyib.
+düzülüş Brawl Stars-ın **bugünkü (2026)** ana ekranından götürülüb,
+iqtisadiyyatı isə qəsdən götürülməyib.
+
+### Brawl Stars 2026 — nəyə baxılıb
+
+Supercell-in 2026 buraxılış qeydləri ana ekranı sadələşdirir: avqust
+yeniləməsində Starr Road və Fame düymələri ana ekrandan çıxarılıb, Brawler
+kolleksiyasının içinə köçüb; lobbidə isə toxunmaq, çəkmək, sıxmaq və atmaq
+olan canlı personaj (Loony) var. Düzümün qalanı illərdir sabitdir:
+
+| Brawl Stars | Bizdə |
+|---|---|
+| Yuxarı-sol: profil (ikon + ad + kubok) | Profil: seçilmiş növün avatarı + ad (yazılır) |
+| Yuxarı-sağ: valyutalar + menyu düyməsi | QİDA, DNT (görünüş üçün) + dişli → AYARLAR |
+| Sol lent: Shop, Brawlers | MAĞAZA (görünüş üçün), MİKROBLAR, MƏŞQ |
+| Mərkəz: brawler 3D modeli, adı üstündə | Qəhrəman podiumda, adı və superi başının üstündə |
+| Aşağı-sağ: [hadisə yuvası][sarı PLAY] | [rejim kartı — rejimin rəngində][sarı OYNA] |
+| Aşağı-sol: Brawl Pass, tapşırıqlar | MİKRO PASS, TAPŞIRIQLAR (görünüş üçün) |
+| Lobbidə oynanan personaj (Loony) | Qəhrəmana toxunmaq titrədir, çəkmək dartır/əyir |
+| Döyüşdə sistem düyməsi yoxdur | Matçda dişli YOXDUR, ayarlar yalnız menyuda (bax § 6c) |
+
+Mənbə: [Release Notes August 2026](https://supercell.com/en/games/brawlstars/blog/release-notes/release-notes-august-2026/)
+və əvvəlki 2026 qeydləri (fevral — Ranked ana ekranda, iyun — Rush düyməsi).
 
 ### Zonalar (1280×720)
 
 | | Yer | Ölçü | Nə edir |
 |---|---|---|---|
-| A | 34, 24 | 316×64 | Oyunçu nişanı: avatar + ad. Ad birbaşa yazılır, ayrıca ekran açılmır |
-| B | sağ 34, 24 | 64×64 + yazı | Server vəziyyəti və ayarlar. Server ünvanı dişlinin altındadır |
-| C | mərkəz `0.30w, 0.52h` | r = `0.40·min` | Petri qabı = podium. Mikrob 4.2× böyüdülüb və **canlıdır** |
-| D | sağ sütun | 560 en | Növün adı, izahı, üç kart |
-| E | sağ aşağı | 380×112 | Rejim lövhəsi + **OYNA** + MƏŞQ |
-| F | 34, aşağı | 600×72 | Oyunun qaydası iki sətirdə |
+| A | 30, 20 | 330×70 | Profil: 56 px avatar-kafel + ad (birbaşa yazılır) |
+| B | sağ 30, 20 | 70×70 dişli + 2 × 150×44 zolaq | QİDA və DNT valyutaları (görünüş üçün) və dişli — TAM EKRAN ayarlar (§ 6c) |
+| C | ayaq nöqtəsi `0.5w, 0.61h` | qəhrəman `0.70h × 0.45h` qutuya sığır, podium eni `0.80h` | Şüşə podium + növün **qəhrəman illüstrasiyası**; ad lövhəsi (300×64) başının üstündə |
+| D | sol, mərkəzdən yuxarı | 3 × 112×112, ara 18 | MAĞAZA, MİKROBLAR, MƏŞQ — ikon üstdə, ad altda |
+| F | sol aşağı | 250×112 + 112×112, ara 16 | MİKRO PASS və TAPŞIRIQLAR (görünüş üçün) |
+| E | sağ aşağı | 330×112 + 290×112, ara 16 | Rejim kartı + **OYNA** |
 
-Sağ sütun **aşağıya** bağlanıb, yuxarıya yox: OYNA baş barmağın çatdığı yerdə
-qalmalıdır, ekran nə qədər hündür olsa da.
+Aşağı zolaq **aşağıya** bağlanıb, yuxarıya yox: OYNA baş barmağın çatdığı
+yerdə qalmalıdır, ekran nə qədər hündür olsa da.
 
-### Üç qayda
+### Düymə dili — [`ChunkyBox`](../game/scripts/client/chunky_box.gd)
 
-1. **Mikrob canlıdır.** Menyu oyunun öz [`GermVisual`] kodunu işlədir və
-   mikrobu HƏQİQİ sürətlə hərəkət etdirir — ayrıca "menyu şəkli" saxlanmır,
-   ona görə menyu ilə oyun arasında görüntü kəsiyi ola bilməz. Mikrob ekranda
-   yerində dayanır, amma dünyada gedir: səhnə node-u eyni qədər geri sürüşür.
-2. **Ekranda BİR dolu laym ləkə var** — OYNA düyməsi. Qalan hər şey konturlu
-   və ya sönükdür, ona görə göz bir toxunuşluq yolu dərhal tapır. Düymənin
-   aşağı kənarındakı tünd "dodaq" qalınlıq verir: Brawl Stars bunu qara
-   konturla edir, bizim dil isə yumşaq və işıqlıdır, ona görə kontur əvəzinə
-   əsas rəngin tünd variantı işlədilir.
-3. **Basılan hər şey əzilir** (≈0.95 miqyas, 60 ms) və `ui_click` səsi verir.
+Brawl Stars düyməsinin dörd qatı: **qara kontur** (3 px) → **dodaq** (üzün
+rənginin 38% tünd variantı, 7 px) → **üz** → **parıltı** (üst 45%, ən çox 24 px,
+ağ 16%). Basılanda dodaq 2 px-ə düşür, üz və mətn aşağı enir.
 
-### Mağaza, valyuta və naviqasiya lenti YOXDUR
+`StyleBoxFlat` işlədilmir, çünki onun BİR sərhəd rəngi var — dodaqsız düymə
+yastı, qara dodaqlı isə "qara ayaqqabılı" görünürdü. Button-un öz `_draw`-ı
+mətndən sonra çağırılır, yəni fon orada çəkilə bilməz; StyleBox isə mətndən
+əvvəl çəkilir.
 
-Brawl Stars ana ekranının təxminən yarısı iqtisadiyyata gedir. Bizdə onun
-arxasında məhsul yoxdur, boş düymə isə heç bir düymədən pisdir — basılır, heç
-nə olmur, etibar itir.
-
-Amma **yerləri indidən ayrılıb**, ona görə bölmələr gələndə menyu yenidən
-dizayn olunmayacaq:
-
-| Gələcək bölmə | Yeri | İndi orada nə var |
+| Element | Üz | Niyə |
 |---|---|---|
-| Valyuta nişanları | Yuxarı sağ, dişlinin solu | Server vəziyyəti (valyuta gələndə o, oyunçu nişanının ikinci sətrinə köçür) |
-| İrəliləyiş / səviyyə | Oyunçu nişanının içi | "adı dəyişmək üçün toxun" ipucu |
-| Naviqasiya lenti | Aşağı sol zolaq | Oyunun qaydası (o vaxt "necə oynanır" panelinə köçür) |
+| OYNA | `MENU_PLAY` `#FFD83B` | Ekranın yeganə sarı ləkəsi. `SUPER_READY`-dən qəsdən ayrıdır |
+| Sol lent, dişli, GERİ | `MENU_BLUE` `#1F95D6` | Brawl Stars mavisi, firuzəyi qaba doğru çəkilib |
+| Rejim kartı | rejimin rəngi, 45% tünd | Rejim adından əvvəl rəngindən tanınır |
+| Profil, nişan, ad lövhəsi | `MENU_PANEL` `#0E3346`, dodaqsız, parıltısız | Basılmır — basılası kimi görünməməlidir |
+| Seçilmiş kart | sarı kontur, 5 px | Ana ekrandakı sarı OYNA ilə eyni dil |
 
-Mikrob, növ kartları və OYNA — yəni ekranın ürəyi — heç bir halda yerini
-dəyişmir.
+**Yazı:** ağ, qara kontur (4–9 px) və altda kölgə. Başlıqlar üçün Baloo 2 800
+əlavə qalınlaşdırılır (`variation_embolden 0.55`, bax [`ChunkyBox.heavy_font`](../game/scripts/client/chunky_box.gd)) —
+Brawl Stars-ın Lilita One şriftinə yaxınlaşmaq üçün; Lilita-nın özündə `Ə/ə` yoxdur.
+
+### Qaydalar
+
+1. **Mikrob qəhrəmandır.** Ana ekranda hər növün öz illüstrasiyası var və o,
+   fon şəklinin üstündə, şüşə podiumda durur — Brawl Stars lobbisindəki
+   brawler kimi. Əvvəl burada oyunun öz [`GermVisual`]-ı 4.2× böyüdülürdü:
+   oyunla eyni idi, amma boş qara fonda kiçik bir ləkə kimi oxunurdu.
+   Qəhrəman nəfəs alır (en və hündürlük ƏKS fazada, həcm saxlanılır), suda
+   yüngül qalxıb-enir (kölgəsi onunla kiçilir). Toxunanda jele kimi
+   titrəyir, çəkəndə dartılır (≤ 0.30) və əyilir (≤ 20°), buraxanda yay onu
+   titrədərək qaytarır. Hamısı bir node-un transformudur — çəkiliş çağırışı
+   artmır. Oyundakı görünüş itmir: növün səhifəsindəki «OYUNDA» pəncərəsi
+   canlı [`GermVisual`]-dır (bax § 6d).
+
+   **Illüstrasiyalar və ikonlar kodla yox, Codex ilə çəkilib** — xam fayllar,
+   emal olunmuş variantlar və promptlar [`design/menu_art/`](menu_art/)-dadır.
+   Sərt qaydalar orada da eynidir: **simasız**, qalın tünd kontur, işıq
+   yuxarı-soldan, içində oyunun topları görünür. Yeni növ və ya rejim əlavə
+   olunanda eyni brif ilə onun qəhrəmanı/ikonu da çəkilməlidir.
+2. **Ekranda BİR sarı ləkə var** — OYNA. Rejim kartı onun solundadır və
+   rejimin rəngindədir: «nə oynayıram» və «başla» bir baxışda oxunur.
+3. **Basılan hər şey əzilir** (`0.94` miqyas, 60 ms) və `ui_click` səsi verir;
+   buraxılış `0.16 s` back-out-dur. Növ kartı seçiləndə `1.035` miqyasda qalxır.
+4. **Vərəq açılanda ana ekran gizlənir** (fon qalır). Brawl Stars-da Brawlers
+   ayrı ekrandır; 14% şəffaflıqdan arxadakı ad lövhəsi vərəqin başlığının
+   altına düşürdü.
+5. **GERİ jesti** (Android) açıq vərəqi/ayarları bağlayır, ana ekranda isə
+   oyundan çıxır. `quit_on_go_back` söndürülüb, yoxsa jest vərəq açıq ikən
+   bütün tətbiqi bağlayırdı.
+
+### Mağaza, valyuta, MİKRO PASS və tapşırıqlar — GÖRÜNÜŞ ÜÇÜN
+
+Brawl Stars ana ekranının təxminən yarısı iqtisadiyyata gedir və onsuz ana
+ekran yarımçıq görünür. Ona görə düymələr Brawl Stars-dakı yerlərindədir,
+ikonları Codex ilə çəkilib. Arxalarında isə **hələ sistem YOXDUR**:
+
+| Düymə | Yeri | İndi nə edir |
+|---|---|---|
+| QİDA (yumşaq valyuta), DNT (premium, yaşıl "+") | Yuxarı sağ, dişlinin solu | Sayı `0`; basanda «QİDA — TEZLİKLƏ!» |
+| MAĞAZA | Sol lentin ən üstü, çəhrayı | «MAĞAZA — TEZLİKLƏ!» |
+| MİKRO PASS | Aşağı-sol, 250×112 | «Səviyyə 1», boş zolaq; «TEZLİKLƏ!» |
+| TAPŞIRIQLAR | Pass-ın sağı, 112×112 | «TEZLİKLƏ!» |
+
+Basılıb heç nə olmayan düymə etibarı aparır — oyunçu oyunun sınıq olduğunu
+düşünür. Ona görə hər biri əzilir, səs verir və ekranın yuxarısında sarı
+**«… — TEZLİKLƏ!»** bildirişi çıxarır ([`MenuV2._coming_soon`](../game/scripts/client/menu_v2.gd)).
+Nə gəlmədiyini açıq deyir, oyunçunu aldatmır. QA agenti bunu yoxlayır: MAĞAZA
+bildiriş verməli və heç bir ekranı/qoşulmanı işə salmamalıdır.
+
+### Server vəziyyəti ekranda YOXDUR
+
+Əvvəl yuxarı-sağda, sonra profilin altında «server yatıb», «server
+yoxlanılır…» yazılırdı. Bu, oyunçunun işi deyil — texniki daxili vəziyyətdir
+və oyunçu heç nə etməmiş oyunu sınıq göstərir. İndi:
+
+- Menyu açılan kimi serverə **səssiz** qoşulur (yatmış Railway serveri oyanana
+  qədər vaxt qazanılır, OYNA basılanda bağlantı çox vaxt hazırdır). Nəticə yalnız
+  `MenuV2._net_state`-dədir — QA agenti və diaqnostika üçün.
+- Oyunçu **özü OYNA basıb** qoşula bilməyəndə (bağlantı alınmadı, kəsildi və ya
+  12 s cavab yoxdur) bildiriş çıxır, texniki sözsüz: **«ONLAYN OYUN HAZIRDA
+  ƏLÇATMAZDIR»** + «Botlarla MƏŞQ oynaya bilərsən.» — nə baş verdiyini və nə
+  edə biləcəyini deyir.
+- QA agenti ana ekranın görünən yazılarında «server» sözünü axtarır; tapsa,
+  problem yazır. Ayarlar ekranı istisnadır — orada server ünvanı sahəsi var.
+
+Sistemlər gələndə yalnız düymənin cavabı dəyişəcək — qəhrəman, rejim kartı və
+OYNA, yəni ekranın ürəyi, yerini dəyişmir.
 
 ### Tipoqrafiya
 
@@ -889,6 +1089,119 @@ yoxdur və "MƏŞQ" sözü "M□ŞQ" çıxır — bax README, «Tələlər».
 
 Rollar [`assets/ui/theme.tres`](../game/assets/ui/theme.tres)-də bağlanıb;
 başlıq `Label`-a `theme_type_variation = "Heading"` ilə verilir.
+
+---
+
+## 6c. Ayarlar ekranı — YALNIZ menyuda
+
+Dişli (zona B) **tam ekran** açır — düşən panel deyil. Kod:
+[`SettingsView`](../game/scripts/client/settings_view.gd).
+
+**Matçın içində ayarlar YOXDUR.** Əvvəl HUD-un yuxarı-mərkəzində dişli vardı
+və eyni ekranı "MATÇI TƏRK ET" ilə açırdı. Brawl Stars döyüşdə heç bir sistem
+düyməsi göstərmir — səs və qrafika döyüşdən ƏVVƏL qurulur, dişli isə hər
+matçda ekranın bir parçasını tuturdu.
+
+### Düzülüş (1280×720)
+
+| | Yer | Ölçü | Nə var |
+|---|---|---|---|
+| Başlıq | mərkəz, y 26 | 52 h | «AYARLAR», qalın Baloo, 40 px, qara kontur |
+| Sütunlar | 34 … −34, y 90 … −100 | 3 × bərabər, ara 22 | SƏS · QRAFİKA · İDARƏ — tünd `MENU_PANEL`, qalın kontur |
+| Alt-sol | 34, aşağı 34 | 170×52 | «‹ GERİ» — menyunun vərəqlərindəki ilə eyni mavi düymə |
+
+**Niyə üç sütun:** ekran yatay 1280×720-dir. Bir sütunluq siyahı eninin üçdə
+ikisini boş qoyub oyunçunu sürüşdürməyə məcbur edərdi; üç sütun hamısını bir
+kadra yığır. Sütunların özündə `ScrollContainer` var — ehtiyat üçün, alçaq
+pəncərədə sonuncu sətir kəsilməsin.
+
+### İdarə elementləri
+
+| Element | Ölçü | Qayda |
+|---|---|---|
+| Sürgü ([`TouchSlider`](../game/scripts/client/touch_slider.gd)) | toxunuş 44 h, tutacaq r 17 | Godot-un `HSlider`-i işlədilmir: standart tutacağı ~10 px-dir, baş barmaqla tutulmur. Zolağa toxunmaq dəyəri ora atır |
+| Seçim zolağı (segment) | 42 h, ara 6 | 2–4 variant YAN-YANA. Növbə ilə keçən tək düymə deyil: orada oyunçu qalan variantları görmür |
+| Açar (switch) | 76×40, tutacaq 30 | Sürüşür (`0.16 s` back-out). AÇIQ/QAPALI yazısı yoxdur — yeri və rəngi kifayətdir, yazı isə sütunu dartır |
+| Seçilmiş pillə | `MENU_BLUE` üz, 6 px dodaq, konturlu ağ yazı | Seçilməyənlər tünd və 3 px dodaqlıdır — seçim həm rəngdən, həm "qalxmaqdan" oxunur |
+| AYARLARI SIFIRLA | narıncı `ChunkyBox`, ağ yazı | Geri qaytarılmayan əməlin rəngi |
+
+Örtük menyuda **tam tutqundur** (`1.0`): `0.97` sınandı və az idi — OYNA-nın
+doymuş rəngi, qəhrəman və dişli 3 faizdən keçib oxunurdu.
+
+### Matçdan çıxış — ayarsız
+
+Sonsuz arenada matç bitmir, ona görə çıxış qalmalıdır: dişlidən əvvəl
+oyunçunun yeganə yolu ölmək idi. Çıxış **düymə deyil, sistem jestidir**:
+Android-in GERİ jesti və ya ESC HUD-da kiçik təsdiq açır
+([`Hud.toggle_leave_prompt`](../game/scripts/client/hud.gd)):
+
+| | |
+|---|---|
+| Başlıq | «MATÇDAN ÇIXIRSAN?» + «Mikrobun dünyadan silinir, qazandığın tutum itir.» |
+| Sol | **DAVAM ET** — mavi; ilk refleks geri qayıtmaqdır |
+| Sağ | **ÇIX** — `DANGER` |
+| Örtük | `0.72` — oyun DAYANMIR (server-authoritative dünyada pauza yoxdur) |
+
+Təsdiq açıq ikən toxunuş idarələri buraxılır və klaviatura girişi də sıfırlanır
+— yoxsa WASD basılı qalan oyunçu "çıxım, ya yox" düşünərkən mikrob divara üzərdi.
+Təsdiq ona görədir ki, GERİ jesti ekranın kənarından sürüşdürməklə edilir və
+döyüşdə barmaq ora təsadüfən gedir.
+
+---
+
+## 6d. MİKROBLAR — Brawl Stars-ın Brawlers kolleksiyası
+
+Brawl Stars-ın 2026 kolleksiyası: kiçik **portret kartlar** üfüqi sırada, axtarış,
+solda Brawler Blast, sağda Fame ([Release Notes August 2026](https://supercell.com/en/games/brawlstars/blog/release-notes/release-notes-august-2026/)).
+Karta toxunmaq brawler-i SEÇMİR — onun **səhifəsini** açır; seçim oradakı sarı
+düymə ilədir. Bizdə üç növ var, ona görə axtarış və sürüşdürmə lazım deyil;
+Brawler Blast və Fame-in arxasında sistem yoxdur, ona görə onlar da yoxdur.
+
+### Kolleksiya (1280×720)
+
+| | Ölçü | Nə var |
+|---|---|---|
+| Kart | 280×400, ara 30, ortada | Codex portreti kartın bütün üzündə; sol yuxarıda **sinif nişanı** (ikon + ad); altda ad (32 px) və «SUPER · …» |
+| Seçilmiş kart | sarı kontur 5 px, `1.035` miqyas | Yuxarı-sağda sarı **SEÇİLİB** etiketi — rəng tək başına kifayət etmir |
+| GERİ | sol aşağı | Səhifədən kolleksiyaya, kolleksiyadan ana ekrana — pillə-pillə |
+
+**Kartın rəngi SİNFİN rəngidir.** Brawl Stars-da rəng nadirliyi deyir; bizdə
+nadirlik yoxdur (hər növ əvvəldən açıqdır), ona görə rəng oyun tərzini deyir:
+
+| Növ | Sinif | Rəng | İkon |
+|---|---|---|---|
+| KİRPİKLİ | **CƏLD** | kəhrəba `GERM_COLORS[3]` | sürət oxu |
+| AYAQLI | **NƏZARƏTÇİ** | bənövşəyi `GERM_COLORS[4]` | tor |
+| AMÖB | **MÜDAFİƏÇİ** | göy `GERM_COLORS[6]` | qalxan |
+
+Portretin künclərini şəklin özü kəsir (`process.gd`, `card` rejimi): TextureRect
+künc kəsə bilmir, `clip_children` isə mobil (Compatibility) renderdə etibarsızdır.
+Portret kartın üzünün dəqiq nisbətindədir — `274:387` (bax `MenuV2.CARD_ASPECT`).
+
+### Növün səhifəsi
+
+| Zona | Nə var |
+|---|---|
+| Sol | Böyük portret (360 en) + aşağı-sağ küncündə **«OYUNDA»** pəncərəsi — canlı `GermVisual`. İllüstrasiya oyundakı görünüşü əvəz etməsin: oyunçu matçda nəyi idarə edəcəyini seçmədən görür |
+| Sağ yuxarı | Ad (54 px), sinif nişanı, bir cümləlik təsvir |
+| Sağ orta | **Dörd göstərici** — zolaq + faiz |
+| Sağ aşağı | Super bloku: Codex ikonu, «SUPER · AD», nə etdiyi |
+| Sağ-aşağı künc | Sarı **SEÇ** (OYNA-nın yeri və rəngi); artıq seçilibsə yaşıl, sönük **SEÇİLİB** |
+
+**Göstəricilər uydurulmur** — hamısı `Const`-un növ əmsallarındandır, əmsal
+dəyişəndə səhifə özü dəyişir. Brawl Stars-da can, zərər, super rəqəmləri var;
+bizdə DÖYÜŞ riyaziyyatı hər növdə eynidir, fərq mühitlədir:
+
+| Göstərici | Mənbə | Kirpikli | Ayaqlı | Amöb |
+|---|---|---|---|---|
+| SÜRƏTLƏNMƏ | `SPECIES_THRUST` | 135% | 100% | 85% |
+| ÜST SÜRƏT | `SPECIES_SPEED` | 100% | 95% | 100% |
+| AXINA DÖZÜM | `1 / SPECIES_FLOW` | 87% | 182% | 100% |
+| DAR YERDƏN KEÇİD | `1 / SPECIES_BODY` | 100% | 100% | 128% |
+
+100% zolağın **yarısıdır**: yarıdan uzun zolaq "orta mikrobdan yaxşı", qısa
+zolaq "ondan zəif" oxunur. Superin mətni də rəqəmləri `Const`-dan götürür
+(`NET_TIME`, `NET_SLOW`, `CYST_TIME`, `TRICHO_COST`).
 
 ---
 
@@ -930,7 +1243,7 @@ Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 |---|---|---|
 | `sprites/food_ball.svg` | 32² | Kodda `scale 0.85` |
 | `sprites/shot_ball.svg` | 36² | `modulate` ilə rənglənir |
-| `sprites/mucus_blob.svg` | 256² | Ləkə radiusu 120 |
+| `sprites/mucus_blob.svg` | 320² | Üç üzlü selik; ləkə radiusu 120 |
 | `sprites/spark.svg` | 64² | Dəymə/udma qığılcımı |
 | `sprites/burst.svg` | 256² | Partlayış BULUDU (yalnız yumşaq qradiyent), `modulate` ilə rənglənir |
 | `ui/joystick_base.svg` | 220² | Üzən joystickin bazası |
@@ -940,10 +1253,11 @@ Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 | `ui/panel.svg` | 480×300 | Nəticə lövhəsi üçün çərçivə |
 | `ui/logo.svg` | 600×220 | YALNIZ nişan, yazısız |
 | `ui/app_icon.svg` | 512² | `game/icon.svg` ilə eynidir; menyuda oyunçu nişanının avatarıdır |
-| `sprites/dish_floor.svg` | 512² | Qabın döşəməsi — qradiyent, TƏK çağırış |
+| `sprites/dish_floor.svg` | 512² | Qradiyent + agar ləkələri + vinyet, TƏK çağırış |
 | `sprites/mucus_crust2.svg` | 320² | Qabıq, 1 zərbə yeyib |
 | `sprites/mucus_crust3.svg` | 320² | Qabıq, 2 zərbə yeyib — kəhrəba HDR həddini keçir |
 | `sprites/mucus_bush_top.svg` | 320² | Kolun ÜST yarpaqları — mikrobun üstündən keçir |
+| `sprites/mucus_vent_swirl.svg` | 320² | Deşiyin fırlanan şəffaf iç qatı |
 | `ui/gear.svg` | 32² | Ayarlar. Simvol (`⚙`) DEYİL — o, şriftdə yoxdur |
 | `ui/species_ciliate.svg` | 64² | Növ kartının silueti — yatıq oval + kirpik + qamçı |
 | `ui/species_heliozoan.svg` | 64² | Növ kartının silueti — radial şüalar |

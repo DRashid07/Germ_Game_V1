@@ -26,6 +26,8 @@ func _ready() -> void:
 		_start_old_menu(args)
 	elif args.has("--map"):
 		_start_map(args)
+	elif args.has("--agent"):
+		_start_agent(args)
 	else:
 		# `_ready` icra olunarkən ağac hələ məşğuldur — səhnə dəyişimi
 		# növbəti kadra təxirə salınmalıdır.
@@ -74,8 +76,18 @@ func _start_practice(args: PackedStringArray) -> void:
 		var parts := at.split(",")
 		if parts.size() == 2:
 			arena.start_at = Vector2(float(parts[0]), float(parts[1]))
+	# `--charge` — super DOLU başlayır (yalnız yoxlama).
+	#
+	# Superin görüntüsünü kadrla yoxlamaq üçündür: adi oyunda doluluq 20–30
+	# saniyə yığılır və avtomatik oyunçu onu nə vaxt dolduracağı təsadüfdür.
+	# `--shot-count` ilə birlikdə hər növün superi ilk saniyədə, təkrarlana
+	# bilən şəkildə çəkilir.
+	arena.start_charged = args.has("--charge")
 	arena.configure_practice()
-	arena.auto_input = args.has("--shot")   # görüntü üçün mikrob hərəkətdə olsun
+	# Görüntü üçün mikrob hərəkətdə olsun. `--idle` bunu söndürür: avtomatik
+	# oyunçu superi hazır olan kimi işlədir, yəni HAZIR vəziyyətin (düymə,
+	# aura) şəklini başqa yolla çəkmək olmur.
+	arena.auto_input = args.has("--shot") and not args.has("--idle")
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(arena)
 	tree.set_deferred("current_scene", arena)
@@ -142,6 +154,31 @@ func _start_map(args: PackedStringArray) -> void:
 	_setup_screenshot(args)
 
 
+## Oyunu menyudan başlayıb REAL girişlə oynayan QA agenti (bax [PlayAgent]).
+##
+## Menyu adi yolla açılır — agentin işi elə oradan başlamaqdır. Seçimlərin
+## hamısı (növ, rejim, keyfiyyət, server) menyunun öz düymələri ilə edilir,
+## burada birbaşa `Net`-ə yazılmır.
+func _start_agent(args: PackedStringArray) -> void:
+	get_tree().change_scene_to_file.call_deferred("res://scenes/ui/menu.tscn")
+	var agent := PlayAgent.new()
+	agent.out_dir = _arg_value(args, "--agent-out", "user://agent")
+	agent.species = int(_arg_value(args, "--agent-species", "-1"))
+	agent.mode = int(_arg_value(args, "--agent-mode", "-1"))
+	agent.quality = int(_arg_value(args, "--agent-quality", "-1"))
+	agent.match_time = float(_arg_value(args, "--agent-time", "60"))
+	agent.rounds = maxi(1, int(_arg_value(args, "--agent-rounds", "1")))
+	agent.server = _arg_value(args, "--agent-server", "")
+	agent.try_dead_server = args.has("--agent-dead-server")
+	agent.keyboard_test = not args.has("--agent-no-keys")
+	agent.shots_enabled = not args.has("--agent-noshots")
+	# Sərt hədd: xarici `timeout`-dan TEZ düşməlidir ki, agent hesabatını
+	# yazsın və oyunçunun ayarlarını geri qaytarsın.
+	agent.hard_limit = float(_arg_value(args, "--agent-limit",
+		str(agent.match_time * agent.rounds + 90.0)))
+	get_tree().root.add_child.call_deferred(agent)
+
+
 ## `--perf <saniyə>` verilibsə, kadr vaxtlarını ölçüb hesabat yazır.
 func _setup_perf(args: PackedStringArray) -> void:
 	var secs := _arg_value(args, "--perf", "")
@@ -161,6 +198,8 @@ func _setup_screenshot(args: PackedStringArray) -> void:
 	var cam := Screenshot.new()
 	cam.path = shot
 	cam.delay_frames = int(_arg_value(args, "--shot-delay", "90"))
+	cam.count = maxi(1, int(_arg_value(args, "--shot-count", "1")))
+	cam.every = maxi(1, int(_arg_value(args, "--shot-every", "6")))
 	get_tree().root.add_child.call_deferred(cam)
 
 

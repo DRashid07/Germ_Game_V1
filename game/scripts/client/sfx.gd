@@ -17,6 +17,14 @@ const CLIPS := [
 	"danger", "level_up", "you_burst", "ui_click",
 ]
 
+## İnterfeys səsləri ayrı şinə gedir (bax [Settings]).
+##
+## Səbəb praktikdir: oyunun səsi ilə menyunun toxunuş səsi bir-birinin işi
+## deyil. Oyunçu arenada qulaqlıqsız oynayır və effektləri qısır, amma düyməyə
+## basanda cavab eşitmək istəyir — ya da əksinə. İki şin bu seçimi mümkün edir;
+## tək şin olsaydı, "səsi azalt" hər ikisini birlikdə aparardı.
+const UI_CLIPS := ["ui_click"]
+
 var enabled := true
 
 var _streams := {}
@@ -56,6 +64,9 @@ func play(clip: String, pitch_spread := 0.0, volume_db := 0.0) -> void:
 	var p := _players[_next]
 	_next = (_next + 1) % POOL_SIZE
 	p.stream = stream
+	# Şin hər çalışda təyin olunur, qurulanda yox: hovuz dairəvidir, yəni eyni
+	# kanal bir dəfə menyu toxunuşunu, sonra partlayışı çalır.
+	p.bus = Settings.BUS_UI if UI_CLIPS.has(clip) else Settings.BUS_SFX
 	p.volume_db = volume_db
 	p.pitch_scale = 1.0 if is_zero_approx(pitch_spread) \
 		else randf_range(1.0 - pitch_spread, 1.0 + pitch_spread)

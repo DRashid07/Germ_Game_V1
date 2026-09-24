@@ -114,6 +114,9 @@ var _food_layer: Node2D
 var _shot_layer: Node2D
 var _entities: Node2D
 var _fx: Node2D
+## Qısa effektlərin hamısını üç batch çağırışında saxlayan ortaq qat.
+## Hadisə başına node yaratmaq pik döyüşdə çağırış sayını hadisə ilə böyüdürdü.
+var _juice: JuiceFx
 var _trails: ShotTrails
 ## Maneə sprite-ları — indeks [method DishMap.obstacles] ilə eynidir, ona görə
 ## dağılan divarı serverin göndərdiyi indekslə tapmaq olur.
@@ -122,12 +125,18 @@ var _blob_nodes: Array[Sprite2D] = []
 var _canopy: Node2D
 ## Üst yarpaqların node-ları, indeks [method DishMap.obstacles] ilə eynidir.
 var _canopy_nodes := {}
+## Cərəyan deşiyinin fırlanan İÇ qatı. Baza sabit qalır ki, mənfi hündürlüyün
+## yuxarı-sol daxili kölgəsi qlobal işıqla ziddiyyətə düşməsin.
+var _vent_swirl_nodes: Array[Sprite2D] = []
 ## Dağılmış maneələr (serverin sözü). Kölgə çəkilişi bunu oxuyur.
 var _broken := PackedByteArray()
 var _motes: WaterMotes
 ## Dərin su qatı — maneələrin üstündə, qidanın altında (bax [method _build_world]).
 var _motes_deep: WaterMotes
 var _hud: Hud
+## Bioluminessensiya mühiti — keyfiyyətdən asılı olaraq yandırılır/söndürülür
+## (bax [method _apply_quality]).
+var _glow: WorldEnvironment
 
 var _visuals := {}                  ## germ id -> {"node": GermVisual, "seen": float}
 
@@ -160,6 +169,9 @@ var _fx_queue: Array[Dictionary] = []
 var _tex := {}
 var _view_span := Const.VIEW_SPAN_BASE
 var _shake := 0.0
+## Təsadüfi silkələnmədən ayrı istiqamətli kamera təpiyi.
+## Ayrı saxlanır ki, zərbənin haradan gəldiyi random titrəyişdə itməsin.
+var _kick := Vector2.ZERO
 
 ## Serverdən gələn matç vəziyyəti (bax [enum Const.MF]).
 ##
@@ -205,6 +217,12 @@ var _last_cap := 0
 
 ## Öz mikrobun kolun içindədirmi (bax [method _watch_bush]).
 var _hidden := false
+## İçində olduğumuz kolun indeksi — giriş və çıxış dalğası həmin fronda gedir.
+var _bush_index := -1
+## Görünən rəqib id-si -> kol indeksi. Xışıltı yalnız öz mikrobuna bağlanmır.
+var _germ_bushes := {}
+## Kol indeksi -> xışıltının başlama vaxtı. Daimi Tween əvəzinə bir dövrdə hesablanır.
+var _bush_rustles := {}
 ## "Gizləndin" yazısı artıq göstərilibmi.
 var _bush_taught := false
 
@@ -239,6 +257,10 @@ static func _species_from(info: Dictionary) -> Const.Species:
 ## sualına ekran görüntüsü ilə cavab vermək təsadüfə qalırdı.
 var start_at := Vector2.INF
 
+## Məşqdə super DOLU başlayır. YALNIZ yoxlama üçündür (`--charge`), bax
+## `boot.gd` (`_start_practice`).
+var start_charged := false
+
 
 func configure_practice() -> void:
 	practice = true
@@ -249,6 +271,8 @@ func configure_practice() -> void:
 	if start_at.is_finite():
 		g.pos = start_at
 		g.vel = Vector2.ZERO
+	if start_charged:
+		g.charge = Const.SUPER_MAX
 
 
 func _ready() -> void:
@@ -257,6 +281,12 @@ func _ready() -> void:
 	_build_world()
 	_build_hud()
 	_init_prediction()
+	# Zərrəciklər və "şirə" effektləri [method _build_world]-də yaranır, ona
+	# görə keyfiyyət ONDAN SONRA tətbiq olunur — mühit isə artıq hazırdır.
+	_apply_quality()
+	# Oyunçu matçın içində ayarları aça bilir; keyfiyyət dəyişsə, ekran elə
+	# həmin kadrda cavab verməlidir.
+	Settings.changed.connect(_apply_quality)
 
 	Net.snapshot_arrived.connect(_on_snapshot)
 	Net.roster_arrived.connect(_on_roster)
@@ -283,27 +313,54 @@ func _ready() -> void:
 ## saçır, qabın döşəməsi (0.05) və şəbəkə isə toxunulmaz qalır. Yəni fon
 ## bulanmır — yalnız CANLI olan şeylər işıq verir.
 func _build_glow() -> void:
-	# AŞAĞI keyfiyyətdə glow QURULMUR.
-	#
-	# Glow tam ekranı bir neçə dəfə bulandıran keçiddir və `hdr_2d` ilə birlikdə
-	# kadr buferini RGBA16F-ə qaldırır — mobil GPU-da hər kadr iki dəfə çox
-	# yaddaş zolağı. Söndürəndə HDR buferi də söndürülür, yoxsa bahalı format
-	# heç nəyə xidmət etmədən qalır.
-	if Net.quality == Const.Quality.LOW:
-		get_viewport().use_hdr_2d = false
-		return
-
 	var env := Environment.new()
 	env.background_mode = Environment.BG_CANVAS
-	env.glow_enabled = true
 	env.glow_hdr_threshold = 0.62
 	env.glow_intensity = 1.15
 	env.glow_strength = 1.20
 	env.glow_bloom = 0.14
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
-	var we := WorldEnvironment.new()
-	we.environment = env
-	add_child(we)
+	_glow = WorldEnvironment.new()
+	_glow.environment = env
+	add_child(_glow)
+
+
+## Keyfiyyət ayarını DƏRHAL tətbiq edir — matçın ortasında da.
+##
+## Əvvəl bu, yalnız qurulma vaxtı oxunurdu: `WorldEnvironment` AŞAĞI-da
+## ümumiyyətlə yaradılmırdı, ona görə oyunçu ayarı matçda dəyişəndə ekranda
+## heç nə olmurdu və növbəti matça qədər gözləmək lazım gəlirdi. Kəsmə yaşayan
+## oyunçu isə düzəlişi ELƏ İNDİ istəyir.
+##
+## İndi mühit həmişə qurulur, glow isə yandırılıb-söndürülür. Sönülü glow
+## praktiki olaraq pulsuzdur; onunla birlikdə HDR kadr buferi də söndürülür,
+## yoxsa RGBA16F format heç nəyə xidmət etmədən hər kadr iki dəfə çox yaddaş
+## zolağı yeyər — mobil GPU-da bu, ən böyük tək xərcdir.
+func _apply_quality() -> void:
+	var low := Net.quality == Const.Quality.LOW
+	get_viewport().use_hdr_2d = not low
+	if _glow != null:
+		_glow.environment.glow_enabled = not low
+	if _juice != null:
+		_juice.setup(low)
+
+	# Zərrəcik sıxlığı da keyfiyyətdən asılıdır: onlar oyuna təsir etmir,
+	# yalnız suyun canlı görünməsi üçündür — ilk kəsiləcək şey budur.
+	if _motes_deep != null:
+		_motes_deep.count = 34 if low else 80
+		_motes_deep.rebuild()
+	if _motes != null:
+		_motes.count = 14 if low else 30
+		# Cərəyan axını yalnız YÜKSƏK-dədir və ayrıca node deyil: deşiyə
+		# sorulan cizgilər səth zərrəciklərinin mövcud multiline batch-inə
+		# qoşulur.
+		var sinks := PackedVector3Array()
+		if not low:
+			for o in DishMap.obstacles():
+				if int(o.w) == DishMap.Kind.VENT:
+					sinks.push_back(Vector3(o.x, o.y, o.z))
+		_motes.sinks = sinks
+		_motes.rebuild()
 
 
 func _load_textures() -> void:
@@ -320,6 +377,8 @@ func _load_textures() -> void:
 		# Kolun ÜST yarpaqları — mikrobun üstündən keçir (bax [member _canopy]).
 		"bush_top": load("res://assets/sprites/mucus_bush_top.svg"),
 		"vent": load("res://assets/sprites/mucus_vent.svg"),
+		# Deşiyin yalnız burulğanı fırlanır; divarı fırlatsaq işıq da fırlanardı.
+		"vent_swirl": load("res://assets/sprites/mucus_vent_swirl.svg"),
 		"shot": load("res://assets/sprites/shot_ball.svg"),
 		"spark": load("res://assets/sprites/spark.svg"),
 		"burst": load("res://assets/sprites/burst.svg"),
@@ -352,15 +411,14 @@ func _build_world() -> void:
 	#
 	# Zərrəcik sayı ARTMIR (110 ikiyə bölünür), ona görə əlavə yük yalnız
 	# ikinci  çağırışıdır.
+	# Sıxlıq və cərəyan cizgiləri [method _apply_quality]-də verilir: eyni
+	# dəyərlər matçın ortasında ayar dəyişəndə də lazımdır, iki yerdə
+	# saxlansaydı biri unudulardı.
 	_motes_deep = WaterMotes.new()
-	# Zərrəcik sıxlığı da keyfiyyətdən asılıdır: onlar oyuna təsir etmir,
-	# yalnız suyun canlı görünməsi üçündür — ilk kəsiləcək şey budur.
-	_motes_deep.count = 80 if Net.quality == Const.Quality.HIGH else 34
 	_motes_deep.depth = 1.0
 	add_child(_motes_deep)
 
 	_motes = WaterMotes.new()
-	_motes.count = 30 if Net.quality == Const.Quality.HIGH else 14
 	add_child(_motes)
 
 	_food_layer = Node2D.new()
@@ -391,6 +449,9 @@ func _build_world() -> void:
 
 	_fx = Node2D.new()
 	add_child(_fx)
+	_juice = JuiceFx.new()
+	_juice.setup(Net.quality == Const.Quality.LOW)
+	_fx.add_child(_juice)
 
 	_cam = Camera2D.new()
 	_cam.enabled = true
@@ -414,7 +475,8 @@ const BLOB_TEXTURE := {
 }
 
 ## Çəkiliş sırası: hər tekstura ARDICIL getməlidir, yoxsa batch qırılır
-## (bax [method _spawn_obstacles]).
+## (bax [method _spawn_obstacles]). Beş baza teksturası beş çağırış qalır;
+## azsaylı cərəyan burulğanları sonda eyni tekstura ilə altıncı çağırışdır.
 const BLOB_ORDER := ["blob", "bloom", "crust", "bush", "vent"]
 
 ## Sprite-dakı ləkənin radiusu (bax `mucus_blob.svg`).
@@ -454,16 +516,33 @@ func _spawn_obstacles() -> void:
 			# Naxış variasiyası lazımdırsa, EYNİ istiqamətdə işıqlandırılmış
 			# ayrı sprite variantı seçilməlidir (bax [method _blob_texture]).
 			#
-			# Cərəyan deşiyi isə əksinə — qabın MƏRKƏZİNƏ döndərilir, çünki
-			# qüvvə məhz oraya itələyir (bax [method Sim._vent_push]).
-			if int(o.w) == DishMap.Kind.VENT:
-				spr.rotation = (-Vector2(o.x, o.y)).angle()
+			# Cərəyan bazası da fırladılmır. Əvvəl qabın mərkəzinə döndərilirdi ki,
+			# qüvvənin istiqamətini desin, amma bununla deşiyin yuxarı-sol daxili
+			# kölgəsi də dönürdü. Qaydanı indi fırlanan iç burulğan verir, işıq isə
+			# bütün xəritədə sabit qalır.
 			# QEYD: burada hər sprite-a ayrıca `modulate` verilirdi (±6%
 			# parlaqlıq). ÇIXARILDI, ölçmə ilə: `gl_compatibility` batch-i eyni
 			# `modulate` tələb edir, ona görə 22 fərqli rəng 22 AYRI çağırış
 			# demək idi (131 → 242, ən pis kadr 11 ms → 70 ms).
 			_blobs.add_child(spr)
 			_blob_nodes[i] = spr
+
+	# Cərəyanın mənfi hündürlüyü baza sprite-ındadır, hərəkəti isə AYRI iç
+	# qatdadır. Qatların ayrılması yalnız vent üçün bir çağırış artırır; bütün
+	# burulğanlar ardıcıl və eyni teksturalıdır, maneə başına çağırış yaratmır.
+	for i in list.size():
+		var o: Vector4 = list[i]
+		if int(o.w) != DishMap.Kind.VENT:
+			continue
+		var swirl := Sprite2D.new()
+		swirl.texture = _tex["vent_swirl"]
+		swirl.position = Vector2(o.x, o.y)
+		swirl.scale = Vector2.ONE * (o.z / BLOB_SPRITE_RADIUS)
+		# Eyni kadrda deşiklər üst-üstə düşən mexaniki nüsxə kimi görünməsin;
+		# faza mövqedən deterministik çıxır, təsadüf xəritə yaddaşını pozmur.
+		swirl.set_meta("phase", fposmod((o.x * 0.013 + o.y * 0.021), TAU))
+		_blobs.add_child(swirl)
+		_vent_swirl_nodes.append(swirl)
 
 
 ## Kolların üst yarpaqlarını doğurur.
@@ -481,6 +560,9 @@ func _spawn_canopy() -> void:
 		spr.texture = _tex["bush_top"]
 		spr.position = Vector2(o.x, o.y)
 		spr.scale = Vector2.ONE * (o.z / BLOB_SPRITE_RADIUS)
+		# Xışıltı miqyası bu baza üzərinə gəlir; hər kadr əvvəlki miqyasın
+		# üstünə vurulsaydı kol tədricən şişib kiçilərdi.
+		spr.set_meta("base_scale", spr.scale)
 		_canopy.add_child(spr)
 		_canopy_nodes[i] = spr
 
@@ -502,9 +584,50 @@ func _build_hud() -> void:
 	add_child(_hud)
 	_hud.build(_tex["stick_base"], _tex["stick_knob"])
 	_hud.set_local_color(Palette.germ_color(my_color))
+	_hud.super_button.set_species(Net.species)
 	_hud.fire_button.fired.connect(_on_fire_pressed)
 	_hud.super_button.used.connect(_on_super_pressed)
 	_hud.super_button.blocked.connect(_on_super_blocked)
+	_hud.leave_confirmed.connect(_leave_match)
+
+
+## ESC və Android-in GERİ jesti — matçdan çıxış təsdiqi.
+##
+## Matçın içində ayarlar YOXDUR (bax [signal Hud.leave_confirmed]), ona görə
+## çıxışın yeganə qapısı budur. İki yol birlikdə tutulur: ESC `ui_cancel`
+## hərəkətidir, Android-in GERİ jesti isə bildirişdir — `quit_on_go_back`
+## söndürülüb (bax `project.godot`), yoxsa jest təsdiq soruşmadan bütün
+## tətbiqi bağlayırdı.
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel"):
+		get_viewport().set_input_as_handled()
+		_ask_leave()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		_ask_leave()
+
+
+func _ask_leave() -> void:
+	# Nəticə ekranında və ya çıxış artıq gedərkən soruşmağa dəyməz: menyuya
+	# onsuz da qayıdılır.
+	if _finished or _hud == null:
+		return
+	_hud.toggle_leave_prompt()
+
+
+## Matçdan öz istəyi ilə çıxış.
+##
+## Bu yol olmasaydı, sonsuz arenadan çıxmağın yeganə yolu ÖLMƏK idi (və ya
+## proqramı bağlamaq). [member _finished] qoyulur ki, gedən kimi işə düşən
+## nəticə ekranı, təkrar qoşulma cəhdi və sayğaclar susdurulsun.
+func _leave_match() -> void:
+	if _finished:
+		return
+	_finished = true
+	_hud.release_sticks()
+	_return_to_menu()
 
 
 func _init_prediction() -> void:
@@ -549,6 +672,7 @@ func _sync_shown() -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
+	_animate_environment()
 	# Oyun bitibsə basış yığılmamalıdır: yenidən qoşulanda mikrob öz-özünə
 	# superi işlədərdi.
 	if not _finished and not _reconnecting:
@@ -564,6 +688,36 @@ func _process(delta: float) -> void:
 		_tick_accum = 0.0
 
 	_render(delta)
+
+
+## Xəritənin fasiləsiz iki yumşaq hərəkəti bir yerdə saxlanılır.
+##
+## Kolun yalnız ÜST frondları yellənir: baza hərəkət etsəydi keçilən sahənin
+## özü sürüşür kimi görünərdi. Cərəyanın isə yalnız İÇ burulğanı fırlanır;
+## deşiyin daxili kölgəsi qlobal işıq istiqamətində mismarlanır. Ayrı Tween-lər
+## sınanmayıb, çünki 20+ daimi tween scene ağacını boş yerə böyüdərdi.
+func _animate_environment() -> void:
+	for raw_i in _canopy_nodes:
+		var i := int(raw_i)
+		var spr: Sprite2D = _canopy_nodes[raw_i]
+		var phase := float(i) * 1.73
+		var rustle := 0.0
+		if _bush_rustles.has(i):
+			var age := _clock - float(_bush_rustles[i])
+			if age <= 0.52:
+				# Sürətli başlanğıc, eksponensial sakitləşmə: daimi yellənmədən
+				# seçilir, amma yarpağı oyuncaq kimi uzun müddət silkələmir.
+				rustle = sin(age * 31.0) * exp(-age * 5.8)
+			else:
+				_bush_rustles.erase(i)
+		spr.rotation = sin(_clock * 1.15 + phase) * 0.030 + rustle * 0.105
+		spr.skew = sin(_clock * 0.83 + phase * 0.7) * 0.018
+		var base: Vector2 = spr.get_meta("base_scale", spr.scale)
+		var swell := absf(rustle)
+		spr.scale = base * Vector2(1.0 + swell * 0.055, 1.0 - swell * 0.035)
+	for spr in _vent_swirl_nodes:
+		var phase := float(spr.get_meta("phase", 0.0))
+		spr.rotation = phase + _clock * 0.72
 
 
 func _do_tick() -> void:
@@ -619,6 +773,7 @@ func _do_tick() -> void:
 	for e in pred.events:
 		if e.get("t") == "fire":
 			_spawn_fx("spark", e["pos"], 0.5, Palette.germ_color(my_color))
+			_juice.muzzle(e["pos"], float(e["arg"]), Palette.germ_color(my_color))
 			Sfx.play("eject", 0.06)
 			_eject_from(my_color, float(e["arg"]))
 			_remember_muzzle(Vector2(e["pos"]), float(e["arg"]))
@@ -655,7 +810,11 @@ func _sample_input() -> Sim.PlayerInput:
 	# Geriyə sayımda mikrob tərpənmir — server də girişi qəbul etmir
 	# ([method World.accept_input]). İkisi eyni qaydanı tətbiq etməlidir,
 	# yoxsa proqnoz serverdən qabağa düşür və sayım bitəndə mikrob geri sıçrayır.
-	if _phase == Const.Phase.COUNTDOWN:
+	#
+	# Çıxış təsdiqi açıq olanda da mikrob dayanır: toxunuş idarələrini örtük
+	# onsuz da tutur, klaviatura isə birbaşa sorğulanır — WASD basılı qalsa,
+	# oyunçu "çıxım, ya yox" düşünərkən mikrob divara üzərdi.
+	if _phase == Const.Phase.COUNTDOWN or _hud.is_leave_prompt_open():
 		# Sayım boyu yığılan basılışlar ATILIR, saxlanmır: yoxsa səbirsizlikdən
 		# düyməyə toxunan oyunçu "BAŞLADI" yazısı ilə eyni kadrda superini
 		# istəmədən xərcləyərdi.
@@ -732,6 +891,10 @@ func _poll_super_key() -> void:
 
 func _on_super_pressed() -> void:
 	_super_flag = true
+	# Düymə `used` siqnalını YALNIZ super hazır olanda atır (hazır deyilsə
+	# `blocked` gəlir), ona görə buradakı titrəmə həmişə baş verən bir işi
+	# təsdiqləyir — 20–30 saniyədə bir yığılan gücün xərclənməsini.
+	Settings.vibrate(45)
 
 
 ## Doluluq tamdır, amma super işləmir: oyunçuya SƏBƏBİ deyilir.
@@ -980,6 +1143,8 @@ func _on_you_burst(result: Dictionary) -> void:
 	_explode(me.pos, Const.germ_radius(me.capacity), my_color, true)
 	Sfx.play("you_burst")
 	_add_shake(18.0)
+	# Ən uzun titrəmə oyunun ən böyük hadisəsinə düşür — ölümə.
+	Settings.vibrate(160)
 	# Öz ölümün ən uzun donmanı alır: oyun bu anda BİTİR, oyunçu nə baş
 	# verdiyini görməlidir.
 	_freeze = FREEZE_TIME * 2.0
@@ -1047,6 +1212,7 @@ func _on_rejoin_accepted(info: Dictionary) -> void:
 	_snaps.clear()
 	_init_prediction()
 	_hud.set_local_color(Palette.germ_color(my_color))
+	_hud.super_button.set_species(Net.species)
 	_hud.hide_message()
 
 
@@ -1131,7 +1297,10 @@ func _update_camera(delta: float) -> void:
 	if _shake > 0.0:
 		_shake = maxf(0.0, _shake - 46.0 * delta)
 		shake = Vector2(randf_range(-_shake, _shake), randf_range(-_shake, _shake))
-	_cam.position = _shown_pos() + shake
+	# İstiqamətli təpik random silkələnmədən tez sönür. Uzun quyruq kamera
+	# sürüşməsi kimi oxunurdu; 70 px/san onu təxminən 0.15 saniyədə bitirir.
+	_kick = _kick.move_toward(Vector2.ZERO, 70.0 * delta)
+	_cam.position = _shown_pos() + shake + _kick
 
 	# Zərrəciklər kameranı izləyir: dünyanın hamısını doldurmaq əvəzinə
 	# yalnız görünən sahədə saxlanılır (bax [WaterMotes]).
@@ -1148,8 +1317,19 @@ func _update_camera(delta: float) -> void:
 	_motes_deep.span = mote_span
 
 
-func _add_shake(amount: float) -> void:
-	_shake = minf(_shake + amount, 20.0)
+## Kameranın zərbə cavabı. Gücü oyunçunun ayarındadır ([member Settings.shake]).
+##
+## Ayar YALNIZ kameraya toxunur: donmuş kadr, ağ parıltı və səs olduğu kimi
+## qalır, yəni hadisənin baş verdiyi eyni qədər aydın deyilir (bax `README`
+## § Zərbə hissi — dörd kanal). Silkələnmə bəzi oyunçularda ürəkbulanma
+## yaradır və onu söndürmək məlumat itkisi olmamalıdır.
+func _add_shake(amount: float, direction := Vector2.ZERO) -> void:
+	var k := Settings.shake
+	if k <= 0.001:
+		return
+	_shake = minf(_shake + amount * k, 20.0)
+	if direction.length_squared() > 0.001:
+		_kick = (_kick + direction.normalized() * amount * k).limit_length(16.0)
 
 
 ## Serverin dediyi divar vəziyyətini tətbiq edir.
@@ -1265,7 +1445,10 @@ func _watch_capacity() -> void:
 	if me.capacity > _last_cap:
 		_pop_text(_shown_pos(), "+%d TUTUM" % (me.capacity - _last_cap),
 			Palette.SAFE, 30)
+		_juice.reward(_shown_pos(), Const.germ_radius(me.capacity))
 		_punch = maxf(_punch, 0.05)
+		# Oyunun yeganə mükafatı — titrəmə də onu qeyd edir.
+		Settings.vibrate(60)
 	_last_cap = me.capacity
 
 
@@ -1282,7 +1465,17 @@ func _watch_capacity() -> void:
 ## Yazı yalnız BİR dəfə çıxır. Hər kola girəndə təkrarlansaydı, kolların
 ## arasından keçən oyunçu fasiləsiz mesaj yağışı altında qalardı.
 func _watch_bush() -> void:
-	var inside := pred.bush_of(me) >= 0
+	var now := pred.bush_of(me)
+	var inside := now >= 0
+	# Bir koldan o birinə düz keçəndə gizlilik dəyişmir, amma hər iki frond
+	# toxunuşa cavab verməlidir. Ona görə indeks boolean-dan ayrıca izlənir.
+	if now == _bush_index and inside == _hidden:
+		return
+	if _bush_index >= 0:
+		_bush_rustles[_bush_index] = _clock
+	if now >= 0:
+		_bush_rustles[now] = _clock
+	_bush_index = now
 	if inside == _hidden:
 		return
 	_hidden = inside
@@ -1294,6 +1487,30 @@ func _watch_bush() -> void:
 		_bush_taught = true
 		_hud.show_message("GİZLƏNDİN", "Kolun içində rəqiblər səni görmür")
 		get_tree().create_timer(2.2).timeout.connect(_hud.hide_message)
+
+
+## Görünən rəqibin kol sərhədini keçməsini yalnız görüntü üçün tutur.
+## Serverin gizlənmə qaydası dəyişmir; eyni radius yoxlaması burada frondun
+## hansı anda xışıldayacağını seçir. Rəqib kola girib paketdən itəndə son görünən
+## sərhəd və VIEW_GRACE çıxışı birlikdə dalğanı yenə bir dəfə oynadır.
+func _watch_visible_bush(gid: int, at: Vector2, radius: float) -> void:
+	var now := -1
+	var list := DishMap.obstacles()
+	for i in list.size():
+		var o: Vector4 = list[i]
+		if int(o.w) != DishMap.Kind.BUSH or o.z < radius:
+			continue
+		if at.distance_squared_to(Vector2(o.x, o.y)) <= o.z * o.z:
+			now = i
+			break
+	var before := int(_germ_bushes.get(gid, -1))
+	if now == before:
+		return
+	if before >= 0:
+		_bush_rustles[before] = _clock
+	if now >= 0:
+		_bush_rustles[now] = _clock
+	_germ_bushes[gid] = now
 
 
 ## Top rəqibin içinə keçdi — zərbənin görüntüsü.
@@ -1319,7 +1536,18 @@ func _on_impact(at: Vector2, shooter_color: int) -> void:
 	# vurulan hələ bizə göndərilmir.
 	if victim == null or best > 220.0:
 		return
-	victim.flash()
+	# Membran zərbə oxuna DİK genişlənir. Hadisədə ayrıca istiqamət baytı
+	# yoxdur və lazım da deyil: dəymə nöqtəsi artıq qurbanın səthindədir.
+	victim.flash((at - victim.position).angle())
+	# Topun gəliş oxu səth nöqtəsindən mərkəzə doğrudur. Sıçrantı və kamera
+	# eyni oxu paylaşır; radial effekt zərbənin hansı tərəfdən gəldiyini silirdi.
+	var incoming := (victim.position - at).normalized()
+	_juice.impact(at, incoming, Palette.germ_color(shooter_color))
+	if victim.color_index == my_color:
+		_add_shake(4.5, incoming)
+		# Zərbə ƏN vacib xəbərdir: səs qarışıqlıqda itə bilər, parıltı isə
+		# barmağın altında qala bilər. Titrəmə hər ikisindən keçir.
+		Settings.vibrate(22)
 	# Rəqəm dəymə nöqtəsində yox, QURBANIN ADINDAN yuxarıda doğulur.
 	#
 	# Dəymə nöqtəsi mikrobun üst kənarına düşəndə rəqəm tam adın sətrinə otururdu
@@ -1355,12 +1583,16 @@ func _pop_text(at: Vector2, text: String, color: Color, size: int) -> void:
 	# düşəndə onsuz oxunmur.
 	label.add_theme_color_override("font_outline_color", Palette.OUTLINE)
 	label.add_theme_constant_override("outline_size", 7)
+	label.pivot_offset = label.size * 0.5
+	label.scale = Vector2(0.52, 0.52)
 	_fx.add_child(label)
 
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(label, "position:y", label.position.y - 52.0, 0.85) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(label, "scale", Vector2.ONE, 0.26) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	# Sönmə GECİKİR: rəqəm əvvəlcə tam oxunmalı, sonra getməlidir.
 	tw.tween_property(label, "modulate:a", 0.0, 0.50).set_delay(0.35)
 	tw.chain().tween_callback(label.queue_free)
@@ -1389,6 +1621,9 @@ func _render_germs(render_time: float) -> void:
 	var mine := _ensure_germ(my_id, Net.nickname, my_color, Net.species)
 	mine.apply(_shown_pos(), _shown_aim(), me.balls, me.capacity, me.safe_t > 0.0, true,
 		me.super_t > 0.0)
+	# Aura yalnız HƏQİQƏTƏN işlədilə bilən superdə yanır: doluluq tamdır, amma
+	# top çatmırsa (kirpikli), düymə kimi aura da susur.
+	mine.super_ready = me.super_ready()
 	_visuals[my_id]["seen"] = _clock
 
 	var pair := _bracket(render_time)
@@ -1420,9 +1655,18 @@ func _render_germs(render_time: float) -> void:
 		var pos := Vector2(float(o[Const.GF.X]), float(o[Const.GF.Y])).lerp(
 			Vector2(float(n[Const.GF.X]), float(n[Const.GF.Y])), alpha)
 		var aim := lerp_angle(float(o[Const.GF.AIM]), float(n[Const.GF.AIM]), alpha)
+		var flags := int(n[Const.GF.FLAGS])
 		v.apply(pos, aim, int(n[Const.GF.BALLS]), int(n[Const.GF.CAP]),
-			(int(n[Const.GF.FLAGS]) & Const.GFlag.SAFE) != 0, true,
-			(int(n[Const.GF.FLAGS]) & Const.GFlag.SUPER) != 0)
+			(flags & Const.GFlag.SAFE) != 0, true,
+			(flags & Const.GFlag.SUPER) != 0)
+		_watch_visible_bush(gid, pos, Const.germ_radius(int(n[Const.GF.CAP])))
+		# RƏQİBİN ultisi hazırdırmı? Doluluq bayraqda onsuz da gəlirdi
+		# ([enum Const.GFlag]), amma indiyə qədər heç yerdə göstərilmirdi.
+		# Qayda [method Sim.GermState.super_ready] ilə eynidir.
+		var charge := (flags & Const.GFlag.CHARGE_MASK) >> Const.GFlag.CHARGE_SHIFT
+		v.super_ready = charge >= Const.SUPER_MAX \
+			and (flags & Const.GFlag.SUPER) == 0 \
+			and int(n[Const.GF.BALLS]) >= Const.super_min_balls(int(kind))
 		_visuals[gid]["seen"] = _clock
 
 
@@ -1689,6 +1933,11 @@ func _sweep_views() -> void:
 			elif is_same(dict, _shot_views):
 				_give(_shot_pool, node as Sprite2D)
 			else:
+				if _germ_bushes.has(key):
+					var old_bush := int(_germ_bushes[key])
+					if old_bush >= 0:
+						_bush_rustles[old_bush] = _clock
+					_germ_bushes.erase(key)
 				node.queue_free()
 			dict.erase(key)
 		# Ölən topun izi də getməlidir: yoxsa `_tracks` böyüyür və izin
@@ -1726,6 +1975,7 @@ func _queue_events(list: Array, at: float) -> void:
 				var at_pos := Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y]))
 				_remember_muzzle(at_pos, float(e[Const.EF.ARG]))
 				_spawn_fx("spark", at_pos, 0.5, Palette.germ_color(my_color))
+				_juice.muzzle(at_pos, float(e[Const.EF.ARG]), Palette.germ_color(my_color))
 				Sfx.play("eject", 0.06)
 				_eject_from(my_color, float(e[Const.EF.ARG]))
 			continue
@@ -1753,6 +2003,7 @@ func _flush_fx(render_time: float) -> void:
 		match int(e["kind"]):
 			Const.EvKind.FIRE:
 				_spawn_fx("spark", pos, 0.4, col)
+				_juice.muzzle(pos, float(e["arg"]), col)
 				Sfx.play("eject", 0.06, -6.0)
 				_eject_from(int(e["ci"]), float(e["arg"]))
 			Const.EvKind.SUPER:
@@ -1762,20 +2013,46 @@ func _flush_fx(render_time: float) -> void:
 				# arg sıfırdan böyükdürsə, bu, trixosistdir və rəqəm onun təsir
 				# RADİUSUDUR (bax [method Sim._use_super]).
 				var reach := float(e["arg"])
-				if reach > 0.0:
-					# Bulud partlayışın HƏQİQİ sahəsi qədər açılır: sprite 256 px
-					# enindədir və tween onu 1.7 dəfə böyüdür, ona görə başlanğıc
-					# miqyas elə seçilir ki, SONDA diametr sahəyə bərabər olsun.
-					# Effekt sahədən böyük olsaydı, oyunçu radiusu həmişə səhv
-					# öyrənərdi — ilk variantda məhz belə idi (ekranın yarısı).
-					_spawn_fx("burst", pos, reach * 2.0 / 256.0 / FX_GROW, col)
-					_spawn_fx("spark", pos, 0.7, Palette.TEXT)
-					Sfx.play("burst", 0.0, -6.0)
+				var ci := int(e["ci"])
+				# Açılış anı ayrıca effektdir (bax [SuperFx]). Əvvəl kirpiklidə
+				# `burst.svg` buludu idi: 0.26 saniyə yaşayır, ilk kadrdan sönürdü
+				# və kadr ardıcıllığında praktiki olaraq görünmürdü.
+				#
+				# Növ hadisədə GƏLMİR: trixosist öz radiusunu göndərir (arg > 0),
+				# qalan ikisi isə mikrobun görüntüsündən tapılır.
+				var who := _germ_by_color(ci)
+				var kind := Const.Species.CILIATE
+				var body := Const.BASE_RADIUS
+				if who != null:
+					body = Const.germ_radius(who.capacity)
+					if reach <= 0.0:
+						kind = who.species
+				if reach <= 0.0:
+					# Torun sərhədi [method GermVisual._draw_net] ilə eyni düsturdur;
+					# kist isə gövdənin öz qabığıdır.
+					if kind == Const.Species.HELIOZOAN:
+						reach = body * Const.NET_RADIUS
+					else:
+						reach = body + GermVisual.SHIELD_GAP * 0.5
+				var sfx := SuperFx.new()
+				sfx.position = pos
+				sfx.setup(kind, col, body, reach, Net.quality == Const.Quality.LOW)
+				if kind != Const.Species.CILIATE and who != null:
+					sfx.follow(who)
+				_fx.add_child(sfx)
+				if kind == Const.Species.CILIATE:
+					_spawn_fx("spark", pos, 0.9, Palette.TEXT)
+					Sfx.play("burst", 0.0, -4.0)
 				else:
 					_spawn_fx("spark", pos, 0.9, col)
-					Sfx.play("level_up", 0.0, -5.0)
-				if int(e["ci"]) == my_color:
-					_add_shake(4.0)
+					Sfx.play("level_up", 0.0, -4.0)
+				if ci == my_color:
+					# Öz ultin partlatma ilə eyni sinifdə hadisədir. Yazı yalnız
+					# SƏNİN superində çıxır: 10 mikrobun hamısınınkı yazılsaydı
+					# ekran dolardı.
+					_add_shake(6.0)
+					_punch = maxf(_punch, 0.05)
+					_pop_text(pos, "SUPER!", Palette.SUPER_READY, 34)
 			Const.EvKind.SPORE:
 				# Tutum artımı — partlatma ilə eyni mükafat, ona görə eyni səs.
 				_spawn_fx("spark", pos, 0.9, Palette.FOCUS)
@@ -1784,6 +2061,9 @@ func _flush_fx(render_time: float) -> void:
 					_add_shake(4.0)
 			Const.EvKind.ABSORB:
 				_spawn_fx("spark", pos, 0.28, Palette.FOOD)
+				var eater := _germ_by_color(int(e["ci"]))
+				var target := eater.position if eater != null else pos
+				_juice.absorb(pos, target, col)
 				# Yalnız ÖZ udmağın eşidilir: 10 mikrobun hamısının səsi
 				# eşidilsəydi, arxa fon fasiləsiz xışıltı olardı.
 				if col == Palette.germ_color(my_color):
@@ -1797,6 +2077,14 @@ func _flush_fx(render_time: float) -> void:
 				# parıldayacaq mikrob yoxdur.
 				if float(e["arg"]) > 0.5:
 					_on_impact(pos, int(e["ci"]))
+				else:
+					# Qabıq zərbəsi adi divar sıçrayışından mövqeyə görə ayrılır;
+					# şəbəkə hadisəsinə yeni sahə əlavə etmək yalnız görüntü üçün olmazdı.
+					var brittle := _brittle_at(pos, false)
+					if brittle >= 0:
+						var o: Vector4 = DishMap.obstacles()[brittle]
+						_juice.crust(pos, (pos - Vector2(o.x, o.y)).normalized(),
+							o.z * 0.46, false)
 			Const.EvKind.BREAK:
 				# Divar dağıldı. Partlayış effekti TƏKRAR işlədilir: hadisə
 				# eyni cinsdəndir (bir şey dağılıb ətrafa səpilir) və oyunçu
@@ -1806,6 +2094,7 @@ func _flush_fx(render_time: float) -> void:
 				fx.setup(Palette.MUCUS_EDGE, maxf(float(e["arg"]), 20.0), 6,
 					false, _tex["burst"])
 				_fx.add_child(fx)
+				_juice.crust(pos, Vector2.RIGHT, maxf(float(e["arg"]), 20.0), true)
 				Sfx.play("burst", 0.05, -4.0)
 				if pos.distance_to(me.pos) < 600.0:
 					_add_shake(7.0)
@@ -1848,6 +2137,29 @@ func _explode(pos: Vector2, radius: float, color_index: int, mine: bool) -> void
 	fx.position = pos
 	fx.setup(Palette.germ_color(color_index), radius, balls, mine, _tex["burst"])
 	_fx.add_child(fx)
+	_juice.shockwave(pos, radius * (1.45 if mine else 1.0),
+		Palette.germ_color(color_index))
+
+
+## Zərbə nöqtəsinin dayanan kövrək qabığa aid olub-olmadığını tapır.
+##
+## Üçüncü zərbədə `_apply_walls` qabığı hadisədən əvvəl artıq gizlədir; həmin
+## halda kiçik qırıntı buraxılmır, çünki BREAK budağı tam dağılmanı çəkir.
+func _brittle_at(at: Vector2, include_gone: bool) -> int:
+	var list := DishMap.obstacles()
+	var best := -1
+	var best_d := INF
+	for i in list.size():
+		var o: Vector4 = list[i]
+		if int(o.w) != DishMap.Kind.BRITTLE:
+			continue
+		if not include_gone and i < _broken.size() and DishMap.wall_gone(_broken[i]):
+			continue
+		var d := at.distance_to(Vector2(o.x, o.y))
+		if d <= o.z + Const.SHOT_RADIUS + 12.0 and d < best_d:
+			best_d = d
+			best = i
+	return best
 
 
 ## Effektlərin z-i — HƏR mikrobun üstündə.
@@ -1887,12 +2199,18 @@ func _spawn_fx(kind: String, pos: Vector2, scale: float, color: Color) -> void:
 
 # ---------------------------------------------------------------- fon
 
-## Petri qabı və maneələr. Statikdir — bir dəfə çəkilir və heç vaxt yenilənmir.
+## Petri qabı və mühit qatı. Sonsuz rejimdə statikdir; matçlı rejimdə quruyan
+## sərhədin nəbzi və buxarı üçün snapshot ritmində yenilənir.
 func _draw() -> void:
 	var r := Const.WORLD_RADIUS
 
 	# Qabın kənarından bayır — oyunçu sərhədi aydın görməlidir.
-	draw_circle(Vector2.ZERO, r + 600.0, Palette.BG_OUTER)
+	#
+	# İki disk bişməmiş radial vinyet rolunu oynayır: uzaq sahə demək olar qara,
+	# dodağa yaxın 260 px isə əvvəlki BG_OUTER tonudur. Tək düz disk sınanmışdı;
+	# qabın bayırı döşəmə qədər bərabər görünür və gözü mərkəzə yığmırdı.
+	draw_circle(Vector2.ZERO, r + 600.0, Palette.BG_VIGNETTE)
+	draw_circle(Vector2.ZERO, r + 260.0, Palette.BG_OUTER)
 
 	# DÖŞƏMƏ — düz rəng deyil, ÇÖKƏN səth.
 	#
@@ -1900,9 +2218,10 @@ func _draw() -> void:
 	# Düz rənglə çəkiləndə qab disk kimi oxunurdu — dərinliyin ilk işarəsi elə
 	# səthin özündə olmalıdır, üstündəki obyektlərdə yox.
 	#
-	# TEKSTURA ilə, konsentrik disklərlə YOX. Əvvəlcə 14  yazmışdım
+	# TEKSTURA ilə, konsentrik disklərlə YOX. Əvvəlcə 14 `draw_circle` yazılmışdı
 	# və ölçmə göstərdi ki, hər biri ayrıca çəkiliş çağırışıdır: təkcə döşəmə
-	# 14 çağırış yeyirdi. Qradiyent teksturada isə bir çağırışdır.
+	# 14 çağırış yeyirdi. Radial ton, agar ləkələri və kənar vinyeti indi eyni
+	# teksturaya bişirilib, yenə bir çağırışdır.
 	draw_texture_rect(_tex["floor"], Rect2(-r, -r, r * 2.0, r * 2.0), false)
 
 	# ŞƏBƏKƏ — məsafə hissi verir, amma kənara doğru SÖNÜR.
@@ -1920,17 +2239,32 @@ func _draw() -> void:
 		var x := float(i) * step
 		var h := sqrt(maxf(r * r - x * x, 0.0))
 		var fade := 1.0 - pow(absf(x) / r, 1.6)
-		var gc := Color(Palette.GRID, 0.50 * fade)
+		var gc := Color(Palette.GRID, 0.38 * fade)
 		lines.push_back(Vector2(x, -h)); lines.push_back(Vector2(x, h))
 		cols.push_back(gc)
 		lines.push_back(Vector2(-h, x)); lines.push_back(Vector2(h, x))
 		cols.push_back(gc)
+		# Hər 400 px-də xəttin yuxarı-solunda işıq, aşağı-sağında kölgə var.
+		# Cüt xətt ayrıca `draw_*` deyil, eyni massivə əlavə olunur — kafel bevel-i
+		# görünür, çağırış sayı isə yenə BİRDİR. Hər 200 px-də bevel sınansaydı
+		# döşəmə tor kimi xırdalanardı, ona görə yalnız cüt indekslər vurğulanır.
+		if i % 2 == 0:
+			var hi := Color(Palette.DISH_EDGE, 0.20 * fade)
+			var lo := Color(Palette.OUTLINE, 0.24 * fade)
+			lines.push_back(Vector2(x - 2.5, -h)); lines.push_back(Vector2(x - 2.5, h))
+			cols.push_back(hi)
+			lines.push_back(Vector2(x + 2.5, -h)); lines.push_back(Vector2(x + 2.5, h))
+			cols.push_back(lo)
+			lines.push_back(Vector2(-h, x - 2.5)); lines.push_back(Vector2(h, x - 2.5))
+			cols.push_back(hi)
+			lines.push_back(Vector2(-h, x + 2.5)); lines.push_back(Vector2(h, x + 2.5))
+			cols.push_back(lo)
 	draw_multiline_colors(lines, cols, 2.0)
 
 	# Maneələrin kölgəsi burada ÇƏKİLMİR — sprite-a bişirilib.
 	#
-	# Əvvəl hər bərk maneə üçün iki  vardı. Ölçmə göstərdi ki,
-	#  içindəki hər primitiv ayrıca çəkiliş çağırışıdır: 15 maneə × 2
+	# Əvvəl hər bərk maneə üçün iki `draw_circle` vardı. Ölçmə göstərdi ki,
+	# `_draw` içindəki hər primitiv ayrıca çəkiliş çağırışıdır: 15 maneə × 2
 	# = 30 çağırış, yalnız kölgə üçün. Teksturaya bişəndə pulsuzdur, üstəlik
 	# kölgə radiusla birlikdə özü miqyaslanır və fırlanma dayandırıldığı üçün
 	# istiqaməti də sabit qalır (bax [method _spawn_obstacles]).
@@ -1956,22 +2290,86 @@ func _draw() -> void:
 	# (bax [method Sim._step_germs]). Ona görə kənar bərk xətt kimi yox, NƏBZ
 	# VURAN halqa kimi çəkilir — "təhlükə", "maneə" yox.
 	#
-	# Quru döşəmə də ayrıca çəkilmir: qabın öz teksturasının üstünə kəhrəba
-	# örtük qoyulur, yəni əlavə tekstura yoxdur.
+	# Quru döşəmə ayrıca tekstura deyil: qabın üstünə kəhrəba örtük və bütün
+	# çatlar TƏK `draw_multiline_colors` çağırışı ilə düşür. Çatların nöqtələri
+	# indeksdən hesablanır, ona görə nəbz yenidən çəkiləndə naxış qaynamır.
 	if _mode != Const.Mode.ENDLESS and _wet_radius < r - 1.0:
 		var dry := Color(Palette.WARNING, 0.055)
 		draw_arc(Vector2.ZERO, (_wet_radius + r) * 0.5, 0.0, TAU, 96, dry,
 			r - _wet_radius, true)
-		var pulse := 0.5 + 0.5 * sin(_clock * 2.2)
+
+		var crack_lines := PackedVector2Array()
+		var crack_cols := PackedColorArray()
+		var dry_span := r - _wet_radius
+		var crack_count := 18 if Net.quality == Const.Quality.HIGH else 10
+		for i in crack_count:
+			var seed := float(i)
+			var a := fposmod(seed * 2.39996 + sin(seed * 4.17) * 0.18, TAU)
+			var radial := Vector2.from_angle(a)
+			var tangent := radial.orthogonal()
+			var inner_r := _wet_radius + dry_span * (0.12 + fposmod(seed * 0.37, 0.20))
+			var outer_r := minf(r - 12.0, inner_r + dry_span * (0.30 + fposmod(seed * 0.19, 0.32)))
+			var p0 := radial * inner_r
+			var p1 := radial * lerpf(inner_r, outer_r, 0.48) \
+				+ tangent * sin(seed * 8.3) * minf(22.0, dry_span * 0.10)
+			var p2 := radial * outer_r \
+				- tangent * cos(seed * 5.1) * minf(16.0, dry_span * 0.08)
+			crack_lines.append_array(PackedVector2Array([p0, p1, p1, p2]))
+			var cc := Color(Palette.DRY_CRACK, 0.25 + 0.12 * fposmod(seed * 0.43, 1.0))
+			crack_cols.append_array(PackedColorArray([cc, cc]))
+			# Hər üçüncü əsas çata qısa yan budaq verilir; eyni çağırışda qalır.
+			if i % 3 == 0:
+				var branch := p1 + (tangent + radial * 0.35).normalized() \
+					* minf(34.0, dry_span * 0.16)
+				crack_lines.append_array(PackedVector2Array([p1, branch]))
+				crack_cols.append(Color(Palette.DRY_CRACK, 0.22))
+		if not crack_lines.is_empty():
+			draw_multiline_colors(crack_lines, crack_cols, 3.0)
+
+		# Yaş sahə daraldıqca döyüşün təciliyi artır: 2.2-dən 7.0 rad/san-a.
+		# Sabit 2.2 sınanmışdı və son 90 px-lik dairədə də başlanğıc qədər sakit
+		# görünürdü; sürət radiusdan çıxanda qayda ilə görüntü eyni anda sıxılır.
+		var danger := clampf(1.0 - _wet_radius / r, 0.0, 1.0)
+		var pulse_speed := 2.2 + danger * 4.8
+		var pulse := 0.5 + 0.5 * sin(_clock * pulse_speed)
 		draw_arc(Vector2.ZERO, _wet_radius, 0.0, TAU, 96,
-			Color(Palette.WARNING, 0.30 + 0.22 * pulse), 8.0, true)
+			Color(Palette.WARNING, 0.34 + 0.28 * pulse), 10.0, true)
+
+		# Buxar yalnız YÜKSƏK keyfiyyətdədir. Səkkiz kəkil ayrıca primitiv deyil:
+		# bütün qısa seqmentlər bir multiline çağırışında yığılır. LOW-da bu
+		# massiv heç qurulmur, çünki buxar qayda yox, material işarəsidir.
+		if Net.quality == Const.Quality.HIGH:
+			var steam_lines := PackedVector2Array()
+			var steam_cols := PackedColorArray()
+			for i in 8:
+				var drift := _clock * 0.16 + float(i) * TAU / 8.0
+				var radial := Vector2.from_angle(drift)
+				var tangent := radial.orthogonal()
+				var lift := 18.0 + 9.0 * sin(_clock * 0.9 + float(i) * 1.7)
+				var p0 := radial * (_wet_radius + 8.0)
+				var p1 := p0 + radial * lift * 0.38 + tangent * 7.0
+				var p2 := p0 + radial * lift * 0.72 - tangent * 6.0
+				var p3 := p0 + radial * lift + tangent * 3.0
+				steam_lines.append_array(PackedVector2Array([p0, p1, p1, p2, p2, p3]))
+				steam_cols.append_array(PackedColorArray([
+					Color(Palette.STEAM, 0.22), Color(Palette.STEAM, 0.15),
+					Color(Palette.STEAM, 0.06)]))
+			draw_multiline_colors(steam_lines, steam_cols, 4.0)
 
 	# ŞÜŞƏ DİVAR — dörd hissə, çünki tək xətt "xəritə sərhədi" kimi oxunurdu.
 	#
 	# Qab QAB kimi görünmək üçün üç şey deməlidir: maye şüşəyə dırmaşır
 	# (menisk), materialın qalınlığı var, və işıq ona bir tərəfdən düşür.
 	# Sonuncusu ən vacibdir: simmetrik halqa həmişə yastı qalır.
-	draw_arc(Vector2.ZERO, r - 16.0, 0.0, TAU, 96, Color(Palette.DISH_EDGE, 0.22), 30.0, true)
-	draw_arc(Vector2.ZERO, r, 0.0, TAU, 96, Palette.DISH_EDGE, 11.0, true)
-	draw_arc(Vector2.ZERO, r - 5.0, PI * 0.95, PI * 1.75, 40, Color(Palette.TEXT, 0.16), 3.0, true)
-	draw_arc(Vector2.ZERO, r + 4.0, PI * 1.95, PI * 2.75, 40, Color(Palette.OUTLINE, 0.45), 6.0, true)
+	# Daxili kölgə dodağın qalxdığını, tam gövdə onun qalınlığını deyir.
+	# İşıq və kölgə qövsləri Palette.LIGHT_DIR-dən çıxır; əl ilə yazılmış iki
+	# bucaq sınananda mikrob və maneə işığı ilə bir neçə dərəcə ayrılırdı.
+	draw_arc(Vector2.ZERO, r - 18.0, 0.0, TAU, 128,
+		Color(Palette.OUTLINE, 0.48), 34.0, true)
+	draw_arc(Vector2.ZERO, r, 0.0, TAU, 128, Palette.DISH_EDGE, 17.0, true)
+	var light_a := Palette.LIGHT_DIR.angle()
+	var shadow_a := (-Palette.LIGHT_DIR).angle()
+	draw_arc(Vector2.ZERO, r - 4.0, light_a - 0.92, light_a + 0.92, 48,
+		Color(Palette.TEXT, 0.38), 5.0, true)
+	draw_arc(Vector2.ZERO, r + 5.0, shadow_a - 0.92, shadow_a + 0.92, 48,
+		Color(Palette.OUTLINE, 0.78), 9.0, true)

@@ -1,51 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
-  <g transform="translate(32,32)">
-  <!-- Maneə növü: CƏRƏYAN DEŞİYİ (DishMap.Kind.VENT). Hər şey keçir, içindən
-       keçən mikrob MƏRKƏZƏ doğru güclü itələnir.
-
-       Forma dili İTƏLƏMƏNİ deməlidir. Üç işarə:
-         1. DƏRİNLİK — mərkəzə doğru qaralan qradiyent, yəni "bu, deşikdir";
-         2. AXIN CİZGİLƏRİ — içəri baxan qövslər, suyun sorulduğunu göstərir;
-         3. İSTİ RƏNG — qabın hər yeri soyuq firuzəyidir, deşik isə kəhrəbadır.
-            Rəng oyunda "diqqət" mənasını daşıyır (bax ART_BIBLE §1, WARNING).
-
-       Haşiyəsi var, amma KƏSİKDİR: bərk maneənin bütöv konturundan fərqlənir,
-       yəni "keçmək olar" mesajı qorunur.
-
-       Radius yenə 120-dir — toqquşma həndəsəsi bütün növlərdə eynidir. -->
+  <!-- CƏRƏYAN DEŞİYİNİN SABİT BAZASI — kölgə bayırda deyil, yuxarı-sol DAXİLİ
+       divardadır; aşağı-sağ daxili divar işıq alır. Bu tərs işıq düzümü mənfi
+       hündürlüyü göstərir. Baza fırlanmır ki, Palette.LIGHT_DIR sabit qalsın;
+       hərəkət ayrıca mucus_vent_swirl.svg qatındadır. -->
   <defs>
-    <radialGradient id="ventPit" cx="50%" cy="50%" r="58%">
-      <stop offset="0%" stop-color="#040A0C"/>
-      <stop offset="45%" stop-color="#0A1D22"/>
-      <stop offset="100%" stop-color="#14333A" stop-opacity="0.55"/>
+    <radialGradient id="pit" cx="52%" cy="55%" r="62%">
+      <stop offset="0%" stop-color="#02080B"/>
+      <stop offset="42%" stop-color="#06151A"/>
+      <stop offset="72%" stop-color="#14313A"/>
+      <stop offset="100%" stop-color="#2B5660" stop-opacity="0.58"/>
     </radialGradient>
+    <linearGradient id="rim" x1="20%" y1="15%" x2="82%" y2="90%">
+      <stop offset="0%" stop-color="#101A1C"/>
+      <stop offset="46%" stop-color="#253F41"/>
+      <stop offset="100%" stop-color="#6E6546"/>
+    </linearGradient>
+    <clipPath id="pitClip"><circle cx="160" cy="160" r="118"/></clipPath>
   </defs>
 
-  <circle cx="128" cy="128" r="118" fill="url(#ventPit)"/>
+  <!-- Kəsik kənar bütöv divar haşiyəsinin əksidir: buradan keçmək olar. -->
+  <circle cx="160" cy="160" r="118" fill="url(#rim)"/>
+  <circle cx="160" cy="160" r="115" fill="none" stroke="#D09345" stroke-width="6" stroke-linecap="round" stroke-dasharray="28 19" opacity="0.88"/>
+  <circle cx="160" cy="160" r="96" fill="url(#pit)"/>
 
-  <!-- Kəsik haşiyə — keçilə bilən sərhəd. -->
-  <circle cx="128" cy="128" r="115" fill="none" stroke="#C88A2E" stroke-width="6"
-          stroke-linecap="round" stroke-dasharray="26 22" opacity="0.85"/>
-
-  <!-- Axın cizgiləri: üç qol mərkəzə doğru burulur. Qövsdürlər, düz xətt
-       deyil — su burularaq sorulur, düz getmir (qabın öz burulğan modeli ilə
-       eyni dil, bax README "Qab su ilə doludur"). -->
-  <g fill="none" stroke="#E8A845" stroke-width="7" stroke-linecap="round" opacity="0.7">
-    <path d="M128 34 Q152 74 128 104"/>
-    <path d="M209 174 Q166 178 146 145"/>
-    <path d="M47 174 Q90 178 110 145"/>
+  <g clip-path="url(#pitClip)" fill="none" stroke-linecap="round">
+    <!-- Yuxarı-sol daxili divar kölgədədir: işıq həmin tərəfdən gəldiyi üçün
+         çuxurun divarı işığa arxasını çevirir. -->
+    <path d="M82 169 C79 113 113 72 169 65" stroke="#010507" stroke-width="24" opacity="0.92"/>
+    <!-- Qarşı daxili divar işıq alır; qalxmış maneədə işıqlı olan tərəfin
+         tərsidir və buna görə deşik ilk baxışda içəri batır. -->
+    <path d="M238 151 C241 207 207 248 151 255" stroke="#52747A" stroke-width="15" opacity="0.58"/>
+    <path d="M230 158 C228 201 201 232 159 240" stroke="#B1843E" stroke-width="5" opacity="0.48"/>
   </g>
-  <g fill="none" stroke="#8F6425" stroke-width="5" stroke-linecap="round" opacity="0.55">
-    <path d="M198 62 Q184 106 148 112"/>
-    <path d="M58 62 Q72 106 108 112"/>
-    <path d="M128 220 Q128 176 128 152"/>
-  </g>
-
-  <!-- Mərkəzdəki göz: ən dərin nöqtə, ətrafında nazik halqa. -->
-  <circle cx="128" cy="128" r="26" fill="#02070A"/>
-  <circle cx="128" cy="128" r="26" fill="none" stroke="#E8A845" stroke-width="3.5"
-          opacity="0.8"/>
-  <circle cx="128" cy="128" r="42" fill="none" stroke="#C88A2E" stroke-width="2"
-          stroke-dasharray="8 12" opacity="0.5"/>
-  </g>
+  <circle cx="160" cy="160" r="56" fill="#010609" opacity="0.90"/>
+  <ellipse cx="145" cy="142" rx="25" ry="18" fill="#000305" opacity="0.72"/>
 </svg>

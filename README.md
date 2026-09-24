@@ -119,8 +119,36 @@ ekranda 10 mikrob var və tək kanal (məsələn, yalnız səs) itir:
 | **Donmuş kadr** (75 ms) | yaxında biri partlayanda | [`Arena._apply_freeze`](game/scripts/client/arena.gd) |
 | **Kamera zərbəsi** | partlama və tutum artımı | `Arena._punch` |
 | **Uçan rəqəm** | `+2` zərbədə, `+5 TUTUM` mükafatda | [`Arena._pop_text`](game/scripts/client/arena.gd) |
+| **Titrəmə** (telefonda) | zərbə 22 ms · super 45 · tutum 60 · ölüm 160 | [`Settings.vibrate`](game/scripts/shared/settings.gd) |
 
 Uçan toplar da iz buraxır — [`ShotTrails`](game/scripts/client/shot_trails.gd).
+
+Titrəmə BEŞİNCİ kanaldır və qalanlarını əvəz etmir: səs kəsilə bilər (səssiz
+rejim, qulaqlıqsız oyun), parıltı isə barmağın altında qala bilər. Ayarlardan
+söndürülür. Kamera silkələnməsi də ayardadır (QAPALI/AZ/NORMAL) — söndürüləndə
+digər kanallar toxunulmaz qalır, yəni məlumat itmir.
+
+Bu dörd kanal SAXLANILIR. Üçüncü vizual mərhələ onların üstünə istiqamət və
+material qatını əlavə edir:
+
+| Yeni qat | Hadisə | Oxunuş |
+|---|---|---|
+| Lülə alovu | atəş | membran yarığında `0.08 s`, nişan oxunda parlaq ləçək |
+| İstiqamətli sıçrantı | top mikroba girir | gələn oxun ətrafında dar konus; radial deyil |
+| Zərbə dalğası | mikrob partlayır | `0.40 s` genişlənən nazik halqa |
+| Qida qövsü | qida udulur | qida membrana qövslə uçur, sonunda kiçik su halqası |
+| Tutum aurası | `+5 TUTUM` | `0.62 s` qızılı aura + halqa |
+| Kol xışıltısı | kola giriş/çıxış | yalnız toxunulan üst frond `0.52 s` dalğalanır |
+| Qabıq qırıntısı | kövrək divara zərbə | adi zərbədə bir tərəfə, üçüncüdə bütün çevrəyə parça + toz |
+| Cərəyan axını | fasiləsiz | HIGH-da hər deşiyə sorulan 7 cizgi; LOW-da sönür |
+| Doğuş halqası | mikrob ilk görünür | `0 → 1.12 → 1.0`, `0.35 s`; [`GermVisual`](game/scripts/client/germ_visual.gd) |
+
+İlk altı zərrəcikli döyüş effekti və qabıq qırıntıları ayrıca node açmır:
+[`JuiceFx`](game/scripts/client/juice_fx.gd) hamısını bir node-da üç qalınlıq
+batch-inə yığır. Eyni anda neçə hadisə olmasından asılı olmayaraq qat ən çox
+**3** `draw_multiline_colors` çağırışı edir. Zərbə öz mikrobuna dəyəndə kamera
+gələn ox boyunca ən çox 16 px təpik alır; yaxın rəqibin ölümü mövcud
+`_punch` mexanizmi ilə qısa zoom verir.
 
 > **Donma `Engine.time_scale` ilə edilmir və bu, məcburidir.** `time_scale`
 > `_process` deltasını da kiçildir, yəni proqnoz tick-ləri yavaşıyır və serverə
@@ -196,16 +224,31 @@ Tam quruluş: [design/MODES.md](design/MODES.md).
 
 ### Menyunun quruluşu
 
-Zonalar Brawl Stars-ın menyusundan götürülüb — hər birinin bir işi var:
+Zonalar Brawl Stars-ın **bugünkü (2026)** ana ekranından götürülüb — hər
+birinin bir işi var (araşdırma: [ART_BIBLE § 6b](design/ART_BIBLE.md)):
 
 | Zona | Nə var | Niyə |
 |---|---|---|
-| Mərkəz | mikrob + ad lövhəsi | Kimlik OBYEKTƏ bağlıdır, ayrı sütuna yox |
-| Aşağı-mərkəz | **OYNA** | Ekranın lövbəri, ən böyük element |
-| Aşağı-sağ | rejim kartı | «Nə oynayıram» və «başla» bir qərardır — yan-yana |
-| Sol lent | MİKROBLAR | Brawl Stars-da Brawlers/Shop/Social |
-| Aşağı-sol | MƏŞQ · offline | Ən az prioritetli yuva |
-| Yuxarı-sol · sağ | kimlik · sistem | Sabit konvensiya |
+| Mərkəz | podiumda növün qəhrəmanı, adı başının üstündə | Kimlik OBYEKTƏ bağlıdır; toxunmaq titrədir, çəkmək dartır |
+| Aşağı-sağ | [rejim kartı][sarı **OYNA**] | «Nə oynayıram» və «başla» bir qərardır — yan-yana |
+| Sol lent | MAĞAZA\*, MİKROBLAR, MƏŞQ | Brawl Stars-da Shop, Brawlers |
+| Yuxarı-sol | profil: növün avatarı + ad | Sabit konvensiya |
+| Yuxarı-sağ | QİDA\*, DNT\* valyutaları + dişli (AYARLAR) | Ayarların YEGANƏ qapısı |
+| Aşağı-sol | MİKRO PASS\*, TAPŞIRIQLAR\* | Brawl Pass və Quests |
+
+\* **Görünüş üçündür** — arxalarında hələ sistem yoxdur: valyutalar `0`-dır,
+basanda «… — TEZLİKLƏ!» bildirişi çıxır. Cavabsız düymə etibarı aparır, ona
+görə hər biri nə gəlmədiyini açıq deyir.
+
+Düymələrin dili də Brawl Stars-dandır: qalın qara kontur, altda tünd dodaq,
+konturlu ağ yazı ([`ChunkyBox`](game/scripts/client/chunky_box.gd)). İkonlar
+və illüstrasiyalar Codex ilə çəkilib ([design/menu_art/](design/menu_art/)).
+
+**MİKROBLAR** — Brawl Stars-ın Brawlers kolleksiyası: hər növ sinfinin rəngində
+portret kartdır (KİRPİKLİ — CƏLD, AYAQLI — NƏZARƏTÇİ, AMÖB — MÜDAFİƏÇİ). Karta
+toxunmaq növün **səhifəsini** açır: böyük portret, «OYUNDA» pəncərəsində canlı
+oyun mikrobu, `Const`-dan gələn dörd göstərici, super və sarı **SEÇ** düyməsi.
+Ətraflı: [ART_BIBLE § 6d](design/ART_BIBLE.md).
 
 Növ və rejim seçimi ANA EKRANDA deyil, ayrı vərəqlərdədir
 ([design/menu/](design/menu/)). Səbəb sayğacdır: əvvəl ana ekranda on yeddi
@@ -215,6 +258,42 @@ keçirdi. İndi səkkiz zona və bir sətir qeyd var.
 > Sağ lent QƏSDƏN boşdur. Brawl Stars-da orada Battle Log, liderlər və
 > xəbərlər var; bizdə hələ yoxdur və boş düymə qoymaqdansa yeri saxlamaq
 > daha düzgündür.
+
+### Ayarlar
+
+Menyudakı dişli → tam ekran **AYARLAR**. **Matçın içində ayarlar yoxdur** —
+Brawl Stars-da olduğu kimi, döyüş ekranında sistem düyməsi yoxdur. Matçdan
+çıxmaq üçün Android-in **GERİ** jesti və ya **ESC**: kiçik təsdiq açılır
+(DAVAM ET / ÇIX). Sonsuz arenada matç bitmədiyi üçün bu çıxış qalmalıdır.
+
+Üç sütun, çünki ekran yatay 1280×720-dir: bir sütunluq siyahı eni boş qoyub
+oyunçunu sürüşdürməyə məcbur edərdi.
+
+| Sütun | Ayar | Nə edir |
+|---|---|---|
+| **SƏS** | Ümumi · Effektlər · İnterfeys | Üç şin: `Master`, `SFX`, `UI` |
+| | Səssiz rejim | `Master` sıfırda — səviyyələr yadda qalır |
+| **QRAFİKA** | Keyfiyyət YÜKSƏK/AŞAĞI | Glow, HDR buferi, zərrəcik sıxlığı |
+| | Kadr həddi 30/60/120/SƏRBƏST | `Engine.max_fps` — telefonda batareya ayarıdır |
+| | Ekran silkələnməsi QAPALI/AZ/NORMAL | Yalnız kamera; səs, parıltı və donmuş kadr qalır |
+| | Kadr sayğacı | HUD-un yuxarı-mərkəzində FPS |
+| **İDARƏ** | Sol əl düzümü | Joystick sağ yarıya, atəş və super sol aşağıya |
+| | Titrəmə | Zərbə, super, tutum artımı, ölüm (yalnız telefonda) |
+| | Server ünvanı · Sıfırla · versiya | |
+
+Hamısı [`Settings`](game/scripts/shared/settings.gd) autoload-undadır və
+`user://settings.cfg`-yə yazılır. Autoload olması praktik nəticə verir: menyunu
+KEÇƏN yollar da (`--practice`, `--agent`, `--map`) oyunçunun səsi və kadr həddi
+ilə başlayır — əvvəl ayarları yalnız menyu oxuyurdu.
+
+**Musiqi sürgüsü QƏSDƏN yoxdur** — oyunda musiqi treki yoxdur (bax
+[AUDIO_BIBLE](design/AUDIO_BIBLE.md): cəmi 10 qısa effekt). Heç nəyi idarə
+etməyən sürgü bütün ekrana olan etibarı aparır; şin isə hazırdır, trek gələndə
+bir sətir əlavə olunacaq.
+
+> **Kadr həddi əmr sətrini POZMUR.** `--max-fps` və ya `--fixed-fps` verilibsə
+> ayar `Engine.max_fps`-ə toxunmur — yoxsa oyunçunun 30-luq seçimi `--perf` və
+> `--shot` ölçmələrini səssizcə dəyişərdi.
 
 ---
 
@@ -232,6 +311,7 @@ düyməsini bas — botlarla dolu dünya dərhal açılır, serverə ehtiyac yox
 | `WASD` və ya ox düymələri | hərəkət |
 | `BOŞLUQ` (və ya `ENTER`) | top atmaq |
 | `SHIFT` (və ya `Q`) | **super** — dolubsa |
+| `ESC` | matçdan çıxış təsdiqi · menyuda açıq vərəqi bağlayır |
 | Siçan | ekran joysticki və düymələr |
 
 > **Niyə klaviatura?** Oyun toxunuş üçün qurulub, siçan isə Godot-da BİR toxunuş
@@ -294,26 +374,30 @@ game/                    Godot layihəsi
       dish_map.gd        Petri qabındakı maneələrin düzümü
       bot.gd             Bot mikrob — serverdə işləyir, dünyanı canlı saxlayır
       palette.gd         Kod tərəfdən çəkilən rənglər
+      settings.gd        Oyunçunun bütün ayarları, `settings.cfg` (autoload: Settings)
     server/
       lobby.gd           Dünyalar, giriş/çıxış, yenidən qoşulma
       world.gd           Bir petri qabı: Sim + oyunçular + botlar + snapshot
     client/
       arena.gd           ★ Oyun ekranı: prediction, interpolyasiya, kamera, reconnect
-      menu_v2.gd         ★ Baş menyu: canlı mikrob, növ kartları, qoşulma
+      menu_v2.gd         ★ Baş menyu: fon + podiumda qəhrəman, növ kartları, qoşulma
       main_menu.gd       KÖHNƏ şaquli menyu — ehtiyat (`--menu1`), sonra silinir
       hud.gd             Doluluq göstəricisi, liderlər, xəbərdarlıqlar, nəticə
       germ_visual.gd     Bir mikrobun görüntüsü — ÜÇ NÖV (üzür, yeriyir, sürünür)
       burst_fx.gd        Partlayaraq ölmə effekti (dalğa, damcı, membran parçaları)
+      juice_fx.gd        Qısa VFX-lər — bütün hadisələr bir node-da, ən çox 3 batch
       shot_trails.gd     Uçan topların izi — hamısı BİR çəkiliş çağırışında
       water_motes.gd     Suda asılı zərrəciklər — axını gözlə görünən edir
       minimap.gd         Petri qabının kiçik xəritəsi
       touch_stick.gd     Üzən virtual joystick (hərəkət)
       fire_button.gd     Top atma düyməsi (basılı saxlananda davamlı atəş)
-      super_button.gd    Super düyməsi — dolan halqa, atəşin üstündə
-      super_button.gd    Super düyməsi — dolan halqa, atəşin üstündə
+      super_button.gd    Super düyməsi — maye dolumu, hazır nəbzi və işıq zolağı
       sfx.gd             Səs effektləri (autoload: Sfx)
+      settings_view.gd   AYARLAR ekranı — yalnız menyuda (matçda ayar yoxdur)
+      chunky_box.gd      Brawl Stars düymə dili: kontur + dodaq + parıltı, konturlu yazı
+      touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
     tools/
-      sim_test.gd        245 headless test
+      sim_test.gd        260 headless test
       auto_client.gd     Şəbəkə testi üçün insansız client
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
@@ -325,6 +409,8 @@ game/                    Godot layihəsi
     sprites/             maneə sprite-ları: blob, bloom (SELİK) · crust ×3 (KÖVRƏK,
                          zədə mərhələləri) · bush + bush_top (KOL) · vent (CƏRƏYAN)
                          · dish_floor (qabın döşəməsi)
+    menu/                ana ekranın illüstrasiyaları (Codex): fon, podium, üç
+                         növün qəhrəmanı — mənbə və promptlar design/menu_art/-da
   web/shell.html         Brauzer versiyasının HTML qabığı
 design/                  Dizayn mənbəyi (art/audio bible, brif, sprite, səs generatoru)
 tools/                   Build və deploy skriptləri
@@ -424,16 +510,23 @@ GODOT --path game --resolution 1280x720 --disable-vsync -- --practice --mode 0 -
 > yenə sənin işindir.
 
 Orta, **1% ən pis** kadr, çəkiliş çağırışı və yaddaş yazılır.
-Masaüstü nəticəsi (RTX 5050), `--disable-vsync` ilə:
+Masaüstü nəticəsi (RTX 5050), `--disable-vsync` ilə. “Əvvəl” bu sənəddəki ilkin
+ölçüdür; “M2” xəritə redizaynından sonrakı ağacdır; “M3” animasiya/VFX/UI
+qatının 2026-09-17 yekun ölçüsüdür:
 
-| Rejim | Orta kadr | 60 FPS büdcəsi | Çəkiliş çağırışı (pik) |
-|---|---|---|---|
-| SONSUZ ARENA (6 mikrob) | 1.85 ms | **11%** | ~230 |
-| TƏK QALAN (10 mikrob) | 2.82 ms | **17%** | ~212 |
+| Rejim | Əvvəl orta | M2 orta | **M3 orta** | **M3 1% ən pis** | M3 büdcə | Çəkiliş çağ. pik (əvvəl → M2 → M3) |
+|---|---:|---:|---:|---:|---:|---:|
+| SONSUZ ARENA (6 mikrob) | 1.85 ms | 2.15 ms | **2.48 ms** | **3.70 ms** | **15% / 22%** | ~230 → 188 → **196** |
+| TƏK QALAN (10 mikrob) | 2.82 ms | 2.93 ms | **2.35 ms** | **4.03 ms** | **14% / 24%** | ~212 → 249 → **202** |
 
-Fərq tam olaraq dörd əlavə mikrobdandır — quruma kənarı cəmi **2** çağırışdır
-(iki `draw_arc`). Mikrob ən bahalı elementdir, ona görə mikrob sayını artıran
-hər rejim bu cədvəldə ölçülməlidir.
+Hər iki rejimdə 16.7 ms-i aşan kadr **0**-dır. Pik çağırışlar 350 həddindən
+müvafiq 154 və 148 aşağıdır. Eyni M3 reviziyasının daha sıx TƏK QALAN
+çalışmasında **263** pik də müşahidə olunub; konservativ ehtiyat yenə 87-dir.
+Səhnə təsadüfi olduğuna görə çağırış sayı görünən mikrob/top/qida ilə dəyişir.
+Hadisə sayı artmasına baxmayaraq limitin qorunmasının səbəbi yeni VFX-in hadisə
+başına node yox, ortaq batch olmasıdır. TƏK QALAN-da dörd əlavə mikrob və quruma
+materialı ən bahalı kombinasiyadır, ona görə mikrob sayını artıran hər rejim bu
+cədvəldə ayrıca ölçülməlidir.
 
 > Çəkiliş çağırışının 280-dən ~170-ə düşməsi bir dəyişiklikdən gəlir: səhnə
 > qatları növlərə bölündü (bütün qida bir qatda, bütün toplar başqasında) və
@@ -453,7 +546,7 @@ hər rejim bu cədvəldə ölçülməlidir.
 | Portret pəncərə | yatay kadra letterbox olunur (bax [boot.gd](game/scripts/boot.gd)) |
 | Renderer | `gl_compatibility`, arm64 + x86_64, ETC2/ASTC |
 | Yaddaş | 42–54 MB |
-| Çəkiliş çağırışı | 130–300 (pik) |
+| Çəkiliş çağırışı | yekun çalışmada 196 / 202; müşahidə edilən pik 263; sərt hədd 350 |
 
 ### Ekran forması üstünlük VERMİR
 
@@ -477,11 +570,18 @@ sonsuz uzaqlaşmır. `_test_aoi_covers_screen` altı real telefon nisbətini yox
 
 ### Qrafika səviyyəsi
 
-Menyuda dişli → **QRAFİKA: YÜKSƏK / AŞAĞI**. Telefonda ilkin dəyər AŞAĞI-dır.
+Dişli → AYARLAR → QRAFİKA → **Keyfiyyət: YÜKSƏK / AŞAĞI**. Telefonda ilkin
+dəyər AŞAĞI-dır. Seçim MATÇIN ORTASINDA da işləyir (bax [`Arena._apply_quality`](game/scripts/client/arena.gd)):
+mühit həmişə qurulur, glow isə yandırılıb-söndürülür — əvvəl `WorldEnvironment`
+AŞAĞI-da ümumiyyətlə yaradılmırdı və oyunçu ayarı dəyişəndə növbəti matça qədər
+heç nə dəyişmirdi.
 
-AŞAĞI-da glow və `hdr_2d` sönür, zərrəciklər yarıya düşür. Glow tam ekranı bir
-neçə dəfə bulandıran keçiddir və HDR ilə birlikdə kadr buferini RGBA16F-ə
-qaldırır — mobil GPU-da hər kadr iki dəfə çox yaddaş zolağı.
+AŞAĞI-da glow və `hdr_2d` sönür; əsas su zərrəcikləri `80+30`-dan `34+14`-ə
+enir; cərəyan axını və quru sərhəd buxarı tam sönür. Yeni döyüş zərrəcikləri
+yarıya enir (lülə ləçəyi `3→1`, sıçrantı `8→4`, udulma izi `4→2`, qabıq
+qırıntısı `6/12→3/6`, aura şüası `12→6`), halqa seqmentləri də `40→20` olur.
+Glow tam ekranı bir neçə dəfə bulandıran keçiddir və HDR ilə birlikdə kadr
+buferini RGBA16F-ə qaldırır — mobil GPU-da hər kadr iki dəfə çox yaddaş zolağı.
 
 > Bu fərq masaüstündə **ölçülə bilmir**: eyni konfiqurasiyanın iki çalışması
 > arasındakı səpələnmə (2.0 ms və 3.3 ms) konfiqurasiyalar arasındakı fərqdən
@@ -495,6 +595,48 @@ yəni aşağı keyfiyyət nə üstünlük verir, nə də məhrum edir.
 GODOT --path game --resolution 1280x720 --max-fps 60 \
       -- --practice --shot C:/yol/kadr.png --shot-delay 500
 ```
+
+Ani hadisələr (super, partlayış, doğuş) tək kadra düşmür — ardıcıllıq çək.
+`--charge` superi dolu başladır, `--idle` avtomatik oyunçunu söndürür (HAZIR
+vəziyyətin şəkli üçün):
+```bash
+GODOT --path game --resolution 1280x720 --max-fps 60 \
+      -- --practice --species 0 --charge --shot C:/yol/s.png \
+         --shot-delay 4 --shot-count 12 --shot-every 4      # s_00.png … s_11.png
+```
+
+### Oyunu agentlə oynamaq (vizual QA)
+
+[`PlayAgent`](game/scripts/tools/play_agent.gd) oyunu menyudan başlayıb **real
+girişlə** oynayır: düymələrə basır, ünvan sahəsinə yazır, joysticki barmaqla
+sürüşdürür, atəş və super düymələrinə toxunur. `--practice --shot`-dakı
+avtomatik oyunçu isə girişi tamamilə keçir — joystik, düymələr, menyu və
+ölümdən sonra menyuya qayıdış onunla heç vaxt sınanmır.
+
+```bash
+GODOT --path game --resolution 1280x720 --max-fps 60 -- --agent \
+      --agent-out C:/yol/qovluq --agent-species 1 --agent-mode 2 --agent-time 90
+```
+
+| Bayraq | Mənası |
+|---|---|
+| `--agent-species`, `--agent-mode`, `--agent-quality` | menyunun öz düymələri ilə seçilir |
+| `--agent-server ws://127.0.0.1:27015` | ünvan AYARLAR ekranına yazılır, OYNA ilə onlayn |
+| `--agent-dead-server` | OYNA-nı yatmış serverlə sına: düymə ilişməməli, səbəb yazılmalıdır |
+| `--agent-rounds N` | ölüm → nəticə → menyu → yenidən oyun dövrü; ölməsə **MATÇI TƏRK ET** ilə çıxır |
+| `--agent-noshots` | kadr çəkmə — yalnız ölçü (PNG yazmaq 50–150 ms sıçrayış verir) |
+| `--agent-no-keys`, `--agent-limit S` | klaviatura sınağını keç; sərt vaxt həddi |
+
+Qovluğa `NNN_ad.png` (dövri və hadisə anında), `log.jsonl`, `issues.txt` və
+`summary.json` yazılır; çıxış kodu 3 = problem tapılıb. Avtomatik yoxlamalar:
+joystik/atəş/super cavabı, kamera, kadr sıçrayışı, node sızması, ekrandan
+çıxan və üst-üstə düşən düymələr, menyu axını, AYARLAR ekranı (menyuda və
+matçın içində — açılır, bağlananda matç davam edir), mühərrik xətaları.
+
+> Oyunçunun `settings.cfg`-si agentin menyu seçimləri ilə dəyişir — agent onu
+> başlanğıcda saxlayıb sonda geri yazır. Xarici `timeout` agenti öldürsə, bu
+> addım icra olunmur, ona görə `--agent-limit` həmişə `timeout`-dan qısa olmalıdır.
+> Pəncərəni kiçiltmə: Godot kiçildilmiş pəncərəni çəkmir və kadr çəkilmir.
 
 ### Xəritənin bir yerini gözlə yoxlamaq
 
@@ -988,3 +1130,14 @@ kənar fade-lər) — pozuq klip layihəyə düşə bilmir.
 `eject` və `hit` qəsdən fərqli tezlik sahələrindədir: oyunçu ekrana baxmadan
 atışının canlı hədəfə dəydiyini eşitməlidir. Təfərrüat:
 [design/AUDIO_BIBLE.md](design/AUDIO_BIBLE.md)
+
+### Şinlər
+
+Üç şin var: `Master` → `SFX` və `UI`. Sürgülər yalnız şini çəkir, klipin öz
+səviyyəsini yox — `AUDIO_BIBLE`-ın üçpilləli tarazlığı (səviyyə 3 səsləri
+−6 dB ilə çalınır) olduğu kimi qalır.
+
+`UI` ayrıdır, çünki menyu toxunuşu ilə oyunun səsi bir-birinin işi deyil:
+oyunçu arenada effektləri qısıb düymə cavabını saxlaya bilər, ya da əksinə.
+Şinlər `default_bus_layout.tres` faylı ilə yox, kodda qurulur —
+[`Settings._ensure_buses`](game/scripts/shared/settings.gd).

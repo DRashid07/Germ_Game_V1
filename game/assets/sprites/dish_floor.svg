@@ -1,17 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- QABIN DÖŞƏMƏSİ — çökən səth, TƏK teksturada.
-       Əvvəl 14 konsentrik `draw_circle` ilə çəkilirdi və ölçmə göstərdi ki,
-       hər biri AYRICA çəkiliş çağırışıdır: yalnız döşəmə 14 çağırış yeyirdi.
-       Qradiyent teksturada isə bir `draw_texture_rect` bəs edir.
-       Kodda `2 * WORLD_RADIUS` ölçüsünə uzadılır. -->
+  <!-- QABIN DÖŞƏMƏSİ — orta ton, agar izləri və vinyet TƏK teksturada.
+       Ayrı kod primitivləri hər ləkə üçün yeni çəkiliş çağırışı yaradardı;
+       burada bütün material bir `draw_texture_rect` ilə gəlir. Yumşaq kənar
+       filter yox, şəffaflığa düşən radial qradiyentlə alınır ki, ThorVG və
+       mobil GL renderer eyni nəticəni versin. -->
   <defs>
-    <radialGradient id="floor" cx="50%" cy="50%" r="50%">
-      <stop offset="0%"   stop-color="#0E1F25"/>
-      <stop offset="45%"  stop-color="#0C1A1E"/>
-      <stop offset="78%"  stop-color="#0A161A"/>
+    <clipPath id="dishClip"><circle cx="256" cy="256" r="256"/></clipPath>
+    <radialGradient id="floor" cx="42%" cy="36%" r="72%">
+      <stop offset="0%" stop-color="#19363F"/>
+      <stop offset="42%" stop-color="#152E35"/>
+      <stop offset="76%" stop-color="#102329"/>
       <stop offset="100%" stop-color="#071012"/>
+    </radialGradient>
+    <radialGradient id="agarCool" cx="45%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#2B5660" stop-opacity="0.22"/>
+      <stop offset="56%" stop-color="#1D4149" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#12262C" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="agarWarm" cx="48%" cy="44%" r="60%">
+      <stop offset="0%" stop-color="#44614F" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#29473E" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#12262C" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="agarDark" cx="52%" cy="48%" r="58%">
+      <stop offset="0%" stop-color="#07171B" stop-opacity="0.18"/>
+      <stop offset="64%" stop-color="#091B20" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#12262C" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#020708" stop-opacity="0"/>
+      <stop offset="66%" stop-color="#020708" stop-opacity="0.03"/>
+      <stop offset="86%" stop-color="#020708" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#020708" stop-opacity="0.62"/>
     </radialGradient>
   </defs>
   <circle cx="256" cy="256" r="256" fill="url(#floor)"/>
+  <g clip-path="url(#dishClip)">
+    <!-- Üzvi ləkələr qəsdən nə simmetrikdir, nə də bərabər aralıdır: təkrar
+         kafel yox, qabda yığılmış agar kimi oxunur. Hər ləkənin qradiyenti
+         sıfır alfaya düşdüyünə görə sərt SVG kənarı görünmür. -->
+    <path d="M18 122 C62 64 142 48 198 82 C236 105 218 154 166 174 C105 197 37 176 18 122Z" fill="url(#agarCool)"/>
+    <path d="M294 28 C372 14 454 62 470 126 C482 176 425 201 366 170 C312 141 266 80 294 28Z" fill="url(#agarWarm)"/>
+    <path d="M62 300 C101 249 185 238 238 277 C282 309 252 365 190 390 C126 416 48 373 62 300Z" fill="url(#agarDark)"/>
+    <path d="M286 282 C330 238 422 244 468 298 C510 347 474 423 399 438 C332 452 269 392 286 282Z" fill="url(#agarCool)"/>
+    <path d="M178 154 C218 122 302 132 332 190 C354 234 316 274 259 270 C198 266 142 216 178 154Z" fill="url(#agarWarm)" opacity="0.72"/>
+    <ellipse cx="90" cy="246" rx="72" ry="38" fill="url(#agarCool)" opacity="0.55" transform="rotate(-18 90 246)"/>
+    <ellipse cx="405" cy="224" rx="58" ry="92" fill="url(#agarDark)" opacity="0.72" transform="rotate(31 405 224)"/>
+    <!-- Son qat bişmiş vinyetdir: arena kodunda əlavə konsentrik disklər yoxdur. -->
+    <circle cx="256" cy="256" r="256" fill="url(#vignette)"/>
+  </g>
 </svg>

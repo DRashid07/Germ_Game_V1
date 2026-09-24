@@ -1,71 +1,63 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
-  <!-- BİŞMİŞ KÖLGƏ — vahid işıq yuxarı-soldan, kölgə aşağı-sağa.
-       Kodda çəkilmirdi, çünki ölçmə göstərdi: hər maneə üçün iki
-       `draw_circle` = iki çəkiliş çağırışı, 15 bərk maneə üçün 30 çağırış.
-       Teksturada isə PULSUZDUR — sprite onsuz da çəkilir.
-       İki qat: yumşaq qat hündürlüyü, sıx kontakt halqası döşəməyə harada
-       toxunduğunu deyir. -->
-  <g>
-    <circle cx="177" cy="187" r="131" fill="#04090B" opacity="0.17"/>
-    <circle cx="169" cy="175" r="122" fill="#04090B" opacity="0.34"/>
-  </g>
-  <g transform="translate(32,32)">
-  <!-- Maneə növü 2: QABIQ — 1 zərbə yeyib (bax DishMap.BRITTLE_HP).
-       Çatlar dərinləşir, kəhrəba genişlənir: oyunçu neçə zərbə qaldığını
-       uzaqdan oxumalıdır. Toqquşma dairəsi bütün mərhələlərdə eynidir.
-       Xarici dairə mucus_blob.svg ilə EYNİDİR (r=120, eyni haşiyə): toqquşma
-       dairəsi dəyişmir, yalnız içindəki naxış fərqlənir. Fərq oxunsun deyə
-       naxış BUCAQLIDIR — yumru ləkənin tam əksi. -->
+  <!-- KÖVRƏK QABIQ — 1 zərbə. r=120 toqquşma silueti dəyişmir; üst üzün sağ
+       kənarında bir parça qopub, əsas çat qalınlaşıb və iki yeni budaq açılıb.
+       Beləliklə mərhələ uzaqdan yalnız incə xətt eni ilə deyil, iri mənfi
+       forma ilə də seçilir. -->
   <defs>
-    <clipPath id="domeClip">
-      <circle cx="128" cy="128" r="118"/>
-    </clipPath>
-    <radialGradient id="crust" cx="42%" cy="38%" r="66%">
-      <stop offset="0%" stop-color="#1F4A56"/>
-      <stop offset="70%" stop-color="#17353E"/>
-      <stop offset="100%" stop-color="#0F262E"/>
+    <radialGradient id="castShadow" cx="46%" cy="42%" r="58%">
+      <stop offset="0%" stop-color="#020608" stop-opacity="0.50"/>
+      <stop offset="60%" stop-color="#020608" stop-opacity="0.26"/>
+      <stop offset="100%" stop-color="#020608" stop-opacity="0"/>
     </radialGradient>
-    <clipPath id="crustClip">
-      <circle cx="128" cy="128" r="118"/>
-    </clipPath>
+    <radialGradient id="contactShadow" cx="45%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#020608" stop-opacity="0.46"/>
+      <stop offset="68%" stop-color="#020608" stop-opacity="0.31"/>
+      <stop offset="100%" stop-color="#020608" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="side" x1="24%" y1="18%" x2="78%" y2="100%">
+      <stop offset="0%" stop-color="#46443A"/>
+      <stop offset="48%" stop-color="#2E2D29"/>
+      <stop offset="100%" stop-color="#141819"/>
+    </linearGradient>
+    <radialGradient id="top" cx="34%" cy="27%" r="76%">
+      <stop offset="0%" stop-color="#69695B"/>
+      <stop offset="46%" stop-color="#4A5149"/>
+      <stop offset="100%" stop-color="#303B38"/>
+    </radialGradient>
+    <clipPath id="bodyClip"><circle cx="160" cy="160" r="120"/></clipPath>
+    <clipPath id="topClip"><ellipse cx="151" cy="145" rx="108" ry="106"/></clipPath>
   </defs>
-  <circle cx="128" cy="128" r="120" fill="url(#crust)" stroke="#245562" stroke-width="5"/>
-  <!-- Çatlar. Kəsilir ki, heç biri haşiyədən kənara çıxmasın. -->
-  <g clip-path="url(#crustClip)" stroke="#6B3F14" stroke-width="8" fill="none"
-     stroke-linecap="round" opacity="0.85">
-    <path d="M128 20 L118 82 L140 116 L124 168 L136 236"/>
-    <path d="M20 108 L84 98 L118 82"/>
-    <path d="M236 140 L176 132 L140 116"/>
-    <path d="M60 210 L104 160 L124 168"/>
-    <path d="M206 206 L164 166 L124 168"/>
+  <ellipse cx="176" cy="192" rx="132" ry="111" fill="url(#castShadow)"/>
+  <ellipse cx="171" cy="182" rx="117" ry="101" fill="url(#contactShadow)"/>
+  <circle cx="160" cy="160" r="120" fill="url(#side)" stroke="#0A1517" stroke-width="5"/>
+  <g clip-path="url(#bodyClip)">
+    <path d="M45 154 C62 222 111 272 183 278 C228 282 264 260 282 221 L282 282 L38 282Z" fill="#0A1113" opacity="0.40"/>
+    <path d="M52 126 C66 82 103 50 148 41" fill="none" stroke="#817E6B" stroke-width="5" stroke-linecap="round" opacity="0.42"/>
   </g>
-  <!-- Çatların kəhrəba kənarı. Rəng QƏSDƏNDİR: palitrada kəhrəba "diqqət"
-       deməkdir (bax ART_BIBLE §1) və bu, oyunçunun bu maneə ilə NƏSƏ EDƏ
-       BİLDİYİNİN yeganə uzaqdan oxunan işarəsidir. Onsuz kövrək qabıq baxışda
-       adi selik ləkəsindən seçilmirdi. -->
-  <g clip-path="url(#crustClip)" stroke="#C88A2E" stroke-width="3.5" fill="none"
-     stroke-linecap="round" opacity="0.9">
-    <path d="M125 20 L115 82 L137 116 L121 168 L133 236"/>
-    <path d="M20 105 L84 95 L115 82"/>
-    <path d="M236 137 L176 129 L137 116"/>
+  <ellipse cx="151" cy="145" rx="108" ry="106" fill="url(#top)" stroke="#777666" stroke-width="5"/>
+  <g clip-path="url(#topClip)">
+    <!-- Sağdakı dişli boşluq qopmuş üst parçadır; altda yan üz görünür. -->
+    <path d="M241 113 L260 128 L245 145 L257 162 L235 174 L222 153 L230 132Z" fill="#171D1D" opacity="0.94"/>
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <g stroke="#141818" stroke-width="11" opacity="0.96">
+        <path d="M151 45 L144 89 L162 119 L150 154 L161 218"/>
+        <path d="M55 123 L99 118 L144 89"/>
+        <path d="M248 145 L199 137 L162 119"/>
+        <path d="M87 224 L123 171 L150 154"/>
+        <path d="M212 218 L181 177 L150 154"/>
+        <path d="M105 65 L119 101 L144 89"/>
+      </g>
+      <g stroke="#E2A34B" stroke-width="4" opacity="0.94">
+        <path d="M147 45 L140 89 L158 119 L146 154 L157 218"/>
+        <path d="M55 119 L99 114 L140 89"/>
+        <path d="M248 141 L199 133 L158 119"/>
+        <path d="M87 220 L123 167 L146 154"/>
+        <path d="M212 214 L181 173 L146 154"/>
+      </g>
+    </g>
   </g>
-  <!-- Bir neçə xırda qabarcıq — səth tam düz görünməsin. -->
-  <g fill="#245562" opacity="0.28">
-    <circle cx="96" cy="140" r="9"/>
-    <circle cx="158" cy="96" r="7"/>
-    <circle cx="180" cy="180" r="6"/>
+  <g fill="#8A8874" opacity="0.28">
+    <circle cx="108" cy="146" r="8"/><circle cx="179" cy="95" r="6"/><circle cx="192" cy="181" r="6"/>
   </g>
-  <!-- GÜNBƏZ HƏCMİ. Vahid işıq yuxarı-soldan gəlir (bax ART_BIBLE §2b).
-       Üç element: yuxarı-solda rim işığı, aşağı-sağda daxili oklüziya,
-       ortada yaş parıltı. HAMISI siluetin İÇİNDƏDİR — siluet toqquşma izidir
-       (r=120) və bir piksel də dəyişə bilməz, yoxsa amöb "keçirəm" deyib
-       görünməyən kənara dəyər. -->
-  <g clip-path="url(#domeClip)">
-    <circle cx="176" cy="184" r="116" fill="none" stroke="#07141A" stroke-width="46" opacity="0.40"/>
-    <path d="M 44 150 A 98 98 0 0 1 150 44" fill="none" stroke="#5A98A8" stroke-width="8"
-          stroke-linecap="round" opacity="0.42"/>
-    <ellipse cx="96" cy="86" rx="36" ry="23" fill="#6FB0C0" opacity="0.13"
-             transform="rotate(-28 96 86)"/>
-  </g>
-  </g>
+  <path d="M62 141 C67 85 104 48 161 40 C190 36 214 43 232 54" fill="none" stroke="#BBB99D" stroke-width="6" stroke-linecap="round" opacity="0.48"/>
 </svg>

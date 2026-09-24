@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <!-- CƏRƏYAN DEŞİYİNİN FIRLANAN İÇ QATI. Yalnız bu şəffaf qat fırlanır;
+       sabit bazadakı daxili işıq/kölgə istiqaməti dəyişmir. Bütün ventlər eyni
+       teksturanı ardıcıl çəkdiyi üçün əlavə xərc maneə sayına yox, bir batch-ə
+       bərabərdir. -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#F0B94E" stroke-width="8" opacity="0.82">
+      <path d="M160 87 C203 87 229 113 226 148 C223 181 194 195 171 184 C150 174 149 151 162 139"/>
+      <path d="M224 197 C201 232 165 240 136 220 C109 202 110 170 131 156 C150 143 170 154 174 171"/>
+      <path d="M93 188 C72 151 82 116 112 99 C141 83 169 99 171 124 C173 146 154 158 138 151"/>
+    </g>
+    <g stroke="#7ED7D0" stroke-width="3.5" opacity="0.50">
+      <path d="M160 99 C194 99 214 119 211 146 C209 168 190 179 174 171"/>
+      <path d="M213 191 C194 219 166 225 143 210 C126 198 124 178 137 166"/>
+      <path d="M104 182 C88 153 96 127 118 114 C136 104 153 111 160 127"/>
+    </g>
+    <circle cx="160" cy="160" r="31" stroke="#E8A845" stroke-width="4" stroke-dasharray="8 11" opacity="0.66"/>
+  </g>
+  <circle cx="160" cy="160" r="8" fill="#FFE09A" opacity="0.75"/>
+</svg>

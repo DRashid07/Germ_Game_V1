@@ -36,6 +36,15 @@ signal blocked
 
 ## Rədd cavabının nə qədər göründüyü.
 const DENY_TIME := 0.45
+## Hazır olma anının "pop"u — düymə bir anlıq böyüyüb yerinə qayıdır.
+const POP_TIME := 0.32
+## Növün ikonu — menyudakı kartlarla EYNİ şəkil (bax [MenuV2]). Oyunçu
+## düyməni öz növünün superi kimi tanıyır, adsız halqa kimi yox.
+const ICONS := {
+	Const.Species.CILIATE: "res://assets/ui/species_ciliate.svg",
+	Const.Species.HELIOZOAN: "res://assets/ui/species_heliozoan.svg",
+	Const.Species.AMOEBA: "res://assets/ui/species_amoeba.svg",
+}
 
 @export var radius := 54.0
 
@@ -46,6 +55,8 @@ var _touch_index := -1
 var _pressed := false
 var _t := 0.0
 var _deny_t := 0.0
+var _pop_t := 0.0
+var _icon: Texture2D = null
 
 
 func _ready() -> void:
@@ -59,6 +70,9 @@ func _process(delta: float) -> void:
 	if _deny_t > 0.0:
 		_deny_t = maxf(0.0, _deny_t - delta)
 		queue_redraw()
+	if _pop_t > 0.0:
+		_pop_t = maxf(0.0, _pop_t - delta)
+		queue_redraw()
 	if _ready_now:
 		_t += delta
 		queue_redraw()
@@ -69,10 +83,21 @@ func _is_locked() -> bool:
 	return _charge >= 0.999 and not _ready_now
 
 
-## Oyunçunun rəngi — hazır düymə məhz onunla yanır, ona görə ekranda
-## "mənim superim" başqasının superindən dərhal ayrılır.
+## Oyunçunun rəngi — DOLAN düymə onunla çəkilir.
+##
+## Hazır düymə isə artıq oyunçunun rəngində DEYİL, [constant Palette.SUPER_READY]
+## ilə yanır. Əvvəl hazır hal da öz rəngdə idi və oyunçunun rəngi yaşıl/nanə
+## olanda dolan halqadan yalnız nəbzlə fərqlənirdi. İndi "hazır" hər yerdə
+## eyni qızılı dildədir: düymədə, öz mikrobunun aurasında və RƏQİBİN
+## üstündə (bax [member GermVisual.super_ready]).
 func set_local_color(c: Color) -> void:
 	_color = c
+	queue_redraw()
+
+
+## Düymənin ortasındakı ikon — oyunçunun növü.
+func set_species(kind: Const.Species) -> void:
+	_icon = load(ICONS.get(kind, ICONS[Const.Species.CILIATE]))
 	queue_redraw()
 
 
@@ -84,6 +109,8 @@ func set_charge(charge: float, ready: bool) -> void:
 	var c := clampf(charge, 0.0, 1.0)
 	if is_equal_approx(c, _charge) and ready == _ready_now:
 		return
+	if ready and not _ready_now:
+		_pop_t = POP_TIME
 	_charge = c
 	_ready_now = ready
 	queue_redraw()
@@ -140,6 +167,9 @@ func _draw() -> void:
 	var c := size * 0.5
 	var r := radius
 	var scale := 0.93 if _pressed and (_ready_now or _is_locked()) else 1.0
+	if _pop_t > 0.0:
+		# Hazır olma anı: sürətli böyümə, yavaş qayıdış (sin yarım dalğası).
+		scale *= 1.0 + 0.16 * sin(PI * (1.0 - _pop_t / POP_TIME))
 	r *= scale
 
 	# Fon — atəş düyməsi ilə eyni material, bir az kiçik.
@@ -153,13 +183,18 @@ func _draw() -> void:
 		draw_arc(c, r + 6.0, 0.0, TAU, 40, Color(Palette.DANGER, 0.85 * k), 4.0, true)
 
 	if _ready_now:
-		# Hazır: dolu halqa + nəbz. Nəbz yalnız BURADA var, ona görə göz onu
-		# ekranın qalan hərəkətindən ayırır.
+		# Hazır: qızılı dolu disk + nəbz + fırlanan işıq zolağı. Hərəkət yalnız
+		# BURADA var, ona görə göz onu ekranın qalan hərəkətindən ayırır.
+		var gold := Palette.SUPER_READY
 		var pulse := 0.5 + 0.5 * sin(_t * 4.2)
-		draw_arc(c, r + 5.0, 0.0, TAU, 40, Color(_color, 0.18 + 0.30 * pulse), 3.0, true)
-		draw_arc(c, r, 0.0, TAU, 44, _color, 5.0, true)
-		draw_circle(c, r * 0.42, Color(_color, 0.85 + 0.15 * pulse))
-		draw_arc(c, r * 0.66, 0.0, TAU, 28, Color(Palette.TEXT, 0.45 + 0.25 * pulse), 2.0, true)
+		draw_arc(c, r + 9.0, 0.0, TAU, 44, Color(gold, 0.10 + 0.20 * pulse), 6.0, true)
+		draw_arc(c, r + 4.0, 0.0, TAU, 44, Color(gold, 0.30 + 0.35 * pulse), 3.0, true)
+		draw_circle(c, r - 3.0, Color(gold, 0.88 + 0.12 * pulse))
+		draw_arc(c, r, 0.0, TAU, 44, gold.lerp(Color.WHITE, 0.25), 5.0, true)
+		# İşıq zolağı halqa boyunca qaçır — "hazırdır" siqnalının ikinci kanalı.
+		var sweep := _t * 3.2
+		draw_arc(c, r, sweep, sweep + 0.7, 12, Color(Color.WHITE, 0.85), 5.0, true)
+		_draw_face(c, r, Palette.OUTLINE, true)
 	elif _is_locked():
 		# KİLİDLİ: halqa doludur, amma oyunçunun RƏNGİNDƏ DEYİL.
 		#
@@ -169,9 +204,10 @@ func _draw() -> void:
 		draw_arc(c, r, 0.0, TAU, 44, Color(Palette.TEXT_MUTED, 0.75), 5.0, true)
 		# Üstündən kilid xətti — atəş düyməsindəki "sursat yoxdur" xətti ilə
 		# eyni dildir, oyunçu onu artıq tanıyır (bax [method FireButton._draw]).
+		draw_circle(c, r - 3.0, Color(Palette.TEXT_MUTED, 0.14))
+		_draw_face(c, r, Color(Palette.TEXT_MUTED, 0.55), true)
 		var d := Vector2(r * 0.42, r * 0.42)
 		draw_line(c - d, c + d, Color(Palette.TEXT_MUTED, 0.85), 5.0, true)
-		draw_circle(c, r * 0.30, Color(Palette.TEXT_MUTED, 0.20))
 	else:
 		# Dolur: boş halqa + dolan qövs. Qövs YUXARIDAN başlayır və saat
 		# istiqamətində gedir — dolma istiqaməti gözə tanış olmalıdır.
@@ -179,8 +215,49 @@ func _draw() -> void:
 		# Boş halqa da oyunçunun ÖZ RƏNGİNDƏDİR, sadəcə sönük. Neytral boz
 		# çəkiləndə düymə fona qarışırdı və ilk dəfə oynayan onun ümumiyyətlə
 		# olduğunu görmürdü — boş düymə də "bura bir şey gələcək" deməlidir.
+		#
+		# İçi aşağıdan YUXARI dolur — maye səviyyəsi kimi. Halqadakı qövs
+		# dəqiq, amma nazikdir; dolan disk isə baş barmağın altından da
+		# görünür (barmaq halqanın bir hissəsini həmişə örtür).
+		_draw_level(c, r - 3.0, _charge, Color(_color, 0.30))
 		draw_arc(c, r, 0.0, TAU, 40, Color(_color, 0.26), 4.0, true)
 		if _charge > 0.001:
 			draw_arc(c, r, -PI * 0.5, -PI * 0.5 + TAU * _charge, 40,
 				Color(_color, 0.85), 5.0, true)
-		draw_circle(c, r * 0.34, Color(_color, 0.14 + 0.20 * _charge))
+		_draw_face(c, r, Color(Palette.TEXT, 0.35 + 0.35 * _charge), false)
+
+
+## Ortadakı ikon və "SUPER" yazısı.
+##
+## Yazı yalnız HAZIR və KİLİDLİ halda çıxır: dolan düymədə ikon kifayətdir,
+## yazı isə kiçik ekranda halqanın içini doldurub qövsü oxunmaz edirdi.
+func _draw_face(c: Vector2, r: float, tint: Color, label: bool) -> void:
+	var lift := r * 0.14 if label else 0.0
+	if _icon != null:
+		var s := r * (0.92 if label else 1.02)
+		draw_texture_rect(_icon, Rect2(c - Vector2(s, s) * 0.5 - Vector2(0.0, lift),
+			Vector2(s, s)), false, tint)
+	if not label:
+		return
+	var font := get_theme_default_font()
+	var fs := int(r * 0.30)
+	draw_string(font, Vector2(c.x - r, c.y + r * 0.62), "SUPER",
+		HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs, tint)
+
+
+## Dairənin aşağıdan [param level] (0..1) hündürlüyə qədər dolu hissəsi.
+func _draw_level(c: Vector2, r: float, level: float, col: Color) -> void:
+	if level <= 0.001:
+		return
+	if level >= 0.999:
+		draw_circle(c, r, col)
+		return
+	# Səviyyə xəttinin bucağı: y = r - 2r·level ⇒ sin(a) = 1 - 2·level.
+	var a := asin(clampf(1.0 - 2.0 * level, -1.0, 1.0))
+	var pts := PackedVector2Array()
+	var steps := 24
+	# Sağ kəsişmədən (a) saat istiqamətində aşağıdan keçib sol kəsişməyə (π - a).
+	for i in steps + 1:
+		var ang := lerpf(a, PI - a, float(i) / float(steps))
+		pts.push_back(c + Vector2(cos(ang), sin(ang)) * r)
+	draw_colored_polygon(pts, col)

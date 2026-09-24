@@ -8,7 +8,6 @@ extends Control
 ## "Məşq" düyməsi şəbəkəyə heç toxunmur: eyni [World] və [Sim] kodu
 ## yerli işə düşür, botlarla. Server yatmış olsa da oyun oynanır.
 
-const SETTINGS_PATH := "user://settings.cfg"
 const ARENA_SCENE := "res://scenes/game/arena.tscn"
 
 var _nick: LineEdit
@@ -297,30 +296,20 @@ func _clean_nick() -> String:
 	return "Mikrob" if s.is_empty() else s.substr(0, 16)
 
 
+## Faylı [Settings] oxuyur — bu ekran yalnız öz sahələrini doldurur.
+##
+## Əvvəl `ConfigFile` burada da açılırdı və yazarkən əl ilə birləşdirmək
+## lazım gəlirdi: təzə fayl yazılsaydı, bu ekranın TANIMADIĞI açarlar
+## (`player/mode`, `video/quality`) səssizcə silinər və oyunçu bir dəfə köhnə
+## menyudan oynayan kimi rejimi ilkin dəyərə qayıdardı. İndi faylın tək sahibi
+## var, ona görə həmin tələ də yoxdur.
 func _load_settings() -> void:
-	var cfg := ConfigFile.new()
-	if cfg.load(SETTINGS_PATH) != OK:
-		return
-	_nick.text = str(cfg.get_value("player", "nickname", _nick.text))
-	# Ayar faylı əl ilə redaktə oluna bilər — dəyər çərçivəyə salınır.
-	Net.species = Const.species_from(int(cfg.get_value("player", "species", 0)))
+	_nick.text = Net.nickname
 	_species_btn.text = _species_text()
-	_addr.text = str(cfg.get_value("net", "address", _addr.text))
+	_addr.text = Settings.address
 
 
-## Ayarları yazır — BİLDİYİ açarları, faylın qalanına toxunmadan.
-##
-## Fayl əvvəlcə OXUNUR, sonra üstünə yazılır. Təzə `ConfigFile` ilə saxlananda
-## bu ekranın tanımadığı açarlar — `player/mode` və `video/quality` — səssizcə
-## silinirdi: oyunçu bir dəfə köhnə menyudan oynayan kimi seçdiyi rejim
-## (məsələn ÜÇLÜK) və qrafika səviyyəsi ilkin dəyərə qayıdırdı.
-##
-## Bu ekran ehtiyatdır ([MenuV2] əsas girişdir), amma ehtiyat da məlumat
-## itirməməlidir.
 func _save_settings() -> void:
-	var cfg := ConfigFile.new()
-	cfg.load(SETTINGS_PATH)
-	cfg.set_value("player", "nickname", _clean_nick())
-	cfg.set_value("player", "species", int(Net.species))
-	cfg.set_value("net", "address", _addr.text.strip_edges())
-	cfg.save(SETTINGS_PATH)
+	Net.nickname = _clean_nick()
+	Settings.address = _addr.text.strip_edges()
+	Settings.save()

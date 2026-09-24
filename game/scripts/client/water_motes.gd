@@ -47,9 +47,16 @@ var depth := 0.0
 ## Neçə zərrəcik. İki qat arasında bölünür (bax [method Arena._build_world]).
 var count := COUNT
 
+## Cərəyan deşikləri `(x, y, radius)` — yalnız HIGH keyfiyyətdə Arena doldurur.
+##
+## Ayrı zərrəcik node-u qurulmur: sorulan cizgilər aşağıdakı mövcud su batch-inə
+## əlavə olunur. LOW-da massiv boş qalır və həm hesab, həm görüntü tam sönür.
+var sinks := PackedVector3Array()
+
 var _pos := PackedVector2Array()
 var _seed := PackedFloat32Array()
 var _ready_field := 0.0
+var _flow_t := 0.0
 
 
 func _ready() -> void:
@@ -93,6 +100,7 @@ func _scatter(rng: RandomNumberGenerator) -> void:
 
 
 func _process(delta: float) -> void:
+	_flow_t += delta
 	var half := span * FIELD_FACTOR
 	# Kamera uzaqlaşanda sahə genişlənir; birdən-birə deyil, tədricən —
 	# əks halda böyüyən mikrobun ətrafında zərrəciklər peyda olardı.
@@ -120,6 +128,11 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	# Şüşə kənarının rəngindən bir az açıq: fonun içində qalmalıdır, amma
+	# görünməlidir. Dərin qat sönük və nazikdir.
+	var col := Palette.DISH_EDGE.lerp(Palette.TEXT, 0.30 - 0.12 * depth)
+	var mote_col := Color(col, 0.40 - 0.16 * depth)
 	for i in _pos.size():
 		var p: Vector2 = _pos[i]
 		var flow := Const.current_at(p)
@@ -130,12 +143,28 @@ func _draw() -> void:
 			tail = Vector2(0.9, 0.0)
 		pts.push_back(p)
 		pts.push_back(p - tail)
+		cols.push_back(mote_col)
 
-	# Şüşə kənarın rəngindən bir az açıq: fonun içində qalmalıdır, amma
-	# görünməlidir. Sönük olsa qat boş yerə hesablanır, parlaq olsa
-	# mikroblarla yarışır — ikisi arasında dar bir yol var.
-	# Dərin qat sönük və nazikdir. Rəqəmlər art-direksiya sənədindən gəlir:
-	# dərin 0.20–0.26, səth 0.32–0.40 — ikisi də mikrobların parlaqlıq
-	# diapazonundan xeyli aşağıdadır.
-	var col := Palette.DISH_EDGE.lerp(Palette.TEXT, 0.30 - 0.12 * depth)
-	draw_multiline(pts, Color(col, 0.40 - 0.16 * depth), 1.8 - 0.5 * depth)
+	# Deşiyə sorulma spiral + radial hərəkətdir. Nöqtə deyil, qısa iz çəkilir
+	# ki, axının istiqaməti tək kadrda da oxunsun. Hər ventdə yeddi cizgi
+	# kifayətdir; daha çoxu burulğan sprite-ını örtüb deşiyi qapadırdı.
+	for vi in sinks.size():
+		var sink: Vector3 = sinks[vi]
+		var centre := Vector2(sink.x, sink.y)
+		for j in 7:
+			var phase := fposmod(_flow_t * 0.46 + float(j) / 7.0 + float(vi) * 0.13, 1.0)
+			var dist := sink.z * lerpf(0.22, 1.08, 1.0 - phase)
+			var angle := _flow_t * 0.92 + float(j) * 2.39996 + phase * 2.8
+			var radial := Vector2.from_angle(angle)
+			var tangent := radial.orthogonal()
+			var p := centre + radial * dist
+			# Quyruq hərəkətin əksinə — çölə və bir az saat istiqamətinin əksinə.
+			var tail := radial * (5.0 + 7.0 * phase) - tangent * 5.0
+			pts.push_back(p)
+			pts.push_back(p + tail)
+			cols.push_back(Color(Palette.VENT.lerp(Palette.TEXT, 0.28),
+				0.16 + 0.30 * (1.0 - phase)))
+
+	# Rəng massivinə keçmək əlavə çağırış yaratmır: adi su cizgiləri ilə isti
+	# vent axını eyni multiline batch-də qalır.
+	draw_multiline_colors(pts, cols, 1.8 - 0.5 * depth)

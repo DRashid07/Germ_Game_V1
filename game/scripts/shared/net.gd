@@ -117,16 +117,6 @@ func join_server(address: String, port: int = Const.DEFAULT_PORT) -> Error:
 	return OK
 
 
-## Növbədəki paketləri dərhal yola salır.
-##
-## Bağlantını bağlamazdan ƏVVƏL çağırılır: RPC növbədə qalıb peer bağlansa,
-## ENet paketi kanalsız peer-ə göndərməyə çalışır və xəta yazır.
-func flush() -> void:
-	var peer := multiplayer.multiplayer_peer
-	if peer is ENetMultiplayerPeer:
-		(peer as ENetMultiplayerPeer).host.flush()
-
-
 func disconnect_from_server() -> void:
 	if _peer != null:
 		_peer.close()

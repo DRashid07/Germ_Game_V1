@@ -567,6 +567,13 @@ func tick(dt: float) -> Array:
 	# server nəticə ekranı boyu boş yerə hesablayır.
 	if phase != Const.Phase.OVER:
 		sim.step(_inputs, dt)
+	else:
+		# Hadisələri və partlama siyahısını yalnız `step` təmizləyir. Donmuş
+		# dünyada təmizlənməsə, son tick-in partlayanları nəticə ekranı boyu HƏR
+		# tick yenidən emal olunur: oyunçuya `on_burst` təkrar gedir (yeni matça
+		# keçibsə, onu orada da "partladır") və effekt hər snapshot-da təkrarlanır.
+		sim.events.clear()
+		sim.burst_log.clear()
 
 	# Atəş və super BİR DƏFƏLİK hadisələrdir. Paket itsə, saxlanan giriş təkrar
 	# oxunar və oyunçu istəmədən yenidən atəş açar (super isə kirpiklidə üstəlik

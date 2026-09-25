@@ -1235,16 +1235,18 @@ func _return_to_menu() -> void:
 	if not practice:
 		# Serverə "çıxıram" deyirik: mikrob dərhal silinir, 20 saniyəlik
 		# yenidən qoşulma möhləti boş yerə gözlənilmir.
+		#
+		# Bağlantı BAĞLANMIR — menyu onu olduğu kimi işlədir (bax
+		# [method MenuV2._probe_server]), növbəti OYNA yenidən qoşulmur.
+		# Dərhal bağlasaq, WebSocket-də bu RPC itirdi: bağlama çərçivəsi paketlə
+		# bir poll-a düşür və server bağlanmış peer-in qalan paketlərini
+		# oxumadan onu silir. Mikrob "bağlantını itirdi" sayılıb 20 s dünyada
+		# qalırdı, dərhal OYNA basan oyunçu isə öz tərk etdiyi mikrobla eyni
+		# dünyaya düşürdü. Brauzer və Render yalnız WebSocket işlədir.
 		if Net.is_connected_to_server():
 			Net.request_leave.rpc_id(1)
-			# Paket bağlantı BAĞLANMAZDAN əvvəl yola salınır.
-			#
-			# `disconnect_from_server` dərhal çağırılsaydı, RPC hələ növbədə
-			# olarkən peer bağlanardı və ENet "Unable to send packet on channel 0,
-			# max channels: 0" yazardı — matçın sonunda bir neçə oyunçu eyni anda
-			# çıxanda server logunda məhz bu görünürdü.
-			Net.flush()
-		Net.disconnect_from_server()
+		else:
+			Net.disconnect_from_server()
 	get_tree().change_scene_to_file("res://scenes/ui/menu.tscn")
 
 

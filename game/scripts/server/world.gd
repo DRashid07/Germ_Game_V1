@@ -81,7 +81,9 @@ var _revive := {}
 
 var _frame_germs: Array = []    ## [Vector2 pos, Array row]
 var _frame_shots: Array = []
-var _frame_food: Array = []
+## Qida sətir massivi yox, iki sıx massivdir — bax [method _build_frame].
+var _frame_food_pos := PackedVector2Array()
+var _frame_food_id := PackedInt64Array()
 var _frame_events: Array = []
 var _frame_board := PackedInt32Array()
 
@@ -690,9 +692,16 @@ func _build_frame() -> void:
 		_frame_shots.append([s.pos, s.id, s.color, s.pos.x, s.pos.y, s.dir.x, s.dir.y])
 
 	# Qida düz ədəd axını kimi paketlənir (bax [constant Const.FOOD_STRIDE]).
-	_frame_food.clear()
-	for f in sim.food:
-		_frame_food.append([f.pos, f.id])
+	#
+	# Hər qida üçün kiçik `[pos, id]` massivi YARADILMIR: qida ən çox olan
+	# obyektdir və tick-də yüzdən çox ayırma ölçülən xərc idi.
+	var n_food := sim.food.size()
+	_frame_food_pos.resize(n_food)
+	_frame_food_id.resize(n_food)
+	for i in n_food:
+		var f := sim.food[i]
+		_frame_food_pos[i] = f.pos
+		_frame_food_id[i] = f.id
 
 	# Hadisələr (top atma, udma, partlama) yalnız bu tick üçün gedir.
 	# Sıra [enum Const.EF] ilə eynidir: KIND, X, Y, ARG, COLOR.
@@ -767,7 +776,7 @@ func snapshot_for(peer: int) -> Array:
 		sim.tick,
 		germs,
 		_near_shots(_frame_shots, eye, r2, shot_n),
-		_near_food(_frame_food, eye, r2, food_n),
+		_near_food(_frame_food_pos, _frame_food_id, eye, r2, food_n),
 		_near_flat(_frame_events, eye, r2, event_n),
 		_frame_board,
 		# ƏHALİ və SAĞ SAY eyni tərifdən çıxır ([method _alive_count]).
@@ -885,25 +894,62 @@ static func _near(rows: Array, eye: Vector2, r2: float, limit := 0) -> Array:
 ## örtərdi və snapshot-a 110-dan çox qida düşərdi — ölçülüb, tək bu sahə
 ## 1292 bayt tuturdu, ENet-in MTU-su isə 1392-dir. Uzaqdakı qida onsuz da
 ## ekrandan kənardadır, yəni itən heç nə yoxdur.
-static func _near_food(rows: Array, eye: Vector2, r2: float, limit: int) -> PackedFloat32Array:
-	var near: Array = []
-	for row in rows:
-		var p: Vector2 = row[0]
-		var d := eye.distance_squared_to(p)
+static func _near_food(pos: PackedVector2Array, ids: PackedInt64Array, eye: Vector2,
+		r2: float, limit: int) -> PackedFloat32Array:
+	var cand := PackedInt32Array()
+	var dist := PackedFloat64Array()
+	for i in pos.size():
+		var d := eye.distance_squared_to(pos[i])
 		if d > r2:
 			continue
-		near.append([d, row[1], p.x, p.y])
+		cand.append(i)
+		dist.append(d)
 
-	if near.size() > limit:
-		near.sort_custom(func(x, y) -> bool: return x[0] < y[0])
-		near.resize(limit)
+	var pick := cand
+	if cand.size() > limit:
+		pick = _closest(cand, dist, limit)
 
 	var out := PackedFloat32Array()
-	for e in near:
-		out.push_back(float(e[1]))
-		out.push_back(e[2])
-		out.push_back(e[3])
+	for i in pick:
+		var p := pos[i]
+		out.push_back(float(ids[i]))
+		out.push_back(p.x)
+		out.push_back(p.y)
 	return out
+
+
+## Ən yaxın [param limit] namizəd — yaxından uzağa, [param cand]-dakı indekslər.
+##
+## Əvvəl `sort_custom` ilə sıralanırdı və snapshot-un ən ağır yeri o idi: hər
+## müqayisə bir lambda çağırışıdır, oyunçu başına tick-də yüzlərlə. İndi
+## məsafələr yerli `sort()` ilə sıralanır və cavab oradan oxunur.
+##
+## Nəticə köhnə yolla EYNİDİR. Məsafələr fərqlidirsə, sıra tək mənalıdır —
+## hansı alqoritmlə sıralansa da. Bərabər məsafə isə sıranı alqoritmdən asılı
+## edir (`sort_custom` sabit deyil), ona görə o halda köhnə sıralama eyni
+## ardıcıllıqla, eyni müqayisə ilə işlədilir.
+static func _closest(cand: PackedInt32Array, dist: PackedFloat64Array, limit: int) -> PackedInt32Array:
+	var sorted := dist.duplicate()
+	sorted.sort()
+	var pick := PackedInt32Array()
+	for k in range(1, limit + 1):
+		if sorted[k] == sorted[k - 1]:
+			var near: Array = []
+			for j in cand.size():
+				near.append([dist[j], cand[j]])
+			near.sort_custom(func(x, y) -> bool: return x[0] < y[0])
+			for j in limit:
+				pick.append(near[j][1])
+			return pick
+
+	var at := {}
+	var edge := sorted[limit - 1]
+	for j in cand.size():
+		if dist[j] <= edge:
+			at[dist[j]] = cand[j]
+	for j in limit:
+		pick.append(at[sorted[j]])
+	return pick
 
 
 # ---------------------------------------------------------------- bağlantı

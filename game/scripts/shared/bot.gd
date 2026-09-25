@@ -170,14 +170,19 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 static func _avoid(sim: Sim, me: Sim.GermState, move: Vector2) -> Vector2:
 	if move == Vector2.ZERO:
 		return move
-	var probe := me.pos + move * (me.radius() + PROBE_AHEAD)
-	for i in sim.obstacles.size():
-		if DishMap.wall_gone(sim.broken[i]):
-			continue
-		var o := sim.obstacles[i]
+	# Radius tutumdan gəlir və bu funksiyada dəyişmir — maneə başına yenidən
+	# hesablanmır. Ucuz məsafə yoxlaması dağılma yoxlamasından ƏVVƏL gedir:
+	# ikisi də yan təsirsizdir, yəni tapılan ilk maneə eynidir.
+	var rad := me.radius()
+	var probe := me.pos + move * (rad + PROBE_AHEAD)
+	var obstacles := sim.obstacles
+	for i in obstacles.size():
+		var o := obstacles[i]
 		var c := Vector2(o.x, o.y)
-		var r := o.z + me.radius()
+		var r := o.z + rad
 		if probe.distance_squared_to(c) > r * r:
+			continue
+		if DishMap.wall_gone(sim.broken[i]):
 			continue
 		var away := (me.pos - c).normalized()
 		var tangent := Vector2(-away.y, away.x)
@@ -249,14 +254,17 @@ static func _nearest_enemy(sim: Sim, me: Sim.GermState) -> Sim.GermState:
 	return best
 
 
+## Hər bot hər tick BÜTÜN qidanı gəzir, ona görə döngü mümkün qədər yüngüldür:
+## mövqe və id bir dəfə oxunur, kilid isə yalnız daha yaxın namizəddə
+## yoxlanılır. Şərtlər yan təsirsizdir — seçilən qida (bərabərlikdə də) eynidir.
 static func _nearest_food(sim: Sim, me: Sim.GermState) -> Sim.FoodState:
 	var best: Sim.FoodState = null
 	var best_d := INF
+	var at := me.pos
+	var my_id := me.id
 	for f in sim.food:
-		if f.lock_id == me.id and f.lock_t > 0.0:
-			continue
-		var d := me.pos.distance_squared_to(f.pos)
-		if d < best_d:
+		var d := at.distance_squared_to(f.pos)
+		if d < best_d and not (f.lock_id == my_id and f.lock_t > 0.0):
 			best_d = d
 			best = f
 	return best

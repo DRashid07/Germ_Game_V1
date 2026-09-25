@@ -36,6 +36,16 @@ var verbose := false
 var _inputs_seen := 0
 var _report_accum := 0.0
 
+## Tick-in öz qiyməti — status sətri üçün (bax [method _report]).
+##
+## Pulsuz serverdə CPU payı kiçikdir: tick büdcəni aşanda
+## [constant MAX_CATCHUP_TICKS] geridə qalan tick-ləri SƏSSİZ atırdı — oyun
+## yavaşıyırdı, logda isə heç nə görünmürdü. `Time.get_ticks_usec` ucuzdur.
+var _tick_us := 0
+var _tick_max_us := 0
+var _tick_count := 0
+var _dropped_ticks := 0
+
 
 func _ready() -> void:
 	Net.lobby = self
@@ -50,9 +60,22 @@ func _process(delta: float) -> void:
 	while _accum >= Const.TICK_DELTA and steps < MAX_CATCHUP_TICKS:
 		_accum -= Const.TICK_DELTA
 		steps += 1
+		var t0 := Time.get_ticks_usec()
 		_tick_worlds(Const.TICK_DELTA)
+		var cost := Time.get_ticks_usec() - t0
+		_tick_us += cost
+		_tick_max_us = maxi(_tick_max_us, cost)
+		_tick_count += 1
 	if steps == MAX_CATCHUP_TICKS:
+		# Silinən borc sayılır ki, status sətrində görünsün.
+		_dropped_ticks += int(_accum / Const.TICK_DELTA)
 		_accum = 0.0     # geri qalmışıq, borcu silirik
+
+	# Status sətri tick-dən KƏNARDA yazılır — onun öz qiyməti (bütün mikrobların
+	# siyahısı) tick ölçüsünə düşməsin.
+	if verbose and _report_accum >= 5.0:
+		_report_accum = 0.0
+		_report()
 
 
 # ---------------------------------------------------------------- giriş/çıxış
@@ -181,9 +204,6 @@ func _tick_worlds(dt: float) -> void:
 
 	if verbose:
 		_report_accum += dt
-		if _report_accum >= 5.0:
-			_report_accum = 0.0
-			_report()
 
 
 ## Matç bitdi və oyunçu SAĞ QALDI — nəticə göndərilir.
@@ -238,8 +258,16 @@ func _on_player_burst(world: World, entry: Dictionary) -> void:
 
 
 func _report() -> void:
-	print("[lobby] %d dünya · son 5 s-də %d giriş paketi" % [worlds.size(), _inputs_seen])
+	# Tick büdcəsi 1000/TICK_RATE ms-dir; "atılan" sıfırdan böyükdürsə server
+	# real vaxtdan geri qalıb və oyun yavaşıyıb.
+	var avg_ms := float(_tick_us) / float(maxi(_tick_count, 1)) / 1000.0
+	print("[lobby] %d dünya · son 5 s-də %d giriş paketi · tick orta %.2f ms, maks %.2f ms · atılan tick %d" % [
+		worlds.size(), _inputs_seen, avg_ms, _tick_max_us / 1000.0, _dropped_ticks])
 	_inputs_seen = 0
+	_tick_us = 0
+	_tick_max_us = 0
+	_tick_count = 0
+	_dropped_ticks = 0
 	for wid in worlds:
 		var world: World = worlds[wid]
 		var parts := PackedStringArray()

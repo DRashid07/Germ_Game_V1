@@ -364,6 +364,16 @@ func step_movement(inputs: Dictionary, dt: float, keep_events := true) -> void:
 func _step_germs(inputs: Dictionary, dt: float) -> void:
 	var starved: Array[GermState] = []
 
+	# Tor yalnız AYAQLIDA olur, növ isə tick boyu dəyişmir. [method _net_slow]
+	# hər mikrob üçün bütün dünyanı gəzməsin deyə ayaqlılar əvvəlcədən
+	# seçilir (sıra `germs`-in sırasıdır). Tor açılıb-bağlanması tick-in
+	# İÇİNDƏ baş verir, ona görə `in_net()` yenə canlı yoxlanılır.
+	var helios: Array[GermState] = []
+	for id in germs:
+		var h: GermState = germs[id]
+		if h.species == Const.Species.HELIOZOAN:
+			helios.append(h)
+
 	for id in germs:
 		var g: GermState = germs[id]
 		if not g.alive:
@@ -401,7 +411,7 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 
 		if wish.length_squared() > 0.0001:
 			# Tora düşən rəqib yavaşıyır — şüalara yapışır.
-			var target := wish * g.speed() * _net_slow(g)
+			var target := wish * g.speed() * _net_slow(g, helios)
 			g.vel = g.vel.lerp(target,
 				1.0 - exp(-Const.FLUID_THRUST * Const.SPECIES_THRUST[sp] * dt))
 		else:
@@ -468,9 +478,11 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 ## proqnoz simulyasiyasında yalnız öz mikrobun var, ona görə rəqibin toru
 ## proqnozda görünmür və düzəlişlə gəlir. Bu, dəymə ilə eyni davranışdır:
 ## rəqibin sənə etdiyi hər şey serverin sözüdür.
-func _net_slow(g: GermState) -> float:
-	for id in germs:
-		var o: GermState = germs[id]
+##
+## [param helios] — dünyadakı ayaqlılar, `germs` sırası ilə (bax
+## [method _step_germs]). Başqa növün toru olmur, yəni nəticə eynidir.
+func _net_slow(g: GermState, helios: Array[GermState]) -> float:
+	for o in helios:
 		if o.id == g.id or not o.alive or not o.in_net():
 			continue
 		# Tor YOLDAŞI yavaşlatmır — yoxsa ayaqlı öz komandasını tələyə salır və
@@ -571,21 +583,23 @@ func _confine(g: GermState) -> void:
 	var rb := r * Const.SPECIES_BODY[int(g.species)]
 	# Yalnız BLOKLAYAN və hələ DAĞILMAMIŞ maneələr saxlayır. Kol və cərəyan
 	# deşiyi mikrobu buraxır (bax [method DishMap.blocks_germ]).
+	#
+	# Məsafə İLK yoxlanılır: mikrob adətən heç bir maneəyə toxunmur və iki
+	# statik çağırış yalnız toxunan maneəyə qalır. Şərtlər yan təsirsizdir.
 	for i in obstacles.size():
-		if DishMap.wall_gone(broken[i]):
-			continue
 		var o := obstacles[i]
-		if not DishMap.blocks_germ(int(o.w)):
-			continue
 		var c := Vector2(o.x, o.y)
 		var min_d := o.z + rb
 		var delta := g.pos - c
 		var d := delta.length()
-		if d < min_d:
-			var n := (delta / d) if d > 0.001 else Vector2.RIGHT
-			g.pos = c + n * min_d
-			# Maneəyə dik gələn sürət söndürülür, yan sürət qalır — mikrob sürüşür.
-			g.vel -= n * minf(g.vel.dot(n), 0.0)
+		if not (d < min_d):
+			continue
+		if DishMap.wall_gone(broken[i]) or not DishMap.blocks_germ(int(o.w)):
+			continue
+		var n := (delta / d) if d > 0.001 else Vector2.RIGHT
+		g.pos = c + n * min_d
+		# Maneəyə dik gələn sürət söndürülür, yan sürət qalır — mikrob sürüşür.
+		g.vel -= n * minf(g.vel.dot(n), 0.0)
 
 
 	var limit := Const.WORLD_RADIUS - r
@@ -612,10 +626,9 @@ func _confine(g: GermState) -> void:
 func _vent_push(at: Vector2) -> Vector2:
 	var push := Vector2.ZERO
 	for i in obstacles.size():
-		if DishMap.wall_gone(broken[i]):
-			continue
+		# Növ əvvəl yoxlanılır: deşik azdır, statik çağırış yalnız onlara gedir.
 		var o := obstacles[i]
-		if int(o.w) != DishMap.Kind.VENT:
+		if int(o.w) != DishMap.Kind.VENT or DishMap.wall_gone(broken[i]):
 			continue
 		var c := Vector2(o.x, o.y)
 		var d := at.distance_to(c)
@@ -632,17 +645,22 @@ func _vent_push(at: Vector2) -> Vector2:
 ## Mikroblar bir-birinin içinə girmir — üst-üstə yığılma oyunu oxunmaz edir.
 ## İki tərəf bərabər itələnir, ona görə heç kim divara sıxışdırıla bilmir.
 func _separate_germs() -> void:
-	var ids := germs.keys()
-	for i in range(ids.size()):
-		var a: GermState = germs[ids[i]]
+	# Cüt döngüsüdür, ona görə radius hər mikrob üçün BİR dəfə hesablanır —
+	# itələmə yalnız mövqeni dəyişir, tutumu yox.
+	var list := germs.values()
+	var radii := PackedFloat64Array()
+	for g: GermState in list:
+		radii.append(g.radius())
+	for i in range(list.size()):
+		var a: GermState = list[i]
 		if not a.alive:
 			continue
-		for j in range(i + 1, ids.size()):
-			var b: GermState = germs[ids[j]]
+		for j in range(i + 1, list.size()):
+			var b: GermState = list[j]
 			if not b.alive:
 				continue
 			var delta := b.pos - a.pos
-			var min_d := a.radius() + b.radius()
+			var min_d := radii[i] + radii[j]
 			var d := delta.length()
 			if d >= min_d:
 				continue
@@ -715,18 +733,20 @@ func _step_shots(dt: float) -> void:
 		# Kol və cərəyan deşiyi topu BURAXIR (bax [method DishMap.blocks_shot]).
 		# Kolun içindən atəş açmaq mümkündür — gizlənən oyunçunun yeganə
 		# üstünlüyü elə budur.
+		#
+		# Kəsişmə İLK hesablanır: top adətən heç bir maneəyə dəymir və iki
+		# statik çağırış yalnız dəyən maneəyə qalır. Şərtlər yan təsirsizdir.
 		for i in obstacles.size():
-			if DishMap.wall_gone(broken[i]):
-				continue
 			var o := obstacles[i]
-			if not DishMap.blocks_shot(int(o.w)):
-				continue
 			var t := _seg_circle_t(from, to, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS)
-			if t >= 0.0 and t < best:
-				best = t
-				victim = null
-				hit_obstacle = o
-				hit_index = i
+			if not (t >= 0.0 and t < best):
+				continue
+			if DishMap.wall_gone(broken[i]) or not DishMap.blocks_shot(int(o.w)):
+				continue
+			best = t
+			victim = null
+			hit_obstacle = o
+			hit_index = i
 
 		var owner: GermState = germs.get(s.owner_id)
 		for id in germs:
@@ -901,60 +921,99 @@ func _step_food(dt: float) -> void:
 	var damp := 1.0 / (1.0 + Const.FOOD_FRICTION * dt)
 	var survivors: Array[FoodState] = []
 
+	# Mikrobların siyahısı qida döngüsündən ƏVVƏL bir dəfə yığılır.
+	#
+	# Bu döngü tick-in ən ağır yeridir (qida × mikrob): hər cüt üçün Dictionary
+	# axtarışı, `in_net()`, `radius()` və `pow` çağırılırdı. Mövqe, `alive` və
+	# `in_net()` bu funksiyanın içində DƏYİŞMİR. Dəyişən iki şeydir — top sayı
+	# (canlı oxunur) və spordan sonra tutum, yəni radius (həmin mikrobun həddi
+	# yenidən hesablanır). Sıra `germs`-in sırasıdır, yəni nəticə eynidir.
+	var nets: Array[GermState] = []
+	var eaters: Array[GermState] = []
+	var eat_pos := PackedVector2Array()
+	var reach_food := PackedFloat64Array()
+	var reach_spore := PackedFloat64Array()
+	for id in germs:
+		var g: GermState = germs[id]
+		if not g.alive:
+			continue
+		if g.in_net():
+			nets.append(g)
+		eaters.append(g)
+		eat_pos.append(g.pos)
+		reach_food.append(pow(g.radius() + Const.FOOD_RADIUS, 2.0))
+		reach_spore.append(pow(g.radius() + Const.SPORE_RADIUS, 2.0))
+	var n_eaters := eaters.size()
+	var limit := Const.WORLD_RADIUS - Const.FOOD_RADIUS
+
 	for f in food:
-		f.lock_t = maxf(0.0, f.lock_t - dt)
+		# Qidanın çoxu kilidsiz və SAKİTDİR (öz sürəti yoxdur) — onlar üçün boş
+		# iş görülmür: sıfır kilid `maxf`-dən yenə sıfır çıxırdı, sıfır sürət də
+		# dəyişmirdi.
+		if f.lock_t > 0.0:
+			f.lock_t = maxf(0.0, f.lock_t - dt)
+
+		# Sürət və mövqe bir dəfə oxunur, sonda yazılır — əməliyyatlar və
+		# onların sırası eynidir, sadəcə sahəyə hər dəfə müraciət olunmur.
+		var v := f.vel
+		var at := f.pos
 
 		# Sərbəst top suda asılıdır: öz sürəti sönür, amma su onu heç vaxt
 		# buraxmır — sakit qida da axınla birlikdə sürüşür. Ekranda 50-dən çox
 		# qida topu var və hamısının eyni burulğanda süzülməsi "bu, mayedir"
 		# mesajını hər şeydən yaxşı verir.
-		if f.vel.length_squared() > 1.0:
-			f.vel *= damp
-		elif f.vel != Vector2.ZERO:
-			f.vel = Vector2.ZERO
+		if v != Vector2.ZERO:
+			if v.length_squared() > 1.0:
+				v *= damp
+			else:
+				v = Vector2.ZERO
 
-		var flow := Const.current_at(f.pos)
-		if f.vel != Vector2.ZERO or flow != Vector2.ZERO:
-			f.pos += (f.vel + flow) * dt
-			var limit := Const.WORLD_RADIUS - Const.FOOD_RADIUS
-			if f.pos.length() > limit:
-				var n := f.pos.normalized()
-				f.pos = n * limit
-				f.vel = f.vel.bounce(-n) * 0.5
+		var flow := Const.current_at(at)
+		if v != Vector2.ZERO or flow != Vector2.ZERO:
+			at += (v + flow) * dt
+			if at.length() > limit:
+				var n := at.normalized()
+				at = n * limit
+				v = v.bounce(-n) * 0.5
+		f.vel = v
 
 		# Aksopodiya toru: açıq torun zolağındakı qida ona doğru axır.
 		#
 		# Kinetosistlər — şüaların üzərindəki qranullar — yem toxunan kimi
 		# partlayıb onu şüaya yapışdırır. Heliozoa məhz belə yeyir: qovmadan,
 		# gözləyərək.
-		for id in germs:
-			var h: GermState = germs[id]
-			if not h.alive or not h.in_net():
-				continue
+		for h in nets:
 			var pull_r := h.radius() * Const.NET_RADIUS
-			var to_h := h.pos - f.pos
+			var to_h := h.pos - at
 			var pd := to_h.length()
 			if pd > pull_r or pd < 0.001:
 				continue
-			f.pos += (to_h / pd) * Const.NET_PULL * dt
+			at += (to_h / pd) * Const.NET_PULL * dt
 			break
+		f.pos = at
 
 		var eaten := false
-		for id in germs:
-			var g: GermState = germs[id]
-			if not g.alive or g.balls >= g.capacity:
+		var spore := f.id < 0
+		for i in n_eaters:
+			# Spor iri olduğuna görə udma məsafəsi də böyükdür — gözlə görünən
+			# ölçü ilə oyun qaydası uyğun olmalıdır.
+			#
+			# Məsafə İLK yoxlanılır: qidanın çoxu hər mikrobdan uzaqdadır, qalan
+			# şərtlər isə yan təsirsizdir — sıraları nəticəni dəyişmir.
+			if at.distance_squared_to(eat_pos[i]) > (reach_spore[i] if spore else reach_food[i]):
+				continue
+			var g := eaters[i]
+			if g.balls >= g.capacity:
 				continue
 			if f.lock_id == g.id and f.lock_t > 0.0:
 				continue
-			# Spor iri olduğuna görə udma məsafəsi də böyükdür — gözlə görünən
-			# ölçü ilə oyun qaydası uyğun olmalıdır.
-			var fr := Const.SPORE_RADIUS if f.id < 0 else Const.FOOD_RADIUS
-			if f.pos.distance_squared_to(g.pos) > pow(g.radius() + fr, 2.0):
-				continue
 			g.balls += 1
-			if f.id < 0:
+			if spore:
 				# SPOR — tutum artır. Partlatma ilə EYNİ mükafat, başqa yolla.
 				g.capacity = mini(g.capacity + Const.SPORE_CAPACITY, Const.MAX_CAPACITY)
+				# Radius tutumdan gəlir — bu mikrobun udma həddi də yenilənir.
+				reach_food[i] = pow(g.radius() + Const.FOOD_RADIUS, 2.0)
+				reach_spore[i] = pow(g.radius() + Const.SPORE_RADIUS, 2.0)
 				events.append({"t": "spore", "pos": f.pos, "arg": 0.0, "color": g.color})
 			# Dinc oyunçu da super doldurur, sadəcə yavaş — kimsə tapmadan da
 			# irəliləyiş var.
@@ -1051,15 +1110,17 @@ func _spawn_food(dt: float) -> void:
 
 ## İki nöqtə arasında maneəsiz atəş xətti varmı?
 ## Bot hədəf seçərkən istifadə olunur.
+##
+## Kəsişmə növdən və dağılmadan ƏVVƏL yoxlanılır — xətt adətən maneələrin
+## çoxuna toxunmur. Hər üç şərt yan təsirsizdir, cavab eynidir.
 func has_line_of_sight(a: Vector2, b: Vector2) -> bool:
 	for i in obstacles.size():
-		if DishMap.wall_gone(broken[i]):
-			continue
 		var o := obstacles[i]
-		if not DishMap.blocks_sight(int(o.w)):
+		if not (_seg_circle_t(a, b, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS) >= 0.0):
 			continue
-		if _seg_circle_t(a, b, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS) >= 0.0:
-			return false
+		if DishMap.wall_gone(broken[i]) or not DishMap.blocks_sight(int(o.w)):
+			continue
+		return false
 	return true
 
 
@@ -1078,11 +1139,15 @@ func has_line_of_sight(a: Vector2, b: Vector2) -> bool:
 ## tez acma, və indi bir də GİZLƏNƏ BİLMƏMƏK. Lider kolda oturub oyunu
 ## dondura bilməz.
 func bush_of(g: GermState) -> int:
+	# Hər tick hər mikrob üçün çağırılır (bax [method World._build_frame]).
+	# Növ İLK yoxlanılır — maneələrin çoxu kol deyil və statik çağırışa
+	# ehtiyac qalmır. Şərtlər yan təsirsizdir, tapılan ilk kol eynidir.
+	var r := g.radius()
 	for i in obstacles.size():
-		if DishMap.wall_gone(broken[i]):
-			continue
 		var o := obstacles[i]
-		if int(o.w) != DishMap.Kind.BUSH or o.z < g.radius():
+		if int(o.w) != DishMap.Kind.BUSH or o.z < r:
+			continue
+		if DishMap.wall_gone(broken[i]):
 			continue
 		if g.pos.distance_squared_to(Vector2(o.x, o.y)) <= o.z * o.z:
 			return i

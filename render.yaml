@@ -1,0 +1,22 @@
+# Germ Arena — Render Blueprint.
+#
+# Tək servis: brauzer oyunu (/) + oyun serveri (/ws) bir konteynerdə.
+# Ətraflı: deploy/render/Dockerfile və README → "Render".
+services:
+  - type: web
+    name: germ-arena
+    runtime: docker
+    plan: free
+    # Azərbaycana ən yaxın Render regionu.
+    region: frankfurt
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    # Oyun serveri adi HTTP-yə cavab vermir — yoxlama nginx-də bitir.
+    healthCheckPath: /healthz
+    autoDeploy: true
+    # README və dizayn sənədləri dəyişəndə yenidən build etməyə dəyməz.
+    buildFilter:
+      paths:
+        - game/**
+        - deploy/render/**
+        - .dockerignore

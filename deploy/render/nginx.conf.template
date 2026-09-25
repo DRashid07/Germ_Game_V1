@@ -1,0 +1,61 @@
+# Germ Arena — Render konteynerinin nginx konfiqurasiyası.
+#
+# `${PORT}` start.sh-də envsubst ilə doldurulur; qalan `$` dəyişənləri nginx-indir
+# və toxunulmaz qalır (envsubst-a yalnız PORT verilir).
+
+server {
+    listen       ${PORT};
+    listen       [::]:${PORT};
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # .wasm/.pck/.js build zamanı .gz kimi sıxılıb (bax Dockerfile).
+    gzip_static on;
+
+    # Fayl adları build-dən build-ə dəyişmir (index.wasm, index.pck) — `no-cache`
+    # brauzeri hər dəfə ETag ilə yoxlamağa məcbur edir, köhnə build ilişib qalmır.
+    add_header Cache-Control "no-cache" always;
+    # Build thread-sizdir, yəni bu ikisi hələ məcburi deyil. Saxlanılır ki,
+    # presetdə `variant/thread_support` açılsa host tərəfdə düzəliş lazım olmasın.
+    add_header Cross-Origin-Opener-Policy   "same-origin"  always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+
+    # Render-in sağlamlıq yoxlaması. Oyun serveri adi HTTP-yə cavab vermir (yalnız
+    # WebSocket əl sıxmasına), ona görə yoxlama nginx-də bitir; serverin düşməsini
+    # isə start.sh tutur — konteyner onunla birlikdə düşür.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Oyun serveri. `Upgrade`/`Connection` ötürülməsə nginx əl sıxmasını adi HTTP
+    # kimi göndərir və server onu rədd edir.
+    location = /ws {
+        proxy_pass http://127.0.0.1:27015;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        # Menyuda açıq qalan bağlantı səssiz ola bilər — standart 60 s onu kəsərdi.
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_buffering off;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # nginx-in mime.types-ında wasm olmasa brauzer axınla kompilyasiyadan imtina edir.
+    location ~ \.wasm$ {
+        types { }
+        default_type application/wasm;
+        # `add_header` irsi qırılır: burada biri varsa, yuxarıdakılar ötürülmür.
+        add_header Cache-Control "no-cache" always;
+        add_header Cross-Origin-Opener-Policy   "same-origin"  always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+    }
+}

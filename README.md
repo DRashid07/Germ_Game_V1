@@ -329,31 +329,33 @@ GODOT --headless --path game --export-release "Windows" build/GermArena.exe
 
 ---
 
-## Canlı server — HƏLƏ QURULMAYIB
-
-Menyuda əvvəlcədən doldurulan ünvan **yer tutucudur**:
+## Canlı server — Render
 
 ```
-wss://germ-arena-production.up.railway.app
+https://germ-arena.onrender.com       brauzer versiyası — linki açıb oyna
+wss://germ-arena.onrender.com/ws      oyun serveri (telefon və masaüstü build-ləri)
 ```
 
-Bu ünvan hələ mövcud deyil — Railway layihəsi yaradılmayıb. Hazırda oynamağın
-iki yolu var:
+Sayt və oyun serveri **bir** Render servisidir: nginx `/` ünvanında brauzer
+build-ini verir, `/ws`-i isə eyni konteynerdəki Godot serverinə ötürür (bax
+["Render-də saxlamaq"](#render-də-saxlamaq)). Brauzer versiyası server ünvanını
+səhifənin ÖZ ünvanından götürür ([`Const.default_server`](game/scripts/shared/constants.gd)),
+telefon və masaüstü build-ləri isə `DEFAULT_SERVER`-i işlədir.
 
-1. **MƏŞQ (offline)** — menyudakı ikinci düymə. Şəbəkəyə heç toxunmur,
-   eyni dünya kodu botlarla yerli işləyir.
-2. **Öz kompüterində server** — aşağıdakı "Serveri lokal qaldırmaq" bölməsi.
+> ⏳ **Pulsuz plan 15 dəqiqə boş qalanda yatır.** Yatmış servisin ilk açılışı
+> ~1 dəqiqə çəkir — Render konteyneri oyadır. Brauzerdə bu, sadəcə uzun
+> yüklənmədir: səhifə açılanda server artıq oyaqdır. Telefonda isə OYNA-nın
+> 12 saniyəlik həddi oyanmadan qısadır — "cavab yoxdur" görünsə, bir dəqiqə
+> sonra yenidən bas.
 
-Serveri Railway-ə qaldırdıqdan sonra ünvanı iki yerdə yeniləmək lazımdır:
-[`constants.gd → DEFAULT_SERVER`](game/scripts/shared/constants.gd) və
-[`tools/check_server.sh`](tools/check_server.sh).
+Serverə oynamadan baxmaq:
+```bash
+bash tools/check_server.sh                            # Render
+bash tools/check_server.sh ws://127.0.0.1:27015       # lokal server
+```
 
-> ⚠️ **Server ünvanını brauzerdə açma — `502` görəcəksən və bu NORMALDIR.**
-> Server veb sayt deyil, oyun serveridir: yalnız WebSocket dilində danışır.
-> Sağlamlığı belə yoxlanılır:
-> ```bash
-> bash tools/check_server.sh ws://127.0.0.1:27015
-> ```
+Şəbəkəsiz oynamaq həmişə mümkündür: **MƏŞQ (offline)** — eyni dünya kodu
+botlarla yerli işləyir.
 
 Texniki qərarlar və yol xəritəsi: [PLAN.md](PLAN.md) ·
 Vizual üslub: [design/ART_BIBLE.md](design/ART_BIBLE.md) ·
@@ -415,8 +417,10 @@ game/                    Godot layihəsi
 design/                  Dizayn mənbəyi (art/audio bible, brif, sprite, səs generatoru)
 tools/                   Build və deploy skriptləri
 build/                   Hazır APK və Linux server binarı
-web/                     Brauzer versiyasının hostinqi (nginx konteyneri)
-Dockerfile               Hədəf serverin konteyner tərifi
+deploy/render/           Render: sayt + oyun serveri bir konteynerdə (mənbədən build)
+render.yaml              Render servisinin tərifi
+web/                     Railway: brauzer versiyasının hostinqi (nginx konteyneri)
+Dockerfile               Railway: hədəf serverin konteyner tərifi
 railway.json             Railway deploy konfiqurasiyası
 ```
 
@@ -786,7 +790,81 @@ ortadadırsa hücuma keçir.
 
 ---
 
-## Serveri Railway-də saxlamaq
+## Render-də saxlamaq
+
+Hər şey TƏK servisdir (`germ-arena`, pulsuz plan, Frankfurt):
+
+| Yol | Nə verir |
+|---|---|
+| `/` | Brauzer build-i — nginx, `.wasm`/`.pck`/`.js` əvvəlcədən gzip-lənib |
+| `/ws` | Oyun serveri — nginx → `127.0.0.1:27015` (Godot headless, WebSocket) |
+| `/healthz` | Render-in sağlamlıq yoxlaması (oyun serveri adi HTTP-yə cavab vermir) |
+
+**Niyə bir servis:** pulsuz planda hər servis ayrıca yatır. İki servis olsaydı,
+oyunçu əvvəl saytın, sonra serverin oyanmasını gözləyərdi. Domen eyni olduğuna
+görə brauzer build-inə ünvan yazmaq da lazım deyil.
+
+| Fayl | Nədir |
+|---|---|
+| [`render.yaml`](render.yaml) | Servisin tərifi (Blueprint) |
+| [`deploy/render/Dockerfile`](deploy/render/Dockerfile) | Oyunu MƏNBƏDƏN qurur: Godot 4.7.2-ni yükləyir, Web və Linux Server presetlərini ixrac edir |
+| [`deploy/render/fetch_templates.py`](deploy/render/fetch_templates.py) | 1.28 GB-lıq şablon arxivindən HTTP Range ilə yalnız 2 faylı (~84 MB) çəkir |
+| [`deploy/render/start.sh`](deploy/render/start.sh) | Serveri və nginx-i qaldırır; biri düşsə konteyner də düşür və Render onu yenidən başladır |
+| [`deploy/render/nginx.conf.template`](deploy/render/nginx.conf.template) | Statik fayllar, `/ws` proksisi, wasm MIME tipi |
+
+Repoda hazır binar saxlanmır — build hər dəfə mənbədən gedir (~2 dəqiqə).
+
+### Yenidən deploy
+
+`main`-ə push kifayətdir: Render avtomatik build edir. Yalnız `game/`,
+`deploy/render/` və `.dockerignore` dəyişəndə — README-yə görə build getmir.
+
+```bash
+render login                                        # brauzerdə təsdiq
+render services                                     # servis id-si (srv-...)
+render logs --resources <srv-id> --tail             # server hər 5 s status yazır
+render deploys create <srv-id> --wait               # əl ilə yenidən deploy
+```
+
+### Lokal sınaq — Render şərtləri ilə
+```bash
+docker build -f deploy/render/Dockerfile -t germ-arena .
+docker run --rm --cpus=0.1 --memory=512m -p 10000:10000 germ-arena
+# brauzer: http://127.0.0.1:10000 · server: ws://127.0.0.1:10000/ws
+```
+`--cpus=0.1 --memory=512m` pulsuz planın limitləridir.
+
+### Pulsuz planın CPU-su (0.1)
+
+Server 30 Hz-də işləyir, yəni 0.1 CPU ilə bir tick-ə ~3.3 ms CPU düşür.
+Status sətri bunu birbaşa göstərir:
+
+```
+[lobby] 1 dünya · son 5 s-də 302 giriş paketi · tick orta 0.83 ms, maks 1.50 ms · atılan tick 0
+```
+
+**`atılan tick` sıfırdan böyükdürsə**, server real vaxtdan geri qalır və oyun
+yavaşıyır — o zaman Starter plan (0.5 CPU) lazımdır.
+
+Ölçü (2026-09-25, konteyner `--cpus=0.1 --memory=512m`, 2 oyunçu + botlar):
+
+| | Tick orta / maks | Atılan tick | CPU | RAM |
+|---|---:|---:|---:|---:|
+| Optimallaşdırmadan əvvəl | — | ölçülüb: oyun 18–24 Hz-ə düşürdü | — | — |
+| 1 dünya (SONSUZ ARENA) | 0.8–1.0 / 1.9 ms | 0 | ~5% | 79 MB |
+| 2 dünya (+ TƏK QALAN) | 1.5 / 2.8 ms | 0 | ~5.6% | 79 MB |
+
+Tick-in ən bahalı yeri qida döngüsü idi (qida × mikrob, tick-in ~45%-i).
+Mikrob siyahısı döngüdən əvvəl bir dəfə yığılır, ucuz məsafə yoxlaması
+statik çağırışlardan əvvəl gedir; nəticə **bit-bit eynidir** (8 ssenarinin
+hər tick-dəki SHA-256 izi əvvəl/sonra üst-üstə düşür). Tick ~2.3x ucuzlaşıb.
+
+---
+
+## Serveri Railway-də saxlamaq (alternativ, qurulmayıb)
+
+> Əsas host Render-dir (yuxarıya bax). Bu bölmə iki servisli köhnə sxemi
+> alternativ kimi saxlayır — kök `Dockerfile` və `web/` ona aiddir.
 
 Railway **ictimai UDP-ni dəstəkləmir**, ona görə orada WebSocket işlədilir.
 Portu Railway `PORT` dəyişəni ilə verir, server onu özü tutur.

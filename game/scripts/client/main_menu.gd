@@ -56,7 +56,7 @@ func _build() -> void:
 	_nick = _make_field("Adın", "Mikrob")
 	col.add_child(_nick)
 
-	_addr = _make_field("Server", Const.DEFAULT_SERVER)
+	_addr = _make_field("Server", Const.default_server())
 	col.add_child(_addr)
 
 	# Növ seçimi. Düymənin öz mətni seçimi göstərir — ayrıca "seçilib" nişanı

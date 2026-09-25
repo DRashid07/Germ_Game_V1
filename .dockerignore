@@ -4,3 +4,8 @@ build/*
 !build/server
 build/server/*
 !build/server/germ_arena_server.x86_64
+# Render build-i (deploy/render/Dockerfile) oyunu mənbədən özü ixrac edir.
+!game
+game/.godot
+game/build
+!deploy/render

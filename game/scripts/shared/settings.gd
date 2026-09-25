@@ -64,7 +64,7 @@ var left_handed := false
 var haptics := true
 
 # ---------- şəbəkə ----------
-var address := Const.DEFAULT_SERVER
+var address := Const.default_server()
 
 ## Headless (server, `--simtest`, `--autoclient`) — səs və kadr həddi
 ## tətbiq olunmur: o proseslərin nə audio cihazı var, nə də ekranı.
@@ -122,6 +122,10 @@ func load_from_disk() -> void:
 	haptics = bool(cfg.get_value("controls", "haptics", haptics))
 
 	address = str(cfg.get_value("net", "address", address))
+	# Köhnə buraxılışın ilkin ünvanı yazılıb qalıbsa, oyunçu onu seçməyib —
+	# saxlasaq, yeni build heç vaxt mövcud olmayan serverə qoşulmağa çalışardı.
+	if Const.OLD_DEFAULT_SERVERS.has(address.strip_edges()):
+		address = Const.default_server()
 
 
 func save() -> void:
@@ -168,7 +172,7 @@ func reset() -> void:
 	show_fps = false
 	left_handed = false
 	haptics = true
-	address = Const.DEFAULT_SERVER
+	address = Const.default_server()
 	Net.quality = Const.default_quality()
 	commit()
 

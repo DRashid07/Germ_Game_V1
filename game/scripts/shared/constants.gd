@@ -52,9 +52,13 @@ const TICK_RATE := 30
 const TICK_DELTA := 1.0 / float(TICK_RATE)
 const INTERP_DELAY := 0.1       ## Rəqiblər 100 ms geridə interpolate olunur
 const DEFAULT_PORT := 27015
-## Menyuda əvvəlcədən doldurulan server ünvanı.
+## Telefon və masaüstü build-lərinin ilkin server ünvanı (Render, bax `deploy/render/`).
 ## `wss://` olduğuna görə client avtomatik WebSocket nəqliyyatını seçir.
-const DEFAULT_SERVER := "wss://germ-arena-production.up.railway.app"
+## Brauzer versiyası bunu İŞLƏTMİR — bax [method default_server].
+const DEFAULT_SERVER := "wss://germ-arena.onrender.com/ws"
+## Əvvəlki buraxılışların ilkin ünvanları. Oyunçunun `settings.cfg`-sində bunlardan
+## biri qalıbsa, o, ünvanı özü yazmayıb — yeni ilkin ünvana keçirilir (bax [Settings]).
+const OLD_DEFAULT_SERVERS := ["wss://germ-arena-production.up.railway.app"]
 const MAX_CLIENTS := 256
 const INPUT_BUFFER_MAX := 64    ## Client-də reconciliation üçün saxlanan input sayı
 
@@ -507,6 +511,20 @@ static func quality_name(q: int) -> String:
 ## ilkin dəyər təhlükəsiz tərəfə əyilir.
 static func default_quality() -> Quality:
 	return Quality.LOW if OS.has_feature("mobile") else Quality.HIGH
+
+
+## Oyunun ilkin server ünvanı.
+##
+## Brauzer versiyası onu açan saytın ÖZÜNDƏKİ serverə qoşulur: Render-də nginx
+## `/ws` yolunu eyni konteynerdəki oyun serverinə ötürür (bax `deploy/render/`).
+## Beləcə build hansı domendə açılsa işləyir, və səhifə `https` olanda `ws://`
+## seçilib brauzerin qarışıq məzmun qadağasına ilişmir.
+static func default_server() -> String:
+	if OS.has_feature("web"):
+		var origin = JavaScriptBridge.eval("location.protocol + '//' + location.host")
+		if origin is String and origin.begins_with("http"):
+			return origin.replace("https://", "wss://").replace("http://", "ws://") + "/ws"
+	return DEFAULT_SERVER
 
 
 ## Rejimin ƏN QISA təsviri — ana ekrandakı dar kart üçün.

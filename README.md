@@ -853,6 +853,12 @@ yavaşıyır — o zaman Starter plan (0.5 CPU) lazımdır.
 | Optimallaşdırmadan əvvəl | — | ölçülüb: oyun 18–24 Hz-ə düşürdü | — | — |
 | 1 dünya (SONSUZ ARENA) | 0.8–1.0 / 1.9 ms | 0 | ~5% | 79 MB |
 | 2 dünya (+ TƏK QALAN) | 1.5 / 2.8 ms | 0 | ~5.6% | 79 MB |
+| **Render, canlı:** 1 dünya | 1.15–1.34 / 3.3 ms | 0 | — | — |
+| **Render, canlı:** 2 dünya | 1.8–2.4 / 6.8 ms | 0 | — | — |
+
+Render-in vCPU-su lokal konteynerdən ~1.5x yavaşdır. İki dünya 3.3 ms-lik
+büdcənin ~70%-ini tutur, yəni pulsuz plan təxminən **iki eyni vaxtda açıq
+dünyaya** çatır. Üçüncüsü açılanda `atılan tick` artmağa başlayacaq.
 
 Tick-in ən bahalı yeri qida döngüsü idi (qida × mikrob, tick-in ~45%-i).
 Mikrob siyahısı döngüdən əvvəl bir dəfə yığılır, ucuz məsafə yoxlaması

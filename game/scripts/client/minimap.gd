@@ -11,8 +11,30 @@ extends Control
 
 var _dots: Array = []           ## [Vector2 dünya mövqeyi, Color, bool özün]
 
-## Dağılmış maneələr — [Arena] hər kadr ötürür (bax [method Arena._update_minimap]).
-var broken := PackedByteArray()
+## Mikrob nöqtələrinin qatı — AYRI canvas item-dir.
+##
+## Nöqtələr saniyədə 5–10 dəfə dəyişir, qab və 26 maneə isə demək olar heç vaxt.
+## Hamısı bir `_draw`-da olanda hər yeniləmədə maneələr də təzədən çəkilirdi —
+## zəif telefonda (6.5× yavaş CPU) bir çəkiliş ~4 ms idi. İndi [method _draw]
+## yalnız qab dəyişəndə işləyir, nöqtələr isə [method _draw_dots]-dadır.
+var _dots_layer: Control
+
+## Dağılmış maneələr — [Arena] hər yeniləmədə ötürür (bax [method Arena._update_minimap]).
+## Eyni qiymət yenidən çəkiliş tələb etmir.
+var broken := PackedByteArray():
+	set(value):
+		if value == broken:
+			return
+		broken = value
+		queue_redraw()
+
+
+func _init() -> void:
+	_dots_layer = Control.new()
+	_dots_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_dots_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_dots_layer.draw.connect(_draw_dots)
+	add_child(_dots_layer)
 
 
 func _ready() -> void:
@@ -31,7 +53,7 @@ var wet_radius := Const.WORLD_RADIUS:
 
 func set_dots(dots: Array) -> void:
 	_dots = dots
-	queue_redraw()
+	_dots_layer.queue_redraw()
 
 
 func _draw() -> void:
@@ -74,24 +96,29 @@ func _draw() -> void:
 		var o := list[i]
 		draw_circle(c + Vector2(o.x, o.y) * k, maxf(o.z * k, 1.5), _kind_color(int(o.w)))
 
+
+## Mikroblar — qabın üstündəki ayrı qatda (bax [member _dots_layer]).
+func _draw_dots() -> void:
+	var c := size * 0.5
+	var k := (minf(size.x, size.y) * 0.5 - 2.0) / Const.WORLD_RADIUS
 	for dot in _dots:
 		var p: Vector2 = c + Vector2(dot[0]) * k
 		var col: Color = dot[1]
 		var mine: bool = dot[2]
 		var ally: bool = dot.size() > 3 and bool(dot[3])
-		draw_circle(p, 4.5 if mine else 3.0, col)
+		_dots_layer.draw_circle(p, 4.5 if mine else 3.0, col)
 		if mine:
 			# Halqa AĞDIR, kəhrəba deyil.
 			#
 			# Əvvəl `Palette.FOCUS` idi və yaş zonanın sərhədi `Palette.WARNING` —
 			# ikisi də kəhrəba, yəni matçın sonunda öz nöqtən daralan sərhədə
 			# qarışırdı. Xəritədə oyunçunun ƏN ÇOX axtardığı şey özüdür.
-			draw_arc(p, 7.0, 0.0, TAU, 16, Color(Palette.TEXT, 0.95), 1.8, true)
+			_dots_layer.draw_arc(p, 7.0, 0.0, TAU, 16, Color(Palette.TEXT, 0.95), 1.8, true)
 		elif ally:
 			# YOLDAŞ halqası — komanda rejimlərinin ikinci tanıma kanalı
 			# (birincisi ad rəngi, üçüncüsü membrandakı halqadır).
 			# Onsuz xəritədə yoldaş rəqibdən heç cür seçilmirdi.
-			draw_arc(p, 6.0, 0.0, TAU, 16, Color(Palette.ALLY, 0.95), 1.8, true)
+			_dots_layer.draw_arc(p, 6.0, 0.0, TAU, 16, Color(Palette.ALLY, 0.95), 1.8, true)
 
 
 ## Maneə növünün xəritə rəngi.

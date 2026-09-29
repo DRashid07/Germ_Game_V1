@@ -67,6 +67,54 @@ static func run() -> int:
 	_test_no_self_hit()
 	_test_shot_starts_inside()
 	_test_obstacle_blocks_shot()
+	_test_input_view_tick()
+	_test_lag_comp_rewinds()
+	_test_lag_comp_capped()
+	_test_lag_comp_survives_pileup()
+	_test_prediction_matches_sim()
+	_test_prediction_hits_target()
+	_test_hit_ellipse()
+	_test_hit_shape_even_width()
+	_test_hit_chance_even()
+	_test_body_fits_hit_shape()
+	_test_input_shot_bit()
+	_test_merged_fire_keeps_aim()
+	_test_predicted_fire_waits()
+	_test_trichocyst_waits_for_rewind()
+	_test_bot_sees_rewound_shot()
+	_test_prediction_blast()
+	_test_rewound_cyst()
+	_test_rewound_safe()
+	_test_world_seed_repeats()
+	_test_prediction_separates()
+	_test_prediction_edge_bounce()
+	_test_prediction_tick_targets()
+	_test_shot_inside_start_hits()
+	_test_hit_event_victim()
+	_test_roster_marks_bots()
+	_test_shot_life_in_snapshot()
+	_test_event_budget_keeps_hits()
+	_test_prediction_claims()
+	_test_prediction_catch_up()
+	_test_prediction_aligns_to_server()
+	_test_self_claim_shooter()
+	_test_self_claim_undo()
+	_test_prediction_life_matches_server()
+	_test_early_server_hit()
+	_test_bot_shot_aimed()
+	_test_shot_release()
+	_test_own_soft_hit()
+	_test_germ_promise()
+	_test_germ_hitstop()
+	_test_settings_device_defaults()
+	_test_quality_tiers()
+	_test_render_scale_native()
+	_test_perf_governor()
+	_test_resolution_verdict()
+	_test_resolution_converges()
+	_test_web_dpr_limits()
+	_test_germ_shape_reuse()
+	_test_germ_redraw_rate()
 	_test_map_layouts()
 	_test_arena_core_is_free()
 	_test_bush_hides()
@@ -406,7 +454,7 @@ static func _test_shot_starts_inside() -> void:
 
 	# Qığılcım isə membranda olmalıdır: mərkəzdə çəkilsə gövdə onu örtər.
 	#
-	# Bu məsafə həm də client-in HESABIDIR: [method Arena._remember_muzzle]
+	# Bu məsafə həm də client-in HESABIDIR: [method Arena._spawn_own_shot]
 	# topun doğuş nöqtəsini məhz qığılcımdan bir radius geri çəkərək tapır.
 	# Qığılcım başqa yerə köçürülsə, öz topun mikrobun içindən yox, kənarından
 	# çıxmağa başlayar — testin bu sətri həmin əlaqəni qoruyur.
@@ -439,6 +487,1647 @@ static func _test_obstacle_blocks_shot() -> void:
 
 	_check(b.balls == Const.START_BALLS,
 		"maneə topu saxladı (hədəfin top sayı: %d)" % b.balls)
+
+
+## Görünən tick YALNIZ atəşli paketdə gedir və geri eyni oxunur.
+##
+## Qalan 29 paket əvvəlki kimi beş ədəddir — köhnə server də, köhnə client də
+## yeni formatı başa düşür (altıncı sahə yoxdursa -1 = geri sarma yoxdur).
+static func _test_input_view_tick() -> void:
+	var shot := Sim.PlayerInput.make(3, Vector2.RIGHT, 0.5, true, false, 41.25)
+	var arr := shot.to_array()
+	var back := Sim.PlayerInput.from_array(arr)
+	_check(arr.size() == 6 and back.fire and is_equal_approx(back.view_tick, 41.25),
+		"atəşli paket görünən tick-i daşıyır (%d sahə, tick %.2f)" % [arr.size(), back.view_tick])
+
+	var idle := Sim.PlayerInput.make(4, Vector2.RIGHT, 0.5, false, false, 41.25)
+	_check(idle.to_array().size() == 5,
+		"atəşsiz paket beş sahədə qalır (%d)" % idle.to_array().size())
+	_check(Sim.PlayerInput.from_array([1, 0.0, 0.0, 0.0, 1]).view_tick < 0.0,
+		"köhnə formatlı paket geri sarmasız oxunur")
+
+
+## Geri sarma: top rəqibin atıcının GÖRDÜYÜ yerinə qarşı yoxlanılır.
+##
+## Hədəf atəş anında xəttin üstündədir, sonra aşağı qaçır. Top ona çatanda
+## rəqib artıq 54 px aşağıdadır — geri sarmasız top keçib gedir. Atıcı isə
+## ekranında onu hələ xəttin üstündə görürdü (8 tick = 267 ms geridə) və
+## dəymə sayılmalıdır. Test hər iki yolu yoxlayır: səhv yolda da düz nəticə
+## çıxsaydı, test heç nə sübut etməzdi.
+static func _test_lag_comp_rewinds() -> void:
+	var with_rewind := _lag_comp_case(8.0)
+	var without := _lag_comp_case(-1.0)
+	_check(with_rewind == Const.START_BALLS + Const.SHOT_PAYLOAD,
+		"geri sarma: ekranda dəyən top serverdə də dəyir (hədəf %d top)" % with_rewind)
+	_check(without == Const.START_BALLS,
+		"geri sarmasız eyni top qaçan hədəfdən keçir (hədəf %d top)" % without)
+
+
+## Hədəf 12 tick xəttin üstündə durur (tarixçə dolsun), sonra tick-də 6 px
+## aşağı qaçır. [param back] — atıcının ekranı neçə tick geridə idi (-1 = bilinmir).
+static func _lag_comp_case(back: float) -> int:
+	var s := Sim.new()
+	s.lag_comp = true
+	var a := s.add_germ(A_ID, "A", 0)
+	var b := s.add_germ(B_ID, "B", 1)
+	a.safe_t = 0.0
+	b.safe_t = 0.0
+	var a_at := Vector2(-60.0, LANE_Y)
+	var b_at := Vector2(100.0, LANE_Y)
+	for i in 12:
+		a.pos = a_at
+		a.vel = Vector2.ZERO
+		b.pos = b_at
+		b.vel = Vector2.ZERO
+		s.step({}, Const.TICK_DELTA)
+	# `step` tick-i ƏVVƏLCƏ artırır, yəni atəş `tick + 1`-də doğulur.
+	var view := -1.0 if back < 0.0 else float(s.tick + 1) - back
+	for i in 20:
+		a.pos = a_at
+		a.vel = Vector2.ZERO
+		b.pos = b_at + Vector2(0.0, 6.0 * float(i))
+		b.vel = Vector2.ZERO
+		var inputs := {}
+		if i == 0:
+			inputs[A_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, view)
+		s.step(inputs, Const.TICK_DELTA)
+	return b.balls
+
+
+## Geri sarma HƏDLƏNİR: uydurma köhnə tick serverə "keçmişə atəş" imkanı vermir.
+static func _test_lag_comp_capped() -> void:
+	var s := _fresh()
+	s.lag_comp = true
+	var a: Sim.GermState = s.germs[A_ID]
+	a.balls = a.capacity             # üç atəşə bəs etsin
+	# Atəş tick 1-də doğulur; tick 5 serverin hələ göndərmədiyi GƏLƏCƏKDİR.
+	s.step({A_ID: Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, 5.0)},
+		Const.TICK_DELTA)
+	var cap := Const.REWIND_MAX * float(Const.TICK_RATE)
+	_check(s.shots.size() == 1, "atəş açıldı (%d top)" % s.shots.size())
+	if s.shots.is_empty():
+		return
+	_check(is_equal_approx(s.shots[0].rewind, 0.0),
+		"gələcəyə baxan tick geri sarmır (%.2f)" % s.shots[0].rewind)
+
+	a.cooldown = 0.0
+	s.step({A_ID: Sim.PlayerInput.make(2, Vector2.ZERO, 0.0, true, false, 0.0)},
+		Const.TICK_DELTA)
+	a.cooldown = 0.0
+	s.tick += 200
+	s.step({A_ID: Sim.PlayerInput.make(3, Vector2.ZERO, 0.0, true, false, 0.0)},
+		Const.TICK_DELTA)
+	var last: Sim.ShotState = s.shots[s.shots.size() - 1]
+	_check(is_equal_approx(last.rewind, cap),
+		"çox köhnə tick %.0f tick-ə hədlənir (%.2f)" % [cap, last.rewind])
+
+	# Bot və proqnoz: tick yoxdur — geri sarma yoxdur.
+	var bots := _fresh()
+	bots.lag_comp = true
+	bots.step({A_ID: Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true)}, Const.TICK_DELTA)
+	_check(bots.shots.size() == 1 and bots.shots[0].rewind == 0.0,
+		"tick-siz atəş (bot) indiki mövqeyə qarşı yoxlanılır")
+
+
+## Bir tick-də iki paket gələndə görünən tick atəşlə BİRLİKDƏ köçür.
+##
+## Server oyunçu başına yalnız son girişi saxlayır və atəş bayrağını köhnə
+## paketdən yenisinə keçirir ([method World.accept_input]). Tick köçməsəydi,
+## WebSocket-in paketləri yığdığı hər tick-də geri sarma səssizcə itərdi.
+static func _test_lag_comp_survives_pileup() -> void:
+	var world := _quiet_world(31)
+	var g := world.add_player(A_ID, "A", Const.Species.CILIATE)
+	g.balls = Const.START_BALLS
+	world.accept_input(A_ID,
+		Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, 0.0).to_array())
+	world.accept_input(A_ID,
+		Sim.PlayerInput.make(2, Vector2.ZERO, 0.0, false, false, -1.0).to_array())
+	world.tick(Const.TICK_DELTA)
+	var mine: Array[Sim.ShotState] = []
+	for s in world.sim.shots:
+		if s.owner_id == A_ID:
+			mine.append(s)
+	_check(mine.size() == 1 and mine[0].rewind > 0.0,
+		"yığılan paketlərdə atəşin tick-i itmir (geri sarma %.2f)"
+			% (mine[0].rewind if not mine.is_empty() else -1.0))
+
+
+## Proqnoz topu SERVERİN topu ilə eyni yerdə sıçrayır və eyni istiqamətə gedir.
+##
+## Client kadrla (60 Hz), server tick-lə (30 Hz) addımlayır. Kəsişmə süpürülən
+## parça ilə hesablandığı üçün addım ölçüsü nəticəni dəyişməməlidir — yoxsa
+## proqnozun sıçradığı yer ilə serverinki ayrılar, və sıçrayışdan sonrakı
+## dəymələr də.
+static func _test_prediction_matches_sim() -> void:
+	var s := Sim.new()
+	# Düzümdən HƏQİQİ selik ləkəsi götürülür — mərkəzdə nə olduğu düzümə görə dəyişir.
+	var blob := _first_of(s, DishMap.Kind.MUCUS)
+	var centre := Vector2(blob.x, blob.y)
+	var out := centre.normalized() if centre.length() > 1.0 else Vector2.RIGHT
+	# Ləkənin xaricindən, mərkəzdən bir az yan — maili dəymə sıçrayışı sınayır.
+	var from := centre + out * (blob.z + 80.0)
+	var dir := (-out).rotated(0.12)
+
+	var shot := Sim.ShotState.new()
+	shot.id = 1
+	shot.owner_id = 0
+	shot.pos = from
+	shot.dir = dir
+	shot.life = Const.SHOT_LIFETIME
+	s.shots.append(shot)
+	var server_hit := Vector2.INF
+	var server_dir := Vector2.ZERO
+	for i in 30:
+		s.step({}, Const.TICK_DELTA)
+		for e in s.events:
+			if e.get("t") == "hit" and server_hit == Vector2.INF:
+				server_hit = e["pos"]
+				server_dir = s.shots[0].dir if not s.shots.is_empty() else Vector2.ZERO
+
+	var p := ShotPrediction.new()
+	p.spawn(from, dir, 0.0)
+	var ghost_hit := Vector2.INF
+	var ghost_dir := Vector2.ZERO
+	var now := 0.0
+	for i in 60:
+		now += 1.0 / 60.0
+		for c in p.step(1.0 / 60.0, now, s.obstacles, s.broken, []):
+			if int(c["kind"]) == ShotPrediction.Contact.BOUNCE and ghost_hit == Vector2.INF:
+				ghost_hit = c["pos"]
+				ghost_dir = p.ghosts[0].dir
+
+	_check(server_hit != Vector2.INF and ghost_hit != Vector2.INF,
+		"server də, proqnoz da ləkədən sıçradı")
+	_check(server_hit.distance_to(ghost_hit) < 0.5,
+		"sıçrayış nöqtəsi eynidir (%.2f px fərq)" % server_hit.distance_to(ghost_hit))
+	_check(server_dir.dot(ghost_dir) > 0.9999,
+		"sıçrayışdan sonrakı istiqamət eynidir")
+
+	# Kövrək qabıq topu UDUR — proqnoz da orada dayanır.
+	var idx := -1
+	for i in s.obstacles.size():
+		if int(s.obstacles[i].w) == DishMap.Kind.BRITTLE:
+			idx = i
+			break
+	if idx >= 0:
+		var o := s.obstacles[idx]
+		var at := Vector2(o.x, o.y)
+		var cp := ShotPrediction.new()
+		cp.spawn(at + at.normalized() * (o.z + 60.0), -at.normalized(), 0.0)
+		var cracked := -1
+		for i in 30:
+			for c in cp.step(1.0 / 60.0, float(i) / 60.0, s.obstacles, s.broken, []):
+				if int(c["kind"]) == ShotPrediction.Contact.CRACK:
+					cracked = int(c["key"])
+		_check(cracked == idx and not cp.ghosts[0].alive,
+			"proqnoz kövrək qabıqda dayanır (maneə %d)" % cracked)
+
+
+## Botun sənə proqnozlaşdırılmış dəyməsini yalnız HƏMİN botun HIT-i təsdiqləyir.
+##
+## Hadisə qurbanı demir, yalnız atanın rəngini. Əvvəl yalnız məsafə yoxlanırdı:
+## yanındakı mikroba dəyən başqa botun topu proqnozu "təsdiqləyir", öz zərbəsi
+## isə ekranda göstərilmirdi.
+static func _test_self_claim_shooter() -> void:
+	var a := Arena.new()
+	a._self_claims.append({"pos": Vector2(100.0, 0.0), "t": 0.0, "color": 3})
+	_check(not a._match_self_claim(Vector2(130.0, 0.0), 5),
+		"başqa botun yaxındakı dəyməsi proqnozu təsdiqləmir")
+	_check(a._self_claims.size() == 1, "proqnoz öz təsdiqini gözləyir")
+	_check(a._match_self_claim(Vector2(130.0, 0.0), 3), "eyni botun dəyməsi təsdiqləyir")
+	_check(a._self_claims.is_empty() and int(a.hit_stats["self_conf"]) == 1,
+		"təsdiqlənən proqnoz siyahıdan çıxır")
+	# Eyni bot ardıcıl iki top atıb — server İKİNCİNİN dəyməsini deyir.
+	a._self_claims.append({"pos": Vector2(0.0, 0.0), "t": 0.0, "color": 3})
+	a._self_claims.append({"pos": Vector2(60.0, 0.0), "t": 0.1, "color": 3})
+	a._match_self_claim(Vector2(62.0, 0.0), 3)
+	_check(a._self_claims.size() == 1 and Vector2(a._self_claims[0]["pos"]) == Vector2.ZERO,
+		"təsdiq ən YAXIN proqnoza yazılır, ilkinə yox")
+	a._claims.append({"pos": Vector2(0.0, 0.0), "t": 0.0, "hit": true, "vcol": 4})
+	a._claims.append({"pos": Vector2(50.0, 0.0), "t": 0.1, "hit": true, "vcol": 5})
+	a._match_claim(Vector2(30.0, 0.0), true, 4)
+	_check(a._claims.size() == 1 and int(a._claims[0]["vcol"]) == 5,
+		"öz topunun təsdiqi qurbanı da yoxlayır")
+	a.free()
+
+
+## Proqnoz topu serverinki ilə EYNİ yolu uçub eyni yerdə ölür.
+##
+## Server topu atəş tick-ində artıq bir dəfə azaldır və ömrü bitən tick-də
+## hərəkətsiz silir: 65 tick. Proqnoz tam 2.2 s uçanda son 14 px-də rəqibə
+## "dəyirdi", server isə topu artıq silmişdi.
+static func _test_prediction_life_matches_server() -> void:
+	var s := _fresh()
+	s.obstacles.clear()
+	for id in s.germs.keys():
+		s.germs.erase(id)
+	var shot := Sim.ShotState.new()
+	shot.owner_id = A_ID
+	shot.pos = Vector2.ZERO
+	shot.dir = Vector2.RIGHT
+	shot.life = Const.SHOT_LIFETIME
+	s.shots.append(shot)
+	var last := shot.pos
+	for i in 200:
+		if s.shots.is_empty():
+			break
+		last = s.shots[0].pos
+		s._step_shots(Const.TICK_DELTA)
+	var p := ShotPrediction.new()
+	var g := p.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
+	g.sid = 1
+	var now := 0.0
+	var ghost_last := g.pos
+	for i in 200:
+		if not g.alive:
+			break
+		ghost_last = g.pos
+		now += Const.TICK_DELTA
+		p.step(Const.TICK_DELTA, now, [] as Array[Vector4], PackedByteArray(), [])
+	_check(absf(ghost_last.x - last.x) < 1.0,
+		"proqnoz topu serverinki ilə eyni yerdə ölür (%.0f / %.0f px)" % [ghost_last.x, last.x])
+	# Ekran 60 kadrla addımlayır — son addım qısalır, yol yenə eynidir.
+	var g60 := p.spawn(Vector2.ZERO, Vector2.RIGHT, now)
+	g60.sid = 2
+	for i in 400:
+		if not g60.alive:
+			break
+		now += 1.0 / 60.0
+		p.step(1.0 / 60.0, now, [] as Array[Vector4], PackedByteArray(), [])
+	_check(absf(g60.pos.x - last.x) < 1.0,
+		"60 kadrda da proqnoz topu eyni yerdə ölür (%.0f / %.0f px)" % [g60.pos.x, last.x])
+
+
+## Öz topunun serverdəki dəyməsi proqnozdan ƏVVƏL gələ bilər — gecikən proqnoz
+## onda ikinci zərbə göstərmir və "boş" sayılmır.
+static func _test_early_server_hit() -> void:
+	var a := Arena.new()
+	a._early_hits.append({"pos": Vector2(100.0, 0.0), "t": 0.0, "victim": 4})
+	_check(not a._take_early_hit(Vector2(110.0, 0.0), 5), "başqa qurbanın dəyməsi təsdiq etmir")
+	_check(a._take_early_hit(Vector2(110.0, 0.0), 4) and a._early_hits.is_empty(),
+		"eyni qurbanın tez gələn dəyməsi gecikən proqnozu təsdiqləyir")
+	a.free()
+
+
+## Sərhəddəki proqnoz serveri gözləyir; server topu göndərməyə davam edirsə, top geri qaytarılır.
+##
+## Yalançı "sənə dəydi"-lərin yarısı gövdədən 5–7 px kənardan keçən toplar idi:
+## proqnozun bir neçə piksellik xətası sərhəddə nəticəni dəyişir.
+static func _test_self_claim_undo() -> void:
+	var shape := Vector3(40.0, 40.0, 0.0)
+	_check(Arena._line_depth(Vector2(-100.0, 0.0), Vector2.RIGHT, Vector2.ZERO, shape) < 0.01,
+		"mərkəzdən keçən xəttin dərinliyi 0-dır")
+	_check(absf(Arena._line_depth(Vector2(-100.0, 38.0), Vector2.RIGHT, Vector2.ZERO, shape) - 0.95) < 0.01,
+		"sərhədə yaxın xətt 0.95-dir — əmin sayılmır")
+	var a := Arena.new()
+	a._rtt = 0.1
+	a._last_snap_t = 1.0
+	var alive := {"node": null, "seen": 1.0, "absorbed": true}
+	a._shot_views[5] = alive
+	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.5, "color": 1, "sid": 5, "soft": true})
+	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.5, "color": 1, "sid": 6, "soft": false})
+	a._undo_self_claims()
+	_check(not bool(alive["absorbed"]) and alive.has("no_claim"),
+		"server topu hələ göndərir — top geri qaytarılır və bir də proqnozlanmır")
+	_check(a._self_claims.size() == 1 and int(a.hit_stats["self_soft_miss"]) == 1,
+		"serverdə itən topun proqnozu gözləyir (qalan %d)" % a._self_claims.size())
+	a._last_snap_t = 0.65
+	var fresh := {"node": null, "seen": 0.65, "absorbed": true}
+	a._shot_views[7] = fresh
+	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.6, "color": 1, "sid": 7, "soft": true})
+	a._undo_self_claims()
+	_check(bool(fresh["absorbed"]), "RTT keçməmiş top qaytarılmır — server hələ deyə bilməz")
+	a.free()
+
+
+## Botun topu yalnız SƏNƏ tərəf uçanda sənin zaman xəttinə köçürülür.
+##
+## Yanından keçən top başqasına gedir, o başqası isə keçmişdə çəkilir: köçürülən
+## top hədəfindən irəli qaçıb onun içindən zərbəsiz keçirdi (probe ilə ölçülüb).
+static func _test_bot_shot_aimed() -> void:
+	var a := Arena.new()
+	a.me = Sim.GermState.new()
+	var r := Const.germ_radius(a.me.capacity)
+	_check(a._aimed_at_me(Vector2(-300.0, 0.0), Vector2.RIGHT, Vector2.ZERO), "düz sənə uçan top köçürülür")
+	_check(a._aimed_at_me(Vector2(-300.0, r), Vector2.RIGHT, Vector2.ZERO),
+		"gövdənin kənarına gedən top da köçürülür")
+	_check(not a._aimed_at_me(Vector2(-300.0, r * 3.0 + 60.0), Vector2.RIGHT, Vector2.ZERO),
+		"yanından keçən top köçürülmür")
+	_check(not a._aimed_at_me(Vector2(300.0, 0.0), Vector2.RIGHT, Vector2.ZERO),
+		"səndən uzaqlaşan top köçürülmür")
+	a.free()
+
+
+## Sərhəddəki öz dəyməsi serverin təsdiqini gözləyir.
+##
+## Təsdiqlənməyən öz dəymələrinin hamısı qurbanın kənarına sürtünmə idi (xətt
+## ellipsin 0.99+ dərinliyindən keçirdi): atəş nöqtəsinin bir neçə piksellik
+## fərqi sərhəddə nəticəni dəyişir. Dərin dəymə dərhal göstərilir.
+static func _test_own_soft_hit() -> void:
+	var p := ShotPrediction.new()
+	var targets := [{"pos": Vector2(200.0, 0.0), "radius": 31.0, "shape": Vector3(40.0, 40.0, 0.0),
+		"key": 7}]
+	var deep := p.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
+	var graze := p.spawn(Vector2(0.0, 38.5), Vector2.RIGHT, 0.0)
+	var depth := {}
+	var now := 0.0
+	for i in 60:
+		now += Const.TICK_DELTA
+		for c in p.step(Const.TICK_DELTA, now, [] as Array[Vector4], PackedByteArray(), targets):
+			if int(c["kind"]) == ShotPrediction.Contact.HIT:
+				depth[(c["ghost"] as ShotPrediction.Ghost).id] = float(c["depth"])
+	_check(depth.has(deep.id) and float(depth[deep.id]) < 0.01, "mərkəzdən keçən topun dərinliyi 0-dır")
+	_check(depth.has(graze.id) and float(depth[graze.id]) > Arena.OWN_SURE_DEPTH,
+		"kənara sürtünən top sərhəddədir (%.2f)" % float(depth.get(graze.id, -1.0)))
+	var a := Arena.new()
+	var v := GermVisual.new()
+	v.setup(3, "B", false, Const.Species.CILIATE)
+	a._visuals[7] = {"node": v}
+	a._on_own_contact({"kind": ShotPrediction.Contact.HIT, "pos": Vector2(165.0, 38.0),
+		"dir": Vector2.RIGHT, "key": 7, "ghost": graze, "depth": 0.96})
+	_check(a._claims.size() == 1 and bool(a._claims[0].get("soft", false))
+		and int(a.hit_stats["predicted"]) == 0 and int(a.hit_stats["own_soft"]) == 1,
+		"sərhəddəki dəymə göstərilmir, serveri gözləyir")
+	# Qurbanın görüntüsü yoxdur — zərbənin effekti testdə çəkilmir.
+	a._visuals.erase(7)
+	_check(a._match_claim(Vector2(168.0, 38.0), true, 3) and int(a.hit_stats["own_soft_conf"]) == 1
+		and int(a.hit_stats["confirmed"]) == 0 and a._claims.is_empty(),
+		"serverin HIT-i sərhəddəki dəyməni təsdiqləyir — zərbə elə o an oynanır")
+	v.free()
+	a.free()
+
+
+## Səndən yayınan top qabağındakı qonşunun gövdəsindən keçməsin — keçmişə qayıdır.
+##
+## Qonşu keçmişdə çəkilir; sənin zaman xəttində qalan top ona tez çatıb içindən
+## keçirdi, serverdə isə heç kimə dəymirdi (probe ilə tutulub, RTT 120).
+static func _test_shot_release() -> void:
+	var a := Arena.new()
+	a.me = Sim.GermState.new()
+	a.my_id = 1
+	var v := GermVisual.new()
+	v.setup(2, "B", false, Const.Species.CILIATE)
+	v.position = Vector2(200.0, 0.0)
+	a._visuals[7] = {"node": v}
+	var room := a._release_room(Vector2.ZERO, Vector2.RIGHT, 5)
+	_check(room > 100.0 and room < 200.0, "qabaqda qonşu var — top keçmişə qayıdır (%.0f px qalıb)" % room)
+	_check(a._release_room(Vector2.ZERO, Vector2.LEFT, 5) < 0.0, "qabaq boşdur — top indidə qalır")
+	_check(a._release_room(Vector2.ZERO, Vector2.RIGHT, 2) < 0.0, "atanın özü maneə sayılmır")
+	# Qonşu yola qəfil girir (ölçülən hal: 27 px qalmış, top 0.82 payla, zaman
+	# xətləri arası 137 px). Top geri getmir və qonşuya çatmamış keçmişə düşür.
+	for start_room in [27.0, 80.0, 200.0]:
+		var k := 0.82
+		var left: float = start_room
+		var backwards := false
+		var dt := 1.0 / 60.0
+		while k > 0.0 and left > 0.0:
+			var rate := Arena.release_rate(k, 137.0, left)
+			var step := (Const.SHOT_SPEED - rate * 137.0) * dt
+			backwards = backwards or step < 0.0
+			k = maxf(0.0, k - rate * dt)
+			left -= step
+		_check(k <= 0.0 and left > -2.0 and not backwards,
+			"qonşuya %.0f px qalmış: top ona çatmamış keçmişə qayıdır (qalan yol %.0f px), geri getmir"
+				% [start_room, left])
+	v.free()
+	a.free()
+
+
+## Reyestr botu DEYİR — id-dən çıxarılmır.
+##
+## İnsanın peer nömrəsi təsadüfi 32 bitlik ədəddir və adətən
+## [constant World.BOT_ID_BASE]-dən böyükdür. Əvvəl client botu `id >= BOT_ID_BASE`
+## ilə tanıyırdı: o biri oyunçunun topu bot topu sayılır, sənin zamanına
+## köçürülür və yalançı "sənə dəydi" alırdı.
+static func _test_roster_marks_bots() -> void:
+	var world := World.new(31, Const.Mode.ENDLESS)
+	var human := 1_411_290_326
+	world.add_player(human, "İnsan")
+	world.tick(Const.TICK_DELTA)
+	var table := world.roster()
+	var bots := 0
+	for gid in table:
+		if bool((table[gid] as Array)[2]):
+			bots += 1
+	_check(not bool((table[human] as Array)[2]) and bots == table.size() - 1,
+		"böyük id-li insan bot sayılmır, qalanlar botdur (%d / %d)" % [bots, table.size()])
+	var a := Arena.new()
+	a._on_roster(table)
+	_check(not a._bot_colors.has(int((table[human] as Array)[1])) and a._bot_colors.size() == bots,
+		"client insanın rəngini bot rəngləri arasına qatmır")
+	a.free()
+
+
+## Snapshot-dakı top qalan ÖMRÜNÜ daşıyır — əlavə baytsız, istiqamətin uzunluğunda.
+static func _test_shot_life_in_snapshot() -> void:
+	var world := World.new(32, Const.Mode.ENDLESS)
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+	var g: Sim.GermState = world.sim.germs[A_ID]
+	var lives := [2.2, 0.7, 0.0]
+	for i in lives.size():
+		var shot := Sim.ShotState.new()
+		shot.id = 900 + i
+		shot.owner_id = A_ID
+		shot.pos = g.pos + Vector2(60.0 * (i + 1), 0.0)
+		shot.dir = Vector2.from_angle(0.3 * i)
+		shot.life = float(lives[i])
+		shot.rewind = 3.0 * i
+		world.sim.shots.append(shot)
+	world._build_frame()
+	var rows := Const.unpack_shots(world.snapshot_for(A_ID)[Const.Snap.SHOTS])
+	var ok := 0
+	for row in rows:
+		var i := int(row[Const.SF.ID]) - 900
+		if i < 0 or i >= lives.size():
+			continue
+		var dir := Vector2(float(row[Const.SF.DX]), float(row[Const.SF.DY]))
+		if absf(float(row[Const.SF.LIFE]) - float(lives[i])) < 0.001 \
+				and absf(float(row[Const.SF.REWIND]) - 3.0 * i * Const.TICK_DELTA) < 0.0001 \
+				and dir.is_equal_approx(Vector2.from_angle(0.3 * i)):
+			ok += 1
+	_check(ok == lives.size(),
+		"ömür, geri sarma (s) və vahid istiqamət snapshot-dan açılır (%d / %d)" % [ok, lives.size()])
+
+
+## Tick-i mikrobun İÇİNDƏ başlayan top da dəyir.
+##
+## Mikroblar toplardan əvvəl yeriyir: topa doğru gedən mikrob onun üstünə
+## çıxanda topun bütün parçası gövdənin içində qalırdı və server dəyməni
+## saymırdı. Ölçülüb — top gövdənin 8–29 px içindən keçib uçmağa davam edirdi.
+static func _test_shot_inside_start_hits() -> void:
+	var s := _fresh()
+	var a: Sim.GermState = s.germs[A_ID]
+	var b: Sim.GermState = s.germs[B_ID]
+	var shot := Sim.ShotState.new()
+	shot.owner_id = A_ID
+	shot.color = a.color
+	shot.pos = b.pos + Vector2(-4.0, 3.0)
+	shot.dir = Vector2.RIGHT
+	shot.life = 1.0
+	s.shots.append(shot)
+	var before := b.balls
+	s._step_shots(Const.TICK_DELTA)
+	_check(b.balls == before + Const.SHOT_PAYLOAD and s.shots.is_empty(),
+		"gövdənin içində başlayan top dəyir (top %d → %d, qalan top %d)" % [before, b.balls, s.shots.size()])
+	_check(Sim.seg_ellipse_t(b.pos, b.pos + Vector2(10.0, 0.0), b.pos,
+		Sim.hit_shape(int(b.species), b.capacity, Vector2.ZERO)) < 0.0,
+		"köhnə sərhəd yoxlaması içəridəki parçanı görmür — səbəb budur")
+
+
+## HIT hadisəsi qurbanı da daşıyır, köhnə "mikroba dəydimi" yoxlaması dəyişmir.
+static func _test_hit_event_victim() -> void:
+	for c in [0, 3, 7]:
+		var arg := Const.hit_arg(c)
+		_check(arg > 0.5 and Const.hit_victim(arg) == c, "qurbanın rəngi %d geri oxunur" % c)
+	_check(Const.hit_victim(0.0) == -1, "divardan sıçrayışın qurbanı yoxdur")
+	var s := _fresh()
+	var b: Sim.GermState = s.germs[B_ID]
+	var shot := Sim.ShotState.new()
+	shot.owner_id = A_ID
+	shot.color = (s.germs[A_ID] as Sim.GermState).color
+	shot.pos = b.pos + Vector2(-Const.germ_radius(b.capacity) - 20.0, 0.0)
+	shot.dir = Vector2.RIGHT
+	shot.life = 1.0
+	s.shots.append(shot)
+	s.events.clear()
+	for i in 4:
+		s._step_shots(Const.TICK_DELTA)
+	var victim := -2
+	for e in s.events:
+		if e.get("t") == "hit":
+			victim = Const.hit_victim(float(e["arg"]))
+	_check(victim == b.color, "serverin HIT-i qurbanı deyir (%d, gözlənən %d)" % [victim, b.color])
+
+
+## Büdcə sıxılanda ilk başqasının QİDA UDMASI düşür, zərbə yox.
+##
+## Snapshot-a 10 mikrobla tick başına ~7 hadisə sığır; seçim yalnız məsafəyə görə
+## olanda yaxındakı udmalar uzaqdakı zərbəni itirirdi. Baxana dəyən top isə
+## atan başqası olsa da onun ÖZ hadisəsidir.
+static func _test_event_budget_keeps_hits() -> void:
+	var rows := []
+	for i in 8:
+		var p := Vector2(10.0 + i, 0.0)
+		rows.append([p, Const.EvKind.ABSORB, p.x, p.y, 0.0, 5])
+	var far := Vector2(600.0, 0.0)
+	rows.append([far, Const.EvKind.HIT, far.x, far.y, Const.hit_arg(6), 5])
+	var mine := Vector2(700.0, 0.0)
+	rows.append([mine, Const.EvKind.HIT, mine.x, mine.y, Const.hit_arg(2), 5])
+	var out := World._near_flat(rows, Vector2.ZERO, 900.0 * 900.0, 3, 2)
+	var kinds := []
+	for i in range(0, out.size(), 5):
+		kinds.append([int(out[i]), Const.hit_victim(out[i + 3]) if int(out[i]) == Const.EvKind.HIT else -1])
+	_check(kinds.size() == 3 and kinds[0] == [Const.EvKind.HIT, 2] and kinds[1] == [Const.EvKind.HIT, 6],
+		"sənə dəyən və uzaqdakı zərbə udmalardan öndədir: %s" % [kinds])
+
+	# Baxanın ÖZ udmaları da sənə dəyən topu sıxışdırmır.
+	var busy := []
+	for i in 5:
+		var p := Vector2(5.0 + i, 0.0)
+		busy.append([p, Const.EvKind.ABSORB, p.x, p.y, 0.0, 2])
+	busy.append([mine, Const.EvKind.HIT, mine.x, mine.y, Const.hit_arg(2), 5])
+	var kept := World._near_flat(busy, Vector2.ZERO, 900.0 * 900.0, 3, 2)
+	_check(int(kept[0]) == Const.EvKind.HIT and Const.hit_victim(kept[3]) == 2,
+		"üç öz udmasından çoxu olan tick-də də sənə dəyən top paketdə qalır")
+
+
+## Toqquşma forması görünən gövdəni izləyir — hərəkətdəki amöb ellipsdir.
+##
+## Amöb sürətlə sürünəndə gövdəsi sürət boyu uzanır, yanları daralır. Burnundan
+## keçən top əvvəl dairəyə çatmırdı ("içindən keçdi"), yandan gələn top isə
+## gövdəyə çatmamış dəyirdi. Dayanan mikrobda forma yenə dairədir.
+static func _test_hit_ellipse() -> void:
+	var cap := 30
+	var r := Const.germ_radius(cap)
+	var top := Const.germ_speed(cap)
+	# [ad, topun başlanğıcı (mikroba nisbi), istiqamət, hərəkətdə dəyməli, dayananda dəyməli]
+	var cases := [
+		["burun", Vector2(r * 1.35, -220.0), Vector2.DOWN, true, false],
+		["yan", Vector2(-220.0, r * 0.98), Vector2.RIGHT, false, true],
+	]
+	for c in cases:
+		for moving in [true, false]:
+			var sim := Sim.new()
+			sim.obstacles = [] as Array[Vector4]
+			var g := sim.add_germ(A_ID, "A", 0, false, Const.Species.AMOEBA)
+			g.capacity = cap
+			g.safe_t = 0.0
+			g.pos = Vector2(0.0, 0.0)
+			g.vel = Vector2(top, 0.0) if moving else Vector2.ZERO
+			var shot := Sim.ShotState.new()
+			shot.pos = g.pos + Vector2(c[1])
+			shot.dir = Vector2(c[2])
+			shot.life = Const.SHOT_LIFETIME
+			sim.shots.append(shot)
+			for i in 40:
+				sim._step_shots(Const.TICK_DELTA)
+			var hit := g.balls > Const.START_BALLS
+			var want: bool = c[3] if moving else c[4]
+			_check(hit == want, "amöb %s, %s: top %s" % [String(c[0]),
+				"hərəkətdə" if moving else "dayanıb", "dəydi" if hit else "keçdi"])
+
+	# Proqnoz serverlə EYNİ nöqtədə dəyir — eyni ellipslə.
+	var sim2 := Sim.new()
+	sim2.obstacles = [] as Array[Vector4]
+	var h := sim2.add_germ(B_ID, "B", 1, false, Const.Species.AMOEBA)
+	h.capacity = cap
+	h.safe_t = 0.0
+	h.pos = Vector2.ZERO
+	h.vel = Vector2(top * 0.7, top * 0.7).limit_length(top)
+	var start := Vector2(-160.0, -30.0)
+	var sh := Sim.ShotState.new()
+	sh.pos = start
+	sh.dir = Vector2.RIGHT
+	sh.life = Const.SHOT_LIFETIME
+	sim2.shots.append(sh)
+	var server_at := Vector2.INF
+	for i in 30:
+		sim2._step_shots(Const.TICK_DELTA)
+		for e in sim2.events:
+			if e.get("t") == "hit" and float(e["arg"]) > 0.5:
+				server_at = e["pos"]
+	var p := ShotPrediction.new()
+	p.spawn(start, Vector2.RIGHT, 0.0)
+	var target := {"pos": Vector2.ZERO, "radius": r, "key": 5, "cyst": false,
+		"shape": Sim.hit_shape(int(Const.Species.AMOEBA), cap, h.vel)}
+	var ghost_at := Vector2.INF
+	for i in 60:
+		for ct in p.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4], PackedByteArray(), [target]):
+			if int(ct["kind"]) == ShotPrediction.Contact.HIT:
+				ghost_at = ct["pos"]
+	_check(server_at.is_finite() and ghost_at.is_finite() and server_at.distance_to(ghost_at) < 1.0,
+		"proqnoz serverlə eyni ellips nöqtəsində dəyir (%.2f px)" % (server_at.distance_to(ghost_at)
+			if server_at.is_finite() and ghost_at.is_finite() else -1.0))
+
+
+## Toqquşma ellipsinin ORTA ENİ dayanan mikrobun dairəsinə bərabərdir — hər
+## növ, tutum və sürətdə.
+##
+## Balansın özü budur: top hər tərəfdən gəlir, dəymə ehtimalı isə formanın topun
+## yoluna dik enindən asılıdır. Köhnə ellipsdə (topun radiusu sadəcə əlavə
+## olunurdu) amöbün orta eni 8–10% böyük idi — hərəkətdəki amöb asan vurulurdu,
+## çox ölür və superini az işlədirdi (bax [method Sim.hit_shape]).
+static func _test_hit_shape_even_width() -> void:
+	var worst := 0.0
+	var reach_ok := true
+	var circle_ok := true
+	for sp in [0, 1, 2]:
+		for cap in [10, 20, 35, 60]:
+			var r := Const.germ_radius(cap)
+			var top := Const.germ_speed(cap)
+			for k in [0.0, 0.25, 0.5, 0.75, 1.0, 1.5]:
+				var shape := Sim.hit_shape(sp, cap, Vector2(top * float(k), 0.0).rotated(0.7))
+				var mean := Sim.ellipse_perimeter(shape.x, shape.y) / PI
+				worst = maxf(worst, absf(mean / (2.0 * (r + Const.SHOT_RADIUS)) - 1.0))
+				if maxf(shape.x, shape.y) > Sim.hit_reach(cap):
+					reach_ok = false
+				if float(k) == 0.0 and not (is_equal_approx(shape.x, r + Const.SHOT_RADIUS)
+						and is_equal_approx(shape.y, r + Const.SHOT_RADIUS)):
+					circle_ok = false
+	_check(worst < 0.001, "toqquşma formasının orta eni dairəninkidir (ən böyük fərq %.4f%%)"
+		% (worst * 100.0))
+	_check(reach_ok, "forma heç vaxt ucuz süzgəcin radiusundan çıxmır (bax Sim.hit_reach)")
+	_check(circle_ok, "dayanan mikrobun forması dairədir: r + topun radiusu")
+
+
+## Vurulma EHTİMALI hərəkətdə də dayanandakı ilə eynidir — həqiqi kəsişmə
+## funksiyası ilə, hər tərəfdən gələn xətlərlə (Monte-Karlo, sabit toxum).
+##
+## Orta en nəzəriyyədir; bu test onu oyunun öz toqquşma kodu ilə yoxlayır.
+## Köhnə ellipsdə amöb üçün nisbət ~1.08 çıxırdı.
+static func _test_hit_chance_even() -> void:
+	const NAMES := ["kirpikli", "ayaqlı", "amöb"]
+	var rng := RandomNumberGenerator.new()
+	for sp in [0, 1, 2]:
+		rng.seed = 4242 + sp
+		var cap := 20
+		var r := Const.germ_radius(cap)
+		var still := Sim.hit_shape(sp, cap, Vector2.ZERO)
+		var moving := Sim.hit_shape(sp, cap, Vector2(Const.germ_speed(cap), 0.0))
+		var span := (r + Const.SHOT_RADIUS) * 2.5
+		var hit_still := 0
+		var hit_moving := 0
+		for i in 20000:
+			var dir := Vector2.from_angle(rng.randf() * TAU)
+			var off := dir.orthogonal() * rng.randf_range(-span, span)
+			var a := off - dir * 400.0
+			var b := off + dir * 400.0
+			if Sim.seg_ellipse_t(a, b, Vector2.ZERO, still) >= 0.0:
+				hit_still += 1
+			if Sim.seg_ellipse_t(a, b, Vector2.ZERO, moving) >= 0.0:
+				hit_moving += 1
+		var ratio := float(hit_moving) / float(maxi(hit_still, 1))
+		_check(absf(ratio - 1.0) < 0.015,
+			"%s: hərəkətdə vurulma ehtimalı dayanandakı ilə eynidir (%.3f)" % [NAMES[sp], ratio])
+
+
+## Görünən gövdə toqquşma ellipsindən bayıra çıxmır — mərkəzi gövdədən keçən
+## top həmişə dəyir (bax [method GermVisual._fit_hit]).
+##
+## Ellips balans üçün dairə enindədir və görüntüyə görə böyüdülə bilməz; böyük
+## amöbün sürünmə zirvələri isə ondan 15%-ə qədər çıxırdı. Ölçü tam sürətdə,
+## ən kiçik və ən böyük tutumda, 5 saniyəlik sürünmə boyu aparılır.
+static func _test_body_fits_hit_shape() -> void:
+	const NAMES := ["kirpikli", "ayaqlı", "amöb"]
+	for sp in [0, 1, 2]:
+		for cap in [Const.START_CAPACITY, 35, Const.MAX_CAPACITY]:
+			var v := GermVisual.new()
+			v.setup(1, "x", false, sp)
+			v.hit_fit = true
+			var r := Const.germ_radius(cap)
+			var vel := Vector2(Const.germ_speed(cap) * Const.SPECIES_SPEED[sp], 0.0).rotated(0.4)
+			v.net_vel = vel
+			var shape := Sim.hit_shape(sp, cap, vel)
+			var inv := Vector2(1.0 / shape.x, 1.0 / shape.y)
+			var pos := Vector2.ZERO
+			var worst := 0.0
+			for f in 300:
+				pos += vel / 60.0
+				v.apply(pos, vel.angle(), 5, cap, false, true, false)
+				v._process(1.0 / 60.0)
+				if f < 60:
+					continue
+				for p in v._body_ring(r):
+					worst = maxf(worst, (p.rotated(-shape.z) * inv).length())
+			v.free()
+			_check(worst <= 1.0005, "%s, tutum %d: görünən gövdə toqquşma ellipsinin içindədir (%.3f)"
+				% [NAMES[sp], cap, worst])
+
+
+## "Proqnoz atəşi bu paketdə açdı" biti gedib-gəlir, atəşsiz paketdə isə olmur.
+static func _test_input_shot_bit() -> void:
+	var inp := Sim.PlayerInput.make(7, Vector2.RIGHT, 0.3, true, false, 12.5)
+	inp.shot = true
+	var back := Sim.PlayerInput.from_array(inp.to_array())
+	_check(back.shot and back.fire and is_equal_approx(back.view_tick, 12.5),
+		"proqnoz atəşinin biti paketdə gedir")
+	var idle := Sim.PlayerInput.make(8, Vector2.RIGHT, 0.3, false)
+	idle.shot = true
+	_check(not Sim.PlayerInput.from_array(idle.to_array()).shot,
+		"atəşsiz paketdə bit oxunmur")
+	# Köhnə client biti göndərmir — beş sahəli paket əvvəlki kimi oxunur.
+	_check(not Sim.PlayerInput.from_array([1, 0.0, 0.0, 0.0, 1]).shot,
+		"köhnə formatlı atəş işarəsiz oxunur")
+
+
+## İki paket bir tick-də gələndə atəş ÖZ nişanı və görünən tick-i ilə açılır.
+##
+## Server oyunçu başına yalnız son paketi saxlayır. Əvvəl atəş yeni paketin
+## nişanı ilə açılırdı, proqnoz isə köhnəsininki ilə — ölçülüb, RTT 120–180
+## ms-də atəşlərin 12–19%-i birləşirdi və top başqa xətlə uçurdu.
+static func _test_merged_fire_keeps_aim() -> void:
+	# [birinci atəş, birinci bit, ikinci atəş, ikinci bit, gözlənilən nişan, geri sarma, ad]
+	var cases := [
+		[true, true, false, false, 0.0, 11.0, "atəşli paket yenisinə birləşəndə nişanı və tick-i itmir"],
+		[true, false, false, false, 0.0, 11.0, "köhnə client: atəşin nişanı birləşmədə qalır"],
+		[true, false, true, false, 0.0, 11.0, "köhnə client, basılı düymə: ilk basılışın nişanı"],
+		[true, true, true, false, 0.0, 11.0, "proqnoz atəşi köhnə paketdə açıb — onun nişanı"],
+		[true, false, true, true, PI * 0.5, 6.0, "proqnoz atəşi yeni paketdə açıb — yeninin nişanı"],
+	]
+	for c in cases:
+		var world := _quiet_world(51)
+		var g := world.add_player(A_ID, "A", Const.Species.CILIATE)
+		g.balls = Const.START_BALLS
+		world.sim.tick = 100
+		var first := Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, bool(c[0]), false, 90.0)
+		first.shot = bool(c[1])
+		var second := Sim.PlayerInput.make(2, Vector2.ZERO, PI * 0.5, bool(c[2]), false,
+			95.0 if bool(c[2]) else -1.0)
+		second.shot = bool(c[3])
+		world.accept_input(A_ID, first.to_array())
+		world.accept_input(A_ID, second.to_array())
+		world.tick(Const.TICK_DELTA)
+		var shot: Sim.ShotState = null
+		for s in world.sim.shots:
+			if s.owner_id == A_ID:
+				shot = s
+		_check(shot != null and absf(angle_difference(shot.dir.angle(), float(c[4]))) < 0.001
+				and is_equal_approx(shot.rewind, float(c[5])),
+			"%s (bucaq %.2f, geri sarma %.1f)" % [String(c[6]),
+				shot.dir.angle() if shot != null else NAN, shot.rewind if shot != null else NAN])
+
+
+## Proqnozun açdığı atəş serverdə soyuma bir-iki tick gecikəndə itmir.
+##
+## Soyumanı iki tərəf eyni saxlayır, amma girişlər birləşəndə server onu bir
+## tick gec başlayır: proqnoz atəşi açırdı, server isə "hələ tezdir" deyib
+## atırdı — ekranda uçan top serverdə heç olmurdu.
+static func _test_predicted_fire_waits() -> void:
+	for marked in [true, false]:
+		var world := _quiet_world(52)
+		var g := world.add_player(A_ID, "A", Const.Species.CILIATE)
+		# İkinci mikrob dünyanı AÇIQ saxlayır: tək mikrob qalanda dünya bitmiş
+		# sayılır və donur (bax [method World._match_over]).
+		world.sim.add_germ(B_ID, "B", 1).safe_t = 0.0
+		g.balls = Const.START_BALLS
+		# Soyuma birinci tick-də hələ bitmir, ikincidə bitir.
+		g.cooldown = Const.TICK_DELTA * 1.5
+		var inp := Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true)
+		inp.shot = marked
+		world.accept_input(A_ID, inp.to_array())
+		var fired_at := -1
+		for i in 5:
+			world.tick(Const.TICK_DELTA)
+			if fired_at < 0 and _shots_of(world.sim, A_ID) > 0:
+				fired_at = i
+		if marked:
+			_check(fired_at == 1, "proqnozun atəşi soyuma bitən tick-də açılır (tick %d)" % fired_at)
+		else:
+			_check(fired_at < 0, "işarəsiz atəş gözləmir — köhnə qayda (%d)" % fired_at)
+
+	# Gözləmə hədlidir: soyuma çox uzaqdırsa atəş atılır, "yığılıb" sonra açılmır.
+	var world := _quiet_world(53)
+	var g := world.add_player(A_ID, "A", Const.Species.CILIATE)
+	world.sim.add_germ(B_ID, "B", 1).safe_t = 0.0
+	g.balls = Const.START_BALLS
+	g.cooldown = Const.TICK_DELTA * float(World.FIRE_WAIT + 3)
+	var inp := Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true)
+	inp.shot = true
+	world.accept_input(A_ID, inp.to_array())
+	for i in World.FIRE_WAIT + 6:
+		world.tick(Const.TICK_DELTA)
+	_check(_shots_of(world.sim, A_ID) == 0,
+		"gözləmə %d tick-dən uzun çəkmir — sonradan atəş açılmır" % World.FIRE_WAIT)
+
+
+static func _shots_of(s: Sim, owner: int) -> int:
+	var n := 0
+	for shot in s.shots:
+		if shot.owner_id == owner:
+			n += 1
+	return n
+
+
+## İnsanın topunu trixosist atıcının GÖRDÜYÜ anda dağıdır — `rewind` qədər gec.
+##
+## Atıcı qurbanı `rewind` geridə görür: partlayış onun ekranına o qədər gec
+## çatır. Partlayışdan ƏVVƏL qurbanın gövdəsinə çatan top dəyir (atıcı da,
+## qurban da onu belə görüb), sonra çatan dağılır. Əvvəl top dərhal dağılırdı
+## və atıcının ekranındakı zərbə serverdə heç olmurdu.
+static func _test_trichocyst_waits_for_rewind() -> void:
+	# [top qurbanın mərkəzinə bu qədər qalanda super açılır, gözlənilən, ad]
+	var cases := [
+		[60.0, true, "top qurbana partlayışdan əvvəl çatır — dəyir"],
+		[170.0, false, "top partlayış anında radiusdadır — dağılır, qida olur"],
+	]
+	for c in cases:
+		var s := Sim.new()
+		s.obstacles = [] as Array[Vector4]
+		s.lag_comp = true
+		var a := s.add_germ(A_ID, "A", 0)
+		var b := s.add_germ(B_ID, "B", 1, false, Const.Species.CILIATE)
+		a.safe_t = 0.0
+		b.safe_t = 0.0
+		b.charge = Const.SUPER_MAX
+		b.balls = 8
+		var a_at := Vector2(-300.0, LANE_Y)
+		var b_at := Vector2(100.0, LANE_Y)
+		for i in 12:
+			a.pos = a_at
+			b.pos = b_at
+			a.vel = Vector2.ZERO
+			b.vel = Vector2.ZERO
+			s.step({}, Const.TICK_DELTA)
+		var view := float(s.tick + 1) - 6.0
+		var used := false
+		var balls_before := b.balls
+		for i in 40:
+			a.pos = a_at
+			b.pos = b_at
+			a.vel = Vector2.ZERO
+			b.vel = Vector2.ZERO
+			var inputs := {}
+			if i == 0:
+				inputs[A_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, view)
+			elif not used and not s.shots.is_empty() \
+					and s.shots[0].pos.distance_to(b_at) <= float(c[0]):
+				inputs[B_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, PI, false, true)
+				used = true
+			s.step(inputs, Const.TICK_DELTA)
+		# Top qurbanın mərkəzinə nişanlanıb: dağılmasa mütləq dəyərdi.
+		var hit := b.balls > balls_before - Const.TRICHO_COST
+		_check(used and hit == bool(c[1]),
+			"trixosist, geri sarılan top: %s (%s)" % [String(c[2]), "dəydi" if hit else "dağıldı"])
+
+
+## Bot trixosisti insanın topuna qarşı da vaxtında açır — topu `rewind`
+## qədər qabaqda görür (bax [method Bot._wants_super]).
+static func _test_bot_sees_rewound_shot() -> void:
+	var s := Sim.new()
+	s.obstacles = [] as Array[Vector4]
+	var me := s.add_germ(A_ID, "A", 0, true, Const.Species.CILIATE)
+	me.safe_t = 0.0
+	me.charge = Const.SUPER_MAX
+	me.balls = 8
+	var reach := me.radius() * Const.TRICHO_RADIUS
+	var shot := Sim.ShotState.new()
+	shot.owner_id = B_ID
+	shot.dir = Vector2.LEFT
+	shot.life = Const.SHOT_LIFETIME
+	# Top indi radiusdan kənardadır, 6 tick sonra isə içində olacaq.
+	shot.pos = me.pos + Vector2(reach + 40.0, 0.0)
+	shot.rewind = 6.0
+	s.shots.append(shot)
+	_check(Bot._wants_super(s, me, null, null, false),
+		"bot geri sarılan topu qabaqda görüb trixosist açır")
+	shot.rewind = 0.0
+	_check(not Bot._wants_super(s, me, null, null, false),
+		"botun topunu (geri sarmasız) indiki yerində görür — hələ tezdir")
+
+
+## Rəqibin trixosisti ekranda görünəndə öz UÇAN proqnoz topların dağılır.
+static func _test_prediction_blast() -> void:
+	var p := ShotPrediction.new()
+	var near := p.spawn(Vector2(50.0, 0.0), Vector2.RIGHT, 0.0)
+	var far := p.spawn(Vector2(400.0, 0.0), Vector2.RIGHT, 0.0)
+	var gone := p.blast(Vector2.ZERO, 100.0, 1.0)
+	_check(gone.size() == 1 and not near.alive and far.alive,
+		"partlayış radiusundakı proqnoz topu dayanır, uzaqdakı uçur")
+
+
+## Kist də atıcının GÖRDÜYÜ andan oxunur, mövqe kimi.
+##
+## Amöb qabığa İNDİ girir, atıcı isə onu `rewind` geridə — hələ qabıqsız —
+## görür: top içəri keçir. Botun topu (geri sarmasız) isə qabıqdan səkir.
+static func _test_rewound_cyst() -> void:
+	for back in [6.0, -1.0]:
+		var s := Sim.new()
+		s.obstacles = [] as Array[Vector4]
+		s.lag_comp = true
+		var a := s.add_germ(A_ID, "A", 0)
+		var b := s.add_germ(B_ID, "B", 1, false, Const.Species.AMOEBA)
+		a.safe_t = 0.0
+		b.safe_t = 0.0
+		b.charge = Const.SUPER_MAX
+		var a_at := Vector2(-150.0, LANE_Y)
+		var b_at := Vector2(100.0, LANE_Y)
+		for i in 12:
+			a.pos = a_at
+			b.pos = b_at
+			a.vel = Vector2.ZERO
+			b.vel = Vector2.ZERO
+			s.step({}, Const.TICK_DELTA)
+		var view := -1.0 if back < 0.0 else float(s.tick + 1) - float(back)
+		var before := b.balls
+		var cysted := false
+		for i in 30:
+			a.pos = a_at
+			b.pos = b_at
+			a.vel = Vector2.ZERO
+			b.vel = Vector2.ZERO
+			var inputs := {}
+			if i == 0:
+				inputs[A_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, view)
+			elif not cysted and not s.shots.is_empty() \
+					and s.shots[0].pos.distance_to(b_at) <= 90.0:
+				inputs[B_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, false, true)
+				cysted = true
+			s.step(inputs, Const.TICK_DELTA)
+		var hit := b.balls > before
+		if back > 0.0:
+			_check(cysted and hit, "kist geri sarılır: atıcı qabıqsız görmüşdü — top keçir")
+		else:
+			_check(cysted and not hit, "botun topu yeni kistdən səkir")
+
+
+## Doğuş qalxanı da keçmişdən oxunur: atıcı qalxanı görürdüsə, top keçir.
+static func _test_rewound_safe() -> void:
+	var s := Sim.new()
+	s.obstacles = [] as Array[Vector4]
+	s.lag_comp = true
+	var a := s.add_germ(A_ID, "A", 0)
+	var b := s.add_germ(B_ID, "B", 1)
+	a.safe_t = 0.0
+	var a_at := Vector2(-150.0, LANE_Y)
+	var b_at := Vector2(100.0, LANE_Y)
+	# Qalxan tick 27-də bitir. Top gövdəyə tick 28-də girir, 33-də çıxır —
+	# atıcının ekranında (8 tick geridə, 20–25) qalxan hələ var, serverin
+	# İNDİSİNDƏ isə yoxdur: köhnə qayda burada dəyərdi.
+	b.safe_t = Const.TICK_DELTA * 26.5
+	for i in 12:
+		a.pos = a_at
+		b.pos = b_at
+		a.vel = Vector2.ZERO
+		b.vel = Vector2.ZERO
+		s.step({}, Const.TICK_DELTA)
+	var view := float(s.tick + 1) - 8.0
+	var before := b.balls
+	for i in 30:
+		a.pos = a_at
+		b.pos = b_at
+		a.vel = Vector2.ZERO
+		b.vel = Vector2.ZERO
+		var inputs := {}
+		if i == 0:
+			inputs[A_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, view)
+		s.step(inputs, Const.TICK_DELTA)
+	_check(b.safe_t <= 0.0 and b.balls == before,
+		"atıcının gördüyü qalxan topu buraxır — serverdə bitmiş olsa da")
+
+
+## Proqnoz rəqibə sıxılanda serverlə eyni yerdə qalır — kölgə rəqib server kimi
+## itələnir (bax [method Arena._sync_proxies]).
+##
+## Kölgəsiz köhnə proqnoz rəqibin içindən keçirdi: server mikrobu hər tick geri
+## itələyirdi, proqnoz isə bilmirdi. Nöqtə-nöqtə atəşdə başlanğıc 12–24 px fərqlənirdi.
+static func _test_prediction_separates() -> void:
+	var srv := Sim.new()
+	srv.obstacles = [] as Array[Vector4]
+	var a := srv.add_germ(A_ID, "A", 0)
+	var b := srv.add_germ(B_ID, "B", 1)
+	a.safe_t = 0.0
+	b.safe_t = 0.0
+	a.pos = Vector2(-70.0, LANE_Y)
+	b.pos = Vector2(0.0, LANE_Y)
+	a.vel = Vector2.ZERO
+	b.vel = Vector2.ZERO
+
+	var pred := Sim.new()
+	pred.obstacles = [] as Array[Vector4]
+	var me := pred.add_germ(A_ID, "A", 0)
+	me.pos = a.pos
+	me.vel = Vector2.ZERO
+	var shadow := Sim.GermState.new()
+	shadow.id = B_ID
+	shadow.pos = b.pos
+	pred.germs[B_ID] = shadow
+
+	var alone := Sim.new()
+	alone.obstacles = [] as Array[Vector4]
+	var solo := alone.add_germ(A_ID, "A", 0)
+	solo.pos = a.pos
+	solo.vel = Vector2.ZERO
+
+	var worst_new := 0.0
+	var worst_old := 0.0
+	var still := Sim.PlayerInput.make(0, Vector2.ZERO, 0.0, false)
+	for i in 30:
+		var inp := Sim.PlayerInput.make(i + 1, Vector2.RIGHT, 0.0, false)
+		srv.step({A_ID: inp}, Const.TICK_DELTA)
+		pred.step_movement({A_ID: inp, B_ID: still}, Const.TICK_DELTA, false)
+		alone.step_movement({A_ID: inp}, Const.TICK_DELTA, false)
+		worst_new = maxf(worst_new, me.pos.distance_to(a.pos))
+		worst_old = maxf(worst_old, solo.pos.distance_to(a.pos))
+	_check(worst_new < 0.01, "proqnoz rəqibə sıxılanda serverlə üst-üstə düşür (%.3f px)" % worst_new)
+	_check(worst_old > 10.0, "kölgəsiz proqnoz eyni halda ayrılırdı (%.1f px)" % worst_old)
+
+
+## Proqnoz topu qabın kənarından serverlə EYNİ nöqtədə sıçrayır və sonra eyni yolu gedir.
+##
+## Kənar sıçrayışı addımın sonundan radial proyeksiyadır, yəni addımın
+## uzunluğundan asılıdır. Proqnoz əvvəl kadrla (7 px), server tick-lə (14 px)
+## addımlayırdı: sıçrayış nöqtəsi fərqlənirdi və 500 px sonra top 18 px aralı
+## uçurdu — ekranda dəyən top serverdə rəqibin yanından keçirdi.
+static func _test_prediction_edge_bounce() -> void:
+	var s := Sim.new()
+	s.obstacles = [] as Array[Vector4]
+	var from := Vector2(0.0, 1000.0)
+	var dir := Vector2(0.8, 0.6).normalized()
+	var shot := Sim.ShotState.new()
+	shot.id = 1
+	shot.pos = from
+	shot.dir = dir
+	shot.life = Const.SHOT_LIFETIME
+	s.shots.append(shot)
+	var server_bounce := Vector2.INF
+	for i in 40:
+		s.events.clear()
+		s._step_shots(Const.TICK_DELTA)
+		for e in s.events:
+			if e.get("t") == "hit" and float(e["arg"]) < 0.5 and not server_bounce.is_finite():
+				server_bounce = e["pos"]
+	var server_after := s.shots[0].pos
+
+	var p := ShotPrediction.new()
+	var g := p.spawn(from, dir, 0.0)
+	g.sid = 1
+	var ghost_bounce := Vector2.INF
+	var i := 0
+	while float(i) / 60.0 < 40.0 * Const.TICK_DELTA - 0.000001:
+		i += 1
+		for c in p.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4], PackedByteArray(), []):
+			if int(c["kind"]) == ShotPrediction.Contact.BOUNCE and not ghost_bounce.is_finite():
+				ghost_bounce = c["pos"]
+	_check(server_bounce.is_finite() and ghost_bounce.is_finite()
+			and server_bounce.distance_to(ghost_bounce) < 0.01,
+		"proqnoz qabın kənarından serverlə eyni nöqtədə sıçrayır (%.3f px)"
+			% (server_bounce.distance_to(ghost_bounce) if ghost_bounce.is_finite() else -1.0))
+	_check(g.pos.distance_to(server_after) < 0.01,
+		"sıçrayışdan sonra eyni yolu gedir (%.3f px)" % g.pos.distance_to(server_after))
+
+
+## Proqnoz topu rəqibi serverin yoxladığı TICK-də görür — hərəkətdəki hədəfə
+## geri sarma ilə serverlə EYNİ nöqtədə dəyir (bax [method Arena._ghost_targets]).
+static func _test_prediction_tick_targets() -> void:
+	var s := Sim.new()
+	s.obstacles = [] as Array[Vector4]
+	s.lag_comp = true
+	var a := s.add_germ(A_ID, "A", 0)
+	var b := s.add_germ(B_ID, "B", 1)
+	a.safe_t = 0.0
+	b.safe_t = 0.0
+	var a_at := Vector2(-60.0, LANE_Y)
+	var b_at := Vector2(100.0, LANE_Y - 30.0)
+	var record := {}
+	for i in 12:
+		a.pos = a_at
+		a.vel = Vector2.ZERO
+		b.pos = b_at
+		b.vel = Vector2(0.0, 150.0)
+		s.step({}, Const.TICK_DELTA)
+		record[s.tick] = s._hist_at(s.tick, B_ID)
+	var view := float(s.tick + 1) - 7.5
+	var origin := Vector2.INF
+	var server_hit := Vector2.INF
+	for i in 30:
+		a.pos = a_at
+		a.vel = Vector2.ZERO
+		b.pos = b_at + Vector2(0.0, 5.0 * float(i))
+		b.vel = Vector2(0.0, 150.0)
+		var inputs := {}
+		if i == 0:
+			inputs[A_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, view)
+		s.step(inputs, Const.TICK_DELTA)
+		record[s.tick] = s._hist_at(s.tick, B_ID)
+		if i == 0 and not s.shots.is_empty():
+			origin = s.shots[0].pos - s.shots[0].dir * Const.SHOT_SPEED * Const.TICK_DELTA
+		for e in s.events:
+			if e.get("t") == "hit" and float(e["arg"]) > 0.5:
+				server_hit = e["pos"]
+	# Hədəf serverin öz tarixçəsindən, tick-ə görə — client-də bu, snapshot buferidir.
+	var cap := b.capacity
+	var targets := func(t: float) -> Array:
+		var t0 := floori(t)
+		var p0: Variant = record.get(t0)
+		var p1: Variant = record.get(t0 + 1)
+		if p0 == null or p1 == null:
+			return []
+		var st := (p0 as Vector4).lerp(p1 as Vector4, t - float(t0))
+		return [{"pos": Vector2(st.x, st.y), "radius": Const.germ_radius(cap),
+			"shape": Sim.hit_shape(int(Const.Species.CILIATE), cap, Vector2(st.z, st.w)),
+			"key": B_ID, "cyst": false}]
+	var p := ShotPrediction.new()
+	p.spawn(origin, Vector2.RIGHT, 0.0, view)
+	var ghost_hit := Vector2.INF
+	for i in 90:
+		for c in p.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4], PackedByteArray(), targets):
+			if int(c["kind"]) == ShotPrediction.Contact.HIT:
+				ghost_hit = c["pos"]
+	_check(server_hit.is_finite() and ghost_hit.is_finite()
+			and server_hit.distance_to(ghost_hit) < 0.01,
+		"proqnoz hərəkətdəki hədəfə serverlə eyni nöqtədə dəyir (%.3f px)"
+			% (server_hit.distance_to(ghost_hit) if ghost_hit.is_finite() and server_hit.is_finite() else -1.0))
+
+
+## Eyni toxumlu iki dünya eyni gedir — botlar da daxil (bax [method World._add_bot]).
+static func _test_world_seed_repeats() -> void:
+	var one := World.new(1)
+	var two := World.new(1)
+	one.sim.rng.seed = 77
+	two.sim.rng.seed = 77
+	for i in 300:
+		one.tick(Const.TICK_DELTA)
+		two.tick(Const.TICK_DELTA)
+	var same := one.sim.germs.size() == two.sim.germs.size() \
+		and one.sim.shots.size() == two.sim.shots.size() \
+		and one.sim.food.size() == two.sim.food.size()
+	if same:
+		for gid in one.sim.germs:
+			var g1: Sim.GermState = one.sim.germs[gid]
+			var g2: Sim.GermState = two.sim.germs.get(gid)
+			if g2 == null or g1.pos != g2.pos or g1.balls != g2.balls or g1.species != g2.species:
+				same = false
+				break
+	_check(same, "eyni toxumlu iki bot dünyası 10 saniyədə eyni qalır")
+
+
+## Proqnoz topu ekrandakı rəqibə dəyir; amöbün qabığından isə sıçrayır.
+static func _test_prediction_hits_target() -> void:
+	var target := {"pos": Vector2(100.0, LANE_Y), "radius": 28.0, "key": 7, "cyst": false}
+	var p := ShotPrediction.new()
+	p.spawn(Vector2(-100.0, LANE_Y), Vector2.RIGHT, 0.0)
+	var hit: Dictionary = {}
+	for i in 60:
+		for c in p.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4],
+				PackedByteArray(), [target]):
+			if int(c["kind"]) == ShotPrediction.Contact.HIT:
+				hit = c
+	_check(not hit.is_empty() and int(hit["key"]) == 7,
+		"proqnoz topu rəqibə dəydi (açar %s)" % str(hit.get("key", "-")))
+	if not hit.is_empty():
+		var edge := 100.0 - 28.0 - Const.SHOT_RADIUS
+		_check(absf(Vector2(hit["pos"]).x - edge) < 1.0,
+			"dəymə nöqtəsi membranın üstündədir (x=%.1f, gözlənilən %.1f)"
+				% [Vector2(hit["pos"]).x, edge])
+		_check(not p.ghosts[0].alive, "dəyən top dayanır — rəqibin içindən keçmir")
+
+	var shell := target.duplicate()
+	shell["cyst"] = true
+	var q := ShotPrediction.new()
+	q.spawn(Vector2(-100.0, LANE_Y), Vector2.RIGHT, 0.0)
+	var bounced := false
+	for i in 30:
+		for c in q.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4],
+				PackedByteArray(), [shell]):
+			if int(c["kind"]) == ShotPrediction.Contact.BOUNCE:
+				bounced = true
+	_check(bounced and q.ghosts[0].alive and q.ghosts[0].dir.x < 0.0,
+		"amöbün qabığı proqnoz topunu geri sıçradır")
+
+
+## Server topu proqnozla BİR dəfə birləşir; təsdiqsiz top özü sönür.
+static func _test_prediction_claims() -> void:
+	var p := ShotPrediction.new()
+	var g := p.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
+	_check(p.take_unseen_fire(0.1, 0.6), "serverin atəş hadisəsi proqnozu tapır")
+	_check(not p.take_unseen_fire(0.1, 0.6), "eyni proqnoz ikinci hadisəyə uyğun gəlmir")
+	_check(p.claim(5, Vector2.RIGHT, 0.2) == g, "serverin topu proqnozla birləşdi")
+	_check(p.claim(6, Vector2.RIGHT, 0.2) == null, "birləşmiş proqnoz ikinci topa verilmir")
+	_check(p.claim(7, Vector2.UP, 0.2) == null, "başqa istiqamətli top birləşmir")
+
+	# Dəymiş (ölü) proqnoz da tutulur — yoxsa serverin topu ekranda peyda olardı.
+	var q := ShotPrediction.new()
+	var dead := q.spawn(Vector2.ZERO, Vector2.LEFT, 0.0)
+	dead.alive = false
+	dead.ended = 0.05
+	q.step(1.0 / 60.0, 0.1, [] as Array[Vector4], PackedByteArray(), [])
+	_check(q.claim(9, Vector2.LEFT, 0.15) == dead,
+		"artıq dəymiş proqnoz da serverin topunu udur")
+
+	# Server heç vaxt təsdiqləməsə, top səssizcə gedir.
+	var r := ShotPrediction.new()
+	r.spawn(Vector2.ZERO, Vector2.DOWN, 0.0)
+	var contacts := r.step(1.0 / 60.0, ShotPrediction.CLAIM_GRACE + 0.1,
+		[] as Array[Vector4], PackedByteArray(), [])
+	_check(contacts.is_empty() and r.ghosts.is_empty(),
+		"təsdiqlənməyən top təmas vermədən silinir")
+
+
+## Server topu gələndə proqnoz onun XƏTTİNƏ yana çəkilir, xətt boyu isə yerində qalır.
+static func _test_prediction_aligns_to_server() -> void:
+	var p := ShotPrediction.new()
+	var g := p.spawn(Vector2(0.0, LANE_Y + 30.0), Vector2.RIGHT, 0.0)
+	p.claim(4, Vector2.RIGHT, 0.05, Vector2(-40.0, LANE_Y))
+	var now := 0.05
+	for i in 18:
+		now += 1.0 / 60.0
+		p.step(1.0 / 60.0, now, [] as Array[Vector4], PackedByteArray(), [])
+	_check(absf(g.pos.y - LANE_Y) < 1.0,
+		"proqnoz serverin xəttinə çəkildi (yan fərq %.1f px)" % absf(g.pos.y - LANE_Y))
+	# Top YAŞA görə uçur (atəşdən bəri keçən vaxt), çağırışların sayına görə yox.
+	_check(absf(g.pos.x - Const.SHOT_SPEED * now) < 1.0,
+		"xətt boyu vaxt dəyişmədi (x=%.1f, gözlənilən %.1f)" % [g.pos.x, Const.SHOT_SPEED * now])
+
+
+## Gec tapılmış atəş indiyə çatdırılır — divardan sıçrayaraq, serverin topu kimi.
+##
+## Top düz xətdə yalnız yolun uzunluğu qədər irəli gedir; yolda maneə varsa
+## server də, proqnoz da eyni nöqtədə sıçrayır. Keçmişdə rəqibə dəyməni isə
+## proqnoz yoxlamır — onu serverin hadisəsi deyir.
+static func _test_prediction_catch_up() -> void:
+	var p := ShotPrediction.new()
+	var g := p.spawn(Vector2(-100.0, LANE_Y), Vector2.RIGHT, 0.0)
+	p.catch_up(g, 0.25, 0.25, [] as Array[Vector4], PackedByteArray())
+	_check(absf(g.pos.x - (-100.0 + Const.SHOT_SPEED * 0.25)) < 0.5 and g.alive,
+		"gec top keçən vaxt qədər irəli çəkilir (x=%.1f)" % g.pos.x)
+
+	var s := Sim.new()
+	var blob := _first_of(s, DishMap.Kind.MUCUS)
+	var centre := Vector2(blob.x, blob.y)
+	var out := centre.normalized() if centre.length() > 1.0 else Vector2.RIGHT
+	var start := centre + out * (blob.z + 40.0)
+	var q := ShotPrediction.new()
+	var h := q.spawn(start, -out, 0.0)
+	q.catch_up(h, 0.3, 0.3, s.obstacles, s.broken)
+	_check(h.bounces == 1 and h.dir.dot(-out) < 0.0,
+		"yolda maneə varsa gec top ondan sıçrayır (%d sıçrayış)" % h.bounces)
+
+
+## Proqnozun vəd etdiyi top sayı serverin köhnə rəqəmindən üstündür, amma ilişmir.
+static func _test_germ_promise() -> void:
+	var g := GermVisual.new()
+	g.setup(0, "A", false, Const.Species.CILIATE)
+	g.apply(Vector2.ZERO, 0.0, 5, 10, false, true)
+	g.promise_balls(7, 0.6)
+	_check(g.balls == 7, "vəd dərhal görünür (%d)" % g.balls)
+	g.apply(Vector2.ZERO, 0.0, 5, 10, false, true)
+	_check(g.balls == 7, "serverin köhnə rəqəmi vədi silmir (%d)" % g.balls)
+	g.apply(Vector2.ZERO, 0.0, 7, 10, false, true)
+	g.apply(Vector2.ZERO, 0.0, 6, 10, false, true)
+	_check(g.balls == 6, "server çatandan sonra vəd sönür (%d)" % g.balls)
+
+	g.promise_balls(9, 0.2)
+	g._process(0.25)
+	g.apply(Vector2.ZERO, 0.0, 6, 10, false, true)
+	_check(g.balls == 6, "təsdiqlənməyən vəd vaxtı bitəndə sönür (%d)" % g.balls)
+	g.free()
+
+
+## Seçilməmiş keyfiyyət və kadr həddi fayldan OXUNMUR — cihazın ilkin dəyəri qalır.
+##
+## Menyu OYNA basılanda bütün ayarları yazır. Telefon brauzeri əvvəl masaüstü
+## sayıldığına görə orada YÜKSƏK və həddsiz kadr yazılıb qalmışdı; bu test
+## yazılmış, amma SEÇİLMƏMİŞ dəyərin düzəlişi ləğv etmədiyini yoxlayır. Test
+## masaüstündə işləyir, ona görə tərsinə yoxlanır: yazılmış AŞAĞI + 30 kadr
+## seçilməyibsə, cihazın ilkini (YÜKSƏK, həddsiz) qalır.
+static func _test_settings_device_defaults() -> void:
+	var path := "user://_test_settings.cfg"
+	var keep := [Net.quality, Settings.fps_cap, Settings.quality_chosen, Settings.fps_chosen,
+		Net.nickname, int(Net.species), int(Net.mode)]
+	var cfg := ConfigFile.new()
+	cfg.set_value("video", "quality", int(Const.Quality.LOW))
+	cfg.set_value("video", "fps_cap", 30)
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	_check(Net.quality == Const.default_quality() and Settings.fps_cap == Settings.default_fps_cap(),
+		"seçilməmiş keyfiyyət və kadr həddi cihazın ilkinindən gəlir (%d, %d)"
+			% [int(Net.quality), Settings.fps_cap])
+
+	cfg.set_value("video", "quality_chosen", true)
+	cfg.set_value("video", "fps_chosen", true)
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	_check(Net.quality == Const.Quality.LOW and Settings.fps_cap == 30,
+		"oyunçunun ÖZ seçimi saxlanılır (%d, %d)" % [int(Net.quality), Settings.fps_cap])
+	_check(not Const.is_handheld(), "masaüstü telefon sayılmır")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Net.quality = keep[0]
+	Settings.fps_cap = keep[1]
+	Settings.quality_chosen = keep[2]
+	Settings.fps_chosen = keep[3]
+	Net.nickname = keep[4]
+	Net.species = Const.species_from(keep[5])
+	Net.mode = Const.mode_from(keep[6])
+
+
+## Telefon tətbiqində (brauzer yox) MİNİMUM səhnəni baza ölçüdə çəkib böyüdür.
+##
+## Brauzerdə isə bu iş kətanın piksel sıxlığına keçib (bax
+## [method Settings._apply_render_scale]) — orada `viewport` rejimi ayrıca
+## böyütmə keçidi əlavə edirdi. Headless test brauzer deyil, yəni burada
+## yerli yol yoxlanılır.
+static func _test_render_scale_native() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return
+	var keep := Net.quality
+	var root := tree.root
+	var was := root.content_scale_mode
+	Net.quality = Const.Quality.MINIMUM
+	Settings._apply_render_scale()
+	var minimum := root.content_scale_mode
+	Net.quality = Const.Quality.LOW
+	Settings._apply_render_scale()
+	var low := root.content_scale_mode
+	_check(minimum == Window.CONTENT_SCALE_MODE_VIEWPORT and low == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS,
+		"tətbiqdə MİNİMUM baza ölçüdə çəkir, AŞAĞI isə ekranın öz ölçüsündə")
+	_check(Settings.WEB_MIN_DPR < Settings.WEB_MAX_DPR and Settings.WEB_MIN_DPR >= 1.0,
+		"brauzerdə MİNİMUM kətanın sıxlığını endirir (%.2f < %.2f)" % [Settings.WEB_MIN_DPR, Settings.WEB_MAX_DPR])
+	Net.quality = keep
+	root.content_scale_mode = was
+
+
+## Üç keyfiyyət səviyyəsi: çevirmə, ad, "yüngül" yoxlaması və öyrənilmiş səviyyə.
+static func _test_quality_tiers() -> void:
+	_check(Const.quality_from(2) == Const.Quality.MINIMUM and Const.quality_from(7) == Const.Quality.HIGH,
+		"MİNİMUM oxunur, yad dəyər YÜKSƏK-ə düşür")
+	_check(Const.is_light(int(Const.Quality.MINIMUM)) and Const.is_light(int(Const.Quality.LOW))
+		and not Const.is_light(int(Const.Quality.HIGH)), "glow AŞAĞI və MİNİMUM-da sönülüdür")
+	_check(Const.quality_name(2) == "MİNİMUM", "üçüncü səviyyənin adı")
+
+	var path := "user://_test_tiers.cfg"
+	var keep := [Net.quality, Settings.fps_cap, Settings.quality_chosen, Settings.fps_chosen,
+		Settings.auto_quality, Net.nickname, int(Net.species), int(Net.mode)]
+	var cfg := ConfigFile.new()
+	cfg.set_value("video", "auto_quality", int(Const.Quality.MINIMUM))
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	_check(Net.quality == Const.Quality.MINIMUM,
+		"tənzimləyicinin öyrəndiyi səviyyə növbəti açılışda qalır (%d)" % int(Net.quality))
+	_check(Settings.effective_fps_cap() == 30, "MİNİMUM-da kadr həddi 30 (%d)" % Settings.effective_fps_cap())
+	cfg.set_value("video", "quality_chosen", true)
+	cfg.set_value("video", "quality", int(Const.Quality.HIGH))
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	_check(Net.quality == Const.Quality.HIGH, "oyunçunun öz seçimi öyrənilən səviyyədən üstündür")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Net.quality = keep[0]
+	Settings.fps_cap = keep[1]
+	Settings.quality_chosen = keep[2]
+	Settings.fps_chosen = keep[3]
+	Settings.auto_quality = keep[4]
+	Net.nickname = keep[5]
+	Net.species = Const.species_from(keep[6])
+	Net.mode = Const.mode_from(keep[7])
+
+
+## Tənzimləyici ardıcıl yavaşlığı tutur, tək-tük sıçrayışı isə saymır.
+static func _test_perf_governor() -> void:
+	var smooth := PackedFloat32Array()
+	var heavy := PackedFloat32Array()
+	var spiky := PackedFloat32Array()
+	var rare := PackedFloat32Array()
+	for i in 300:
+		smooth.append(1.0 / 60.0)
+		heavy.append(0.026)
+		spiky.append(0.045 if i % 6 == 0 else 1.0 / 60.0)
+		rare.append(0.080 if i % 40 == 0 else 1.0 / 60.0)
+	_check(not Arena.too_slow(smooth, 60), "sabit 60 kadr — endirmə yoxdur")
+	_check(Arena.too_slow(heavy, 60), "26 ms kadrlar (~38 FPS) — endirilir")
+	_check(Arena.too_slow(spiky, 60), "hər altıncı kadr 45 ms — endirilir")
+	_check(not Arena.too_slow(rare, 60), "40 kadrda bir sıçrayış — endirilmir")
+	_check(not Arena.too_slow(heavy, 30), "30 kadr həddində 26 ms büdcənin içindədir")
+
+
+## Kətan sıxlığının hökmü: yükün GPU-da olduğunu CPU işindən ayırır.
+static func _test_resolution_verdict() -> void:
+	var budget := 1.0 / 30.0
+	var calm := PackedFloat32Array()
+	var gpu := PackedFloat32Array()
+	var cpu_bound := PackedFloat32Array()
+	var judder := PackedFloat32Array()
+	var hitch := PackedFloat32Array()
+	var low := PackedFloat32Array()
+	var high := PackedFloat32Array()
+	for i in 90:
+		calm.append(budget)
+		gpu.append(0.050)
+		cpu_bound.append(0.050)
+		# 60 Hz ekranda 30 kadr: hər beşinci kadr bir vsync gecikir.
+		judder.append(0.050 if i % 5 == 0 else budget)
+		# Üç saniyədə iki böyük sıçrayış — şəbəkə, şeyder yüklənməsi.
+		hitch.append(0.120 if i % 45 == 0 else budget)
+		low.append(0.006)
+		high.append(0.045)
+	_check(Arena.resolution_verdict(calm, low, budget) == 1, "sabit 30 kadr — rahatdır, sıxlıq böyüyə bilər")
+	_check(Arena.resolution_verdict(gpu, low, budget) == -1, "50 ms kadr, CPU 6 ms — yük GPU-dadır, kiçilir")
+	_check(Arena.resolution_verdict(cpu_bound, high, budget) == 0,
+		"50 ms kadr, CPU 45 ms — yük CPU-dadır, sıxlıq dəyişmir")
+	_check(Arena.resolution_verdict(judder, low, budget) == -1, "kadrların beşdə biri gecikir — kiçilir")
+	_check(Arena.resolution_verdict(hitch, low, budget) == 1, "tək-tük sıçrayış sayılmır")
+	_check(Arena.resolution_verdict(gpu.slice(0, 10), low, budget) == 0, "az kadrla hökm verilmir")
+	var st := Arena.frame_stats(judder, low)
+	_check(is_equal_approx(st.x, budget * 1000.0) and is_equal_approx(st.y, 50.0)
+		and is_equal_approx(st.z, 6.0) and absf(st.w - (budget * 800.0 + 10.0)) < 0.01,
+		"kadr statistikası: p50 %.1f, p90 %.1f, CPU %.1f, orta %.1f ms" % [st.x, st.y, st.z, st.w])
+
+
+## Brauzer kadrlarının modeli: GPU işi piksel sayı ilə (sıxlığın kvadratı) artır,
+## CPU-dan ayrı gedir; kadr ekranın vsync-inə yuvarlanır, 30 kadr həddi isə
+## [param min_vsyncs]-dan az buraxmır. [param cpu_seen] ≥ 0 — tənzimləyicinin
+## gördüyü CPU işi realdan fərqlidir (ölçülməyən iş).
+static func _res_window(dpr: float, gpu_at_1: float, cpu: float, rng: RandomNumberGenerator,
+		frames: PackedFloat32Array, cpus: PackedFloat32Array, opts: Dictionary) -> void:
+	frames.clear()
+	cpus.clear()
+	var vsync := 1.0 / float(opts.get("refresh", 60.0))
+	var hitches := int(opts.get("hitches", 0))
+	var t := 0.0
+	var i := 0
+	while t < Arena.RES_WINDOW:
+		var g := gpu_at_1 * dpr * dpr * rng.randf_range(0.92, 1.08)
+		var c := cpu * rng.randf_range(0.9, 1.1)
+		var n := maxi(int(opts.get("min_vsyncs", 2)), ceili(maxf(g, c) / vsync - 1e-6))
+		var ft := float(n) * vsync
+		if hitches > 0 and i % (90 / hitches) == 0:
+			ft = 0.12
+		frames.append(ft)
+		cpus.append(c if float(opts.get("cpu_seen", -1.0)) < 0.0 else float(opts["cpu_seen"]))
+		t += ft
+		i += 1
+
+
+## Tənzimləyicini modeldə işlədir: `{"dpr", "changes", "late", "p90", "fps"}`.
+## `late` — son 20 pəncərədəki dəyişiklik (titrəmə), `p90`/`fps` — son pəncərə.
+static func _res_run(start: float, cap: float, gpu_at_1: float, cpu: float,
+		opts := {}, windows := 80) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var state := {}
+	var dpr := start
+	var changes := 0
+	var late := 0
+	var st := Vector4.ZERO
+	var frames := PackedFloat32Array()
+	var cpus := PackedFloat32Array()
+	for w in windows:
+		_res_window(dpr, gpu_at_1, cpu, rng, frames, cpus, opts)
+		var verdict := Arena.resolution_verdict(frames, cpus, 1.0 / float(Arena.RES_FPS))
+		st = Arena.frame_stats(frames, cpus)
+		var next := Arena.resolution_step(dpr, verdict, st.w, true, cap, state)
+		if absf(next - dpr) > 0.001:
+			changes += 1
+			if w >= windows - 20:
+				late += 1
+		dpr = next
+	# Son sıxlıqda ölçü.
+	_res_window(dpr, gpu_at_1, cpu, rng, frames, cpus, opts)
+	st = Arena.frame_stats(frames, cpus)
+	return {"dpr": dpr, "changes": changes, "late": late, "p90": st.y, "fps": 1000.0 / st.w}
+
+
+## Dinamik kətan sıxlığı GPU-nun MÜTLƏQ sürətindən asılı olmadan büdcəni tutur.
+##
+## Real Mali/Adreno-nun millisaniyəsi bilinmir, ona görə burada geniş aralıq
+## yoxlanılır: 1.25 sıxlıqda kadrın GPU işi 12 ms-dən 150 ms-ə qədər. Hər
+## halda tənzimləyici ya büdcəni tutan ən böyük sıxlığa (bir addım dəqiqliklə)
+## gəlib orada qalır, ya da (çox zəif GPU) aşağı həddə enir. Yük CPU-dadırsa və
+## ya kiçiltmə kömək etmirsə, şəkil boş yerə bulanıqlaşmır.
+static func _test_resolution_converges() -> void:
+	var top := Settings.WEB_MIN_DPR
+	var floor_dpr := Settings.WEB_FLOOR_DPR
+	var budget_ms := 1000.0 / float(Arena.RES_FPS)
+	for gpu_ms in [12.0, 30.0, 45.0, 60.0, 80.0]:
+		var gpu_at_1: float = gpu_ms / 1000.0 / (top * top)
+		var r := _res_run(top, top, gpu_at_1, 0.006)
+		# Ən böyük uyğun sıxlıq: kadrların 90%-i büdcəyə sığır (GPU səs-küyü ±8%).
+		var best := minf(top, sqrt(budget_ms / 1000.0 / (gpu_at_1 * 1.064)))
+		var fits: bool = r["p90"] <= budget_ms * 1.2
+		_check(fits and r["dpr"] >= best / Arena.RES_UP - 0.001 and r["late"] == 0,
+			"GPU 1.25-də %.0f ms: sıxlıq %.2f (ən yaxşı %.2f), kadr p90 %.1f ms, %.0f FPS, %d dəyişiklik"
+				% [gpu_ms, r["dpr"], best, r["p90"], r["fps"], r["changes"]])
+	for gpu_ms in [110.0, 150.0]:
+		var weak := _res_run(top, top, gpu_ms / 1000.0 / (top * top), 0.006)
+		_check(is_equal_approx(weak["dpr"], floor_dpr) and weak["late"] == 0,
+			"çox zəif GPU (1.25-də %.0f ms): aşağı həddə enir (%.2f), %.0f FPS"
+				% [gpu_ms, weak["dpr"], weak["fps"]])
+	var cpu_bound := _res_run(top, top, 0.010, 0.045)
+	_check(is_equal_approx(cpu_bound["dpr"], top) and cpu_bound["changes"] == 0,
+		"yük CPU-dadır (45 ms): sıxlıq dəyişmir (%.2f)" % cpu_bound["dpr"])
+	var hidden := _res_run(top, top, 0.010, 0.045, {"cpu_seen": 0.005})
+	_check(is_equal_approx(hidden["dpr"], top) and hidden["late"] == 0 and hidden["changes"] <= 3,
+		"ölçülməyən CPU işi: kiçiltmə kömək etmir — sıxlıq geri qaytarılır (%.2f, %d dəyişiklik)"
+			% [hidden["dpr"], hidden["changes"]])
+	var saver := _res_run(top, top, 0.010, 0.006, {"refresh": 30.0, "min_vsyncs": 1})
+	_check(is_equal_approx(saver["dpr"], top) and saver["changes"] == 0,
+		"enerjiyə qənaət (brauzer 30 kadr verir): sıxlıq dəyişmir")
+	var hitches := _res_run(top, top, 0.010, 0.006, {"hitches": 3})
+	_check(is_equal_approx(hitches["dpr"], top) and hitches["changes"] == 0,
+		"tək-tük sıçrayışlar sıxlığı dəyişmir")
+	var recover := _res_run(floor_dpr, top, 0.008 / (top * top), 0.006)
+	_check(is_equal_approx(recover["dpr"], top),
+		"yadda qalmış aşağı sıxlıq, GPU isə rahatdır: geri həddə qalxır (%.2f)" % recover["dpr"])
+	var chosen := _res_run(Settings.WEB_MAX_DPR, Settings.WEB_MAX_DPR, 0.060 / 4.0, 0.006)
+	var chosen_best := sqrt(budget_ms / 1000.0 / (0.060 / 4.0 * 1.064))
+	_check(chosen["p90"] <= budget_ms * 1.2 and chosen["dpr"] >= chosen_best / Arena.RES_UP - 0.001
+		and chosen["late"] == 0,
+		"oyunçu YÜKSƏK seçib (hədd 2.0, GPU 2.0-da 60 ms): sıxlıq %.2f (ən yaxşı %.2f)"
+			% [chosen["dpr"], chosen_best])
+
+
+## Kətanın sıxlıq həddi: səviyyənin öz həddi, öyrənilən sıxlıq, aşağı hədd və yaddaş.
+static func _test_web_dpr_limits() -> void:
+	var keep := [Net.quality, Settings.auto_dpr, Settings.quality_chosen, Settings.fps_cap,
+		Settings.fps_chosen, Settings.auto_quality, Net.nickname, int(Net.species), int(Net.mode)]
+	Net.quality = Const.Quality.MINIMUM
+	Settings.auto_dpr = 0.0
+	_check(is_equal_approx(Settings.web_dpr(), Settings.WEB_MIN_DPR), "MİNİMUM: öyrənilmə yoxdursa 1.25")
+	Settings.auto_dpr = 0.9
+	_check(is_equal_approx(Settings.web_dpr(), 0.9), "MİNİMUM: öyrənilən 0.90 işlədilir")
+	Settings.auto_dpr = 0.3
+	_check(is_equal_approx(Settings.web_dpr(), Settings.WEB_FLOOR_DPR), "aşağı həddən (0.75) aşağı enmir")
+	Settings.auto_dpr = 1.8
+	_check(is_equal_approx(Settings.web_dpr(), Settings.WEB_MIN_DPR), "səviyyənin həddindən yuxarı qalxmır")
+	Net.quality = Const.Quality.HIGH
+	_check(is_equal_approx(Settings.web_dpr(), 1.8), "YÜKSƏK: öyrənilən 1.80 işlədilir")
+	Settings.auto_dpr = 0.0
+	_check(is_equal_approx(Settings.web_dpr(), Settings.WEB_MAX_DPR), "YÜKSƏK: öyrənilmə yoxdursa 2.0")
+	_check(is_equal_approx(Settings.device_dpr(), 1.0), "brauzer deyil — ekran sıxlığı 1")
+
+	var path := "user://_test_dpr.cfg"
+	var cfg := ConfigFile.new()
+	cfg.set_value("video", "auto_dpr", 0.9)
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	_check(is_equal_approx(Settings.auto_dpr, 0.9), "öyrənilən sıxlıq növbəti açılışda qalır")
+	cfg.set_value("video", "auto_dpr", 7.0)
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	_check(Settings.auto_dpr <= Settings.WEB_MAX_DPR, "fayldakı yad dəyər həddə kəsilir (%.2f)" % Settings.auto_dpr)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Net.quality = keep[0]
+	Settings.auto_dpr = keep[1]
+	Settings.quality_chosen = keep[2]
+	Settings.fps_cap = keep[3]
+	Settings.fps_chosen = keep[4]
+	Settings.auto_quality = keep[5]
+	Net.nickname = keep[6]
+	Net.species = Const.species_from(keep[7])
+	Net.mode = Const.mode_from(keep[8])
+
+
+## Kölgə formanı TƏKRAR qurmur — hadisəsiz kadrda gövdə ilə eyni formadır.
+##
+## [method GermVisual._draw] formanı bir dəfə hesablayır və hadisə yoxdursa
+## kölgə üçün də onu işlədir. Test bunun görüntünü DƏYİŞMƏDİYİNİ yoxlayır: hər
+## növdə iki forma nöqtə-nöqtə eynidir; zərbə anında isə fərqlidir və kölgə
+## öz formasını alır.
+static func _test_germ_shape_reuse() -> void:
+	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		var g := GermVisual.new()
+		g.setup(0, "A", false, kind)
+		for i in 20:
+			g.apply(Vector2(float(i) * 2.0, 0.0), 0.0, 6, 12, false, true)
+			g._process(1.0 / 60.0)
+		var r := Const.germ_radius(12)
+		var same := g._shape_ring(r, true) == g._shape_ring(r, false)
+		_check(g._shape_steady() and same,
+			"növ %d: sakit formada kölgə gövdə ilə eynidir" % int(kind))
+		g.flash(0.0)
+		_check(not g._shape_steady(), "növ %d: zərbə anında kölgə ayrıca qurulur" % int(kind))
+		g.free()
+
+
+## AŞAĞI keyfiyyətdə rəqib iki kadrda bir çəkilir; öz mikrobun və zərbə — hər kadr.
+static func _test_germ_redraw_rate() -> void:
+	var g := GermVisual.new()
+	g.setup(1, "B", false, Const.Species.CILIATE)
+	g.redraw_step = 2
+	var due := 0
+	for i in 10:
+		if g._redraw_due():
+			due += 1
+	_check(due == 5, "rəqib iki kadrda bir çəkilir (10 kadrda %d)" % due)
+	g.flash(0.0)
+	due = 0
+	for i in 4:
+		if g._redraw_due():
+			due += 1
+	_check(due == 4, "zərbə anında hər kadr çəkilir (%d / 4)" % due)
+	# Ekrana qayıdan mikrob növbəsini gözləmədən çəkilir.
+	g._flash = 0.0
+	g._hit_squash_t = 0.0
+	g.on_screen = false
+	g.on_screen = true
+	_check(g._redraw_due(), "ekrana qayıdan mikrob elə həmin kadr çəkilir")
+	g.free()
+
+	var me := GermVisual.new()
+	me.setup(0, "Sən", true, Const.Species.CILIATE)
+	me.redraw_step = 2
+	due = 0
+	for i in 6:
+		if me._redraw_due():
+			due += 1
+	_check(due == 6, "öz mikrobun həmişə hər kadr çəkilir (%d / 6)" % due)
+	me.free()
+
+
+## Zərbə donması: animasiya dayanır, parıltının ömrü isə uzanmır.
+static func _test_germ_hitstop() -> void:
+	var g := GermVisual.new()
+	g.setup(0, "A", false, Const.Species.CILIATE)
+	g.apply(Vector2.ZERO, 0.0, 5, 10, false, true)
+	g._process(1.0 / 60.0)
+	var t0 := g._t
+	g.flash()
+	g._process(0.03)
+	_check(is_equal_approx(g._t, t0), "zərbə donmasında animasiya dayanır")
+	_check(g._flash < GermVisual.FLASH_TIME, "parıltının saatı donmada da axır")
+	g._process(0.05)
+	_check(g._t > t0 and g._hitstop == 0.0, "donma bitir, animasiya davam edir")
+	g.free()
 
 
 
@@ -1173,21 +2862,28 @@ static func _test_bots_use_supers() -> void:
 static func _test_every_species_uses_super() -> void:
 	const NAMES := ["kirpikli", "ayaqlı", "amöb"]
 	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
-		var world := World.new(1)
-		# Bütün dünya bir növdən: qarışıq dünyada bir növ təsadüfən heç vaxt
-		# doğulmaya bilər və test səbəbsiz yanıb-sönərdi.
-		for gid in world.sim.germs:
-			world.sim.germs[gid].species = kind
-
 		var supers := 0
-		var ticks := int(60.0 / Const.TICK_DELTA)
-		for i in ticks:
-			world.tick(Const.TICK_DELTA)
-			for gid in world.sim.germs:
-				world.sim.germs[gid].species = kind
-			for e in world.sim.events:
-				if String(e.get("t", "")) == "super":
-					supers += 1
+		# İki SABİT toxumlu dünya × 60 s: nəticə hər çalışmada eynidir.
+		#
+		# Əvvəl dünya təsadüfi idi və test bəzən səbəbsiz yanırdı. Ölçülüb (300
+		# dünya × 60 s): bütün-amöb dünyasında super orta hesabla 4.4 dəfə olur,
+		# amma 1.7% dünyada heç olmur — dəymə forması dəyişməzdən ƏVVƏL də belə
+		# idi. Toxum dünyanın generatorundadır ([member Sim.rng]) və botları da
+		# sabitləyir ([method World._add_bot]). İki dünya ona görədir ki, kodun
+		# başqa yerindəki dəyişiklik trayektoriyanı dəyişəndə nadir "sıfır"
+		# dünyası tək başına testi yandırmasın.
+		for seed_no in [1, 2]:
+			var world := World.new(1)
+			world.sim.rng.seed = 1000 * seed_no + int(kind)
+			for i in int(60.0 / Const.TICK_DELTA):
+				world.tick(Const.TICK_DELTA)
+				# Bütün dünya bir növdən: qarışıq dünyada bir növ təsadüfən heç
+				# vaxt doğulmaya bilər.
+				for gid in world.sim.germs:
+					world.sim.germs[gid].species = kind
+				for e in world.sim.events:
+					if String(e.get("t", "")) == "super":
+						supers += 1
 
 		_check(supers > 0, "%s superi işə düşür (%d dəfə)" % [
 			NAMES[int(kind)], supers])

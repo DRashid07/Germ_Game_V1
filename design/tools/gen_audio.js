@@ -19,6 +19,7 @@ const SOUND_SPECS = [
   { file: 'blunk.wav', duration: 0.115, limit: 0.140, strictLimit: true, peakDb: -7.0, create: createBlunk },
   { file: 'absorb.wav', duration: 0.090, limit: 0.110, peakDb: -8.0, create: createAbsorb },
   { file: 'hit.wav', duration: 0.145, limit: 0.170, peakDb: -4.5, create: createHit },
+  { file: 'hit_confirm.wav', duration: 0.080, limit: 0.100, strictLimit: true, peakDb: -7.0, create: createHitConfirm },
   { file: 'burst.wav', duration: 0.700, limit: 0.780, peakDb: -1.5, create: createBurst },
   { file: 'spawn.wav', duration: 0.420, limit: 0.470, peakDb: -4.0, create: createSpawn },
   { file: 'danger.wav', duration: 0.240, limit: 0.280, peakDb: -5.0, create: createDanger },
@@ -334,6 +335,38 @@ function createHit(spec) {
   });
 
   return finishSound(sound, spec.peakDb, { drive: 1.35 });
+}
+
+// SƏNİN atışın dəydi — hamıya çalan `hit`-in üstündə parlaq, qalxan qabarcıq.
+// 900–2000 Hz gövdə onu aşağı `hit` və `eject`-dən ayırır; başlanğıcdakı qısa
+// yüksək çırtıltı telefon dinamikində dərhal seçilir.
+function createHitConfirm(spec) {
+  const sound = blankSound(spec.duration);
+
+  addFilteredNoise(sound, {
+    duration: 0.012,
+    amplitude: 0.38,
+    lowCut: 3000,
+    highCut: 6500,
+    attack: 0.0004,
+    release: 0.006,
+    decayTime: 0.004,
+    seed: 0xc0f1,
+  });
+
+  addTone(sound, {
+    duration: 0.070,
+    frequencyStart: 920,
+    frequencyEnd: 1850,
+    amplitude: 0.75,
+    attack: 0.0012,
+    release: 0.012,
+    decayTime: 0.030,
+    glideCurve: 0.65,
+    harmonics: [[1, 1], [2, 0.16], [3, 0.04]],
+  });
+
+  return finishSound(sound, spec.peakDb, { fadeIn: 0.0015, fadeOut: 0.005 });
 }
 
 // Mikrob partladı — dünyanın ən vacib səsi və oyunun yeganə ÖLÜM səsi.

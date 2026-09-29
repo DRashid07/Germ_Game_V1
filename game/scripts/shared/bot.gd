@@ -44,10 +44,16 @@ var _switch_timer := 0.0
 var _rng := RandomNumberGenerator.new()
 
 
-func _init(p_id: int, p_difficulty := 1.0) -> void:
+## [param p_seed] mənfi deyilsə botun qərarları təkrarlana biləndir: [World] onu
+## öz [member Sim.rng]-indən verir, yəni dünyanın bir toxumu bütün botları da
+## sabitləyir (testlər və balans ölçüsü bunu işlədir).
+func _init(p_id: int, p_difficulty := 1.0, p_seed := -1) -> void:
 	id = p_id
 	difficulty = p_difficulty
-	_rng.randomize()
+	if p_seed >= 0:
+		_rng.seed = p_seed
+	else:
+		_rng.randomize()
 
 
 static func random_name(index: int) -> String:
@@ -213,7 +219,12 @@ static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
 				return false
 			var reach := me.radius() * Const.TRICHO_RADIUS
 			for shot in sim.shots:
-				if shot.owner_id != me.id and shot.pos.distance_to(me.pos) < reach:
+				if shot.owner_id == me.id:
+					continue
+				# İnsanın topunu trixosist `rewind` GEC tutur (bax [member Sim._blasts]) —
+				# bot da insan qurban kimi topu o qədər qabaqda görür.
+				var ahead := shot.pos + shot.dir * (Const.SHOT_SPEED * shot.rewind * Const.TICK_DELTA)
+				if ahead.distance_to(me.pos) < reach:
 					return true
 			return false
 		Const.Species.HELIOZOAN:

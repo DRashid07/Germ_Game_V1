@@ -92,6 +92,10 @@ const RIM_NORMAL_CUTOFF := 0.35
 ## Daha çox olsa mikrob damcıya dönür və toqquşma radiusu ilə uyğunsuzluq
 ## gözə çarpır — membran gerçək radiusdan uzaqda görünür.
 const STRETCH_MAX := 0.16
+## Gövdə toqquşma ellipsinin bu hissəsinə qədər sərbəstdir, ondan o yana ellipsə
+## doğru hamar sıxılır (bax [method _fit_hit]). 1-ə yaxın olsa uc qəfil
+## yastılanar, kiçik olsa gövdə ehtiyacsız yerdə də kiçilər.
+const HIT_FIT_KNEE := 0.94
 ## Keçici squash & stretch sabit dartılmanın üstünə gəlsə də bu həddi keçmir.
 ## 0.26-dan yuxarı variantda siluet artıq toqquşma dairəsindən qopmuş görünürdü.
 const TOTAL_STRETCH_MAX := 0.26
@@ -505,12 +509,77 @@ var _birth_t := BIRTH_TIME
 const FLASH_TIME := 0.18
 var _flash := 0.0
 
+## Zərbə donması (hit-stop) — YALNIZ vurulan mikrobda.
+##
+## Bütün ekranı dondurmaq öldürmə üçün saxlanılıb ([member Arena._freeze]):
+## hər adi zərbədə donsaydı, saniyədə bir atəşlə oyun kəkələyərdi. Burada isə
+## yalnız qurbanın öz animasiyası 50 ms dayanır — parıltı həmin müddətdə TAM
+## ağ qalır və zərbə "oturur". Mövqe dayanmır: onu şəbəkə sürür.
+const HITSTOP_TIME := 0.05
+var _hitstop := 0.0
+
+## Proqnozun vəd etdiyi top sayı — serverin rəqəmi gələnə qədər.
+##
+## Öz topun rəqibə dəyəndə +2 dərhal görünməlidir, amma serverin sözü
+## RTT + interpolyasiya qədər sonra gəlir. O vaxta qədər göstərilən say vəddən
+## aşağı düşmür; server çatanda vəd özü silinir. Server dəyməni qəbul etməsə
+## vəd [member _promise_t] bitəndə sönür — yalan top sayı ilişib qalmır.
+var _promise := -1
+var _promise_t := 0.0
+
 ## Donmuş kadr — öldürmə anında [Arena] qoyur (bax [method Arena._freeze]).
 ##
 ## YALNIZ animasiyanı dayandırır. Simulyasiya, proqnoz və şəbəkə işləməyə
 ## davam edir: `Engine.time_scale` ilə donduran variant client-i serverdən
 ## geri salardı, sonra isə düzəliş mikrobu sıçradardı.
 var frozen := false
+
+## Mikrob EKRANDADIRMI — [Arena] hər kadr yazır (bax [method Arena._render_germs]).
+##
+## Ekrandan kənarda vəziyyət yenilənir (saatlar, sürət, zərbə), amma gövdə
+## YENİDƏN ÇƏKİLMİR. Server hər oyunçuya ekrandan ~3 dəfə böyük sahəni
+## göndərir, yəni görünən mikrobların təxminən üçdə ikisi kadrdan kənarda olur.
+## Onların hər kadr GDScript-də çəkilməsi brauzerdə kadr işinin ən böyük
+## payı idi (ölçülüb: 4× yavaş CPU-da kadr başına 10–16 ms). Ekrana qayıdan
+## mikrob elə həmin kadrda yenidən çəkilir — [Arena] bayrağı onun [method _process]-indən
+## ƏVVƏL yazır.
+var on_screen := true:
+	set(value):
+		# Ekrana QAYIDAN mikrob elə həmin kadr çəkilməlidir — kətanda onun çoxdan
+		# qalmış köhnə şəkli (bəlkə köhnə ölçüdə) durur və yarım tezlikdə növbəsi
+		# bir kadr gecikə bilərdi.
+		if value and not on_screen:
+			_stale = true
+		on_screen = value
+var _stale := false
+
+## Gövdə neçə kadrdan bir yenidən çəkilir — [Arena] yazır.
+##
+## AŞAĞI keyfiyyətdə (telefonun ilkini) rəqib mikrobların FORMASI saniyədə 30
+## dəfə yenilənir. Hərəkət hamar qalır: mövqe node-un transformudur və hər kadr
+## yenilənir, yalnız membranın dalğası, kirpik və ayaqların şəkli iki kadrda bir
+## təzələnir. Öz mikrobun və qısa hadisələr (parıltı, atəş, əzilmə, doğuş) həmişə
+## hər kadr çəkilir — zərbə anı kəskin qalmalıdır. Faza rəngdən gəlir ki,
+## mikrobların yarısı bir kadrda, yarısı o birində çəkilsin — yük bərabər paylanır.
+var redraw_step := 1
+## Detal səviyyəsi: 0 = tam, 1 = MİNİMUM keyfiyyət ([Arena] yazır).
+##
+## Zəif telefonda mikrobun çəkilişi kadrın ən böyük xərcidir: kirpiklərin hər
+## biri ayrıca poliqondur (18–30 çağırış), kölgə iki, işıqlandırma üç poliqon.
+## 1-də gövdə düz rənglə, kölgə bir poliqonla, kirpiklər yarı sayda və BİR
+## çağırışla çəkilir; işıq ləkəsi, parıltı və kənar xətti çəkilmir. Forma,
+## ölçü, rəng, içindəki toplar və təhlükə çatları QALIR — oyun məlumatı itmir.
+var lod := 0
+## Serverin dediyi sürət (snapshot-dan, interpolyasiya ilə) — [Arena] yazır.
+## Toqquşma ellipsi ondan qurulur ([method Sim.hit_shape]); görüntünün öz
+## `_vel`-i mövqedən çıxır və axını da daşıyır, server isə suya nisbi sürəti bilir.
+var net_vel := Vector2.ZERO
+## Gövdə toqquşma ellipsinin İÇİNDƏ saxlanılsınmı (bax [method _fit_hit]).
+##
+## Yalnız oyunda açılır ([method Arena._ensure_germ]): menyu və stendlərdə
+## server qaydası yoxdur və [member net_vel] də yazılmır.
+var hit_fit := false
+var _redraw_phase := 0
 ## Doluluq göstəricisi ani sıçramır — göz üçün yumşaq keçid.
 var _shown_fill := 0.0
 
@@ -682,6 +751,15 @@ func flash(incoming := NAN) -> void:
 	_flash = FLASH_TIME
 	_hit_squash_t = HIT_SQUASH_TIME
 	_hit_dir = (_heading() + PI) if is_nan(incoming) else incoming
+	_hitstop = HITSTOP_TIME
+
+
+## Proqnozlaşdırılmış dəymə: göstərilən top sayı [param total]-dan aşağı
+## düşmür, ta ki server təsdiqləyənə və ya [param hold] saniyə keçənə qədər.
+func promise_balls(total: int, hold: float) -> void:
+	_promise = maxi(_promise, total)
+	_promise_t = hold
+	balls = maxi(balls, total)
 
 
 func apply(p_pos: Vector2, p_aim: float, p_balls: int, p_capacity: int,
@@ -690,7 +768,9 @@ func apply(p_pos: Vector2, p_aim: float, p_balls: int, p_capacity: int,
 		return
 	position = p_pos
 	aim = p_aim
-	balls = p_balls
+	if _promise >= 0 and (p_balls >= _promise or _promise_t <= 0.0):
+		_promise = -1
+	balls = maxi(p_balls, _promise)
 	capacity = p_capacity
 	safe = p_safe
 	super_on = p_super
@@ -821,7 +901,7 @@ func _body_ring(r: float) -> PackedVector2Array:
 	# Atəş anında gövdə topun çıxdığı yerdə dartılır — növdən ASILI OLMAYARAQ,
 	# çünki hazır konturun üzərində işləyir (bax [method _strain]).
 	ring = _strain(ring)
-	return _event_deform(ring, r)
+	return _fit_hit(_event_deform(ring, r))
 
 
 ## Gövdənin hadisəsiz əsas silueti. Kölgə bu yolu `false` ilə çağırır ki,
@@ -835,12 +915,40 @@ func _shape_ring(r: float, transient: bool) -> PackedVector2Array:
 	var bonus := _accel_bonus() if transient else 0.0
 	var cap := _base_stretch_cap() if transient else TOTAL_STRETCH_MAX
 	if species == Const.Species.AMOEBA:
-		return _crawl_body(r, heading, rush, 1.0, bonus, cap)
-	return _membrane(r,
+		return _fit_hit(_crawl_body(r, heading, rush, 1.0, bonus, cap))
+	return _fit_hit(_membrane(r,
 			(0.018 if rigid else 0.030) + (0.030 if rigid else 0.055) * tension,
 			(1.6 if rigid else 2.2) + (2.4 if rigid else 3.4) * tension,
 			heading, rush * (0.3 if rigid else 1.0),
-			0.0 if rigid else SOFT_AIM_BULGE, bonus, cap)
+			0.0 if rigid else SOFT_AIM_BULGE, bonus, cap))
+
+
+## Görünən gövdə toqquşma ellipsinin İÇİNDƏ qalır ([method Sim.hit_shape]).
+##
+## Top mərkəzi ellipsə girəndə dəyir. Gövdə ellipsdən bayıra çıxsa, mərkəzi
+## gövdədən keçən top dəymədən keçərdi — oyunçunun ən çox hiss etdiyi səhv
+## budur. Ellipsi görüntüyə görə böyütmək isə olmaz: onun ölçüsü balansdan
+## gəlir (orta eni dayanan mikrobun dairəsi qədərdir), böyüsə mikrob asan
+## vurulardı. Ona görə uyğunlaşan tərəf görüntüdür.
+##
+## Ölçülüb (tam sürət, hər tutumda 240 kadr): kirpikli, ayaqlı və kiçik amöb
+## ellipsin içindədir; böyük amöbün sürünmə zirvələri isə 60 tutumda 15%-ə
+## qədər bayıra çıxırdı. Sıxılma yumşaqdır: sərhədin [constant HIT_FIT_KNEE]
+## hissəsinə qədər gövdə toxunulmazdır, ondan o yana nöqtə mərkəzə doğru hamar
+## sıxılır — uc kəsilmir, yumrulanır.
+func _fit_hit(ring: PackedVector2Array) -> PackedVector2Array:
+	if not hit_fit:
+		return ring
+	var shape := Sim.hit_shape(int(species), capacity, net_vel)
+	var inv := Vector2(1.0 / shape.x, 1.0 / shape.y)
+	var soft := 1.0 - HIT_FIT_KNEE
+	var out := PackedVector2Array(ring)
+	for i in out.size():
+		var q := (out[i].rotated(-shape.z) * inv).length()
+		if q <= HIT_FIT_KNEE:
+			continue
+		out[i] *= (HIT_FIT_KNEE + soft * tanh((q - HIT_FIT_KNEE) / soft)) / q
+	return out
 
 
 ## Sürətlənmənin ease-out payı. Zərbə və atəş daha güclü, istiqamətli hadisədir;
@@ -850,6 +958,14 @@ func _accel_bonus() -> float:
 		return 0.0
 	var left := _accel_t / ACCEL_TIME
 	return ACCEL_STRETCH * left * left
+
+
+## Kölgənin hadisəsiz forması indiki forma ilə eynidirmi.
+##
+## [method _shape_ring] yalnız bu iki dəyərlə fərqlənir; ikisi də adi haldadırsa,
+## `transient` bayrağı nəticəni dəyişmir və forma təkrar qurulmur.
+func _shape_steady() -> bool:
+	return _accel_bonus() == 0.0 and _base_stretch_cap() == TOTAL_STRETCH_MAX
 
 
 ## İstiqamətli hadisə üçün əsas hərəkət dartılmasına qalan yer. Zərbədə əsas
@@ -949,10 +1065,27 @@ func _place_label() -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
+	_promise_t = maxf(0.0, _promise_t - delta)
 	if frozen:
 		return
-	_t += delta
+	# Parıltının saatı donmada da axır: ümumi ömrü uzanmır, sadəcə ilk
+	# [constant HITSTOP_TIME] tam ağ çəkilir (bax [method _draw]).
 	_flash = maxf(0.0, _flash - delta)
+	# Zərbə donması: əzilmə və bütün animasiya ilk kadrdakı kimi SAXLANILIR.
+	if _hitstop > 0.0:
+		var hold := minf(_hitstop, delta)
+		_hitstop -= hold
+		delta -= hold
+		# Mövqe donmada da dəyişir (onu şəbəkə sürür). İzləmə nöqtəsi onunla
+		# sürüşür — yoxsa donma bitəndə yığılmış yerdəyişmə bir kadrın sürəti
+		# sayılar və gövdə birdən dartılar.
+		if _has_pos:
+			_last_pos = position
+		if delta <= 0.0:
+			if on_screen:
+				queue_redraw()
+			return
+	_t += delta
 	_accel_t = maxf(0.0, _accel_t - delta)
 	_hit_squash_t = maxf(0.0, _hit_squash_t - delta)
 	_fire_squash_t = maxf(0.0, _fire_squash_t - delta)
@@ -966,7 +1099,6 @@ func _process(delta: float) -> void:
 	if not is_equal_approx(_super_fade, want):
 		var rate := SUPER_FADE_IN if super_on else SUPER_FADE_OUT
 		_super_fade = move_toward(_super_fade, want, delta * rate)
-		queue_redraw()
 
 	var rush_before := _rush()
 	_track_motion(delta)
@@ -995,7 +1127,22 @@ func _process(delta: float) -> void:
 
 	var target := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
 	_shown_fill = move_toward(_shown_fill, target, delta * 2.5)
-	queue_redraw()
+	if on_screen and _redraw_due():
+		queue_redraw()
+
+
+## Bu kadr gövdə yenidən çəkilməlidirmi (bax [member redraw_step]).
+func _redraw_due() -> bool:
+	_redraw_phase += 1
+	if _stale:
+		_stale = false
+		return true
+	if redraw_step <= 1 or is_local:
+		return true
+	if _flash > 0.0 or _hit_squash_t > 0.0 or _fire_squash_t > 0.0 \
+			or _eject_t >= 0.0 or _birth_t < BIRTH_TIME:
+		return true
+	return (_redraw_phase + color_index) % redraw_step == 0
 
 
 ## Getdiyi istiqamət. Dayanmışsa nişan istiqaməti götürülür ki, yerində
@@ -1454,8 +1601,13 @@ func _draw() -> void:
 	var rigid := species == Const.Species.HELIOZOAN
 	var crawler := species == Const.Species.AMOEBA
 
-	var ring := _body_ring(r)
-	var shadow_ring := _shape_ring(r, false)
+	# [method _body_ring]-in açılmış halı: forma BİR dəfə hesablanır. Kölgə
+	# hadisəsiz formadan çəkilir və hadisə yoxdursa ikisi EYNİDİR — əvvəl hər
+	# kadr iki dəfə qurulurdu, amöbün sürünən gövdəsi isə mikrobun ən bahalı
+	# formasıdır (ölçülüb: brauzerdə çəkilişin ~15%-i).
+	var shape := _shape_ring(r, true)
+	var shadow_ring := shape if _shape_steady() else _shape_ring(r, false)
+	var ring := _fit_hit(_event_deform(_strain(shape), r))
 	var inner_ring := _inset(ring, maxf(r * CRAWL_BAND, CRAWL_BAND_MIN)) \
 		if crawler else PackedVector2Array()
 	var outline_w := clampf(r * 0.10, 2.4, 6.0)
@@ -1466,7 +1618,11 @@ func _draw() -> void:
 		outline_tint = Palette.OUTLINE.lerp(Palette.DANGER, 0.45 + 0.50 * danger_pulse)
 
 	# ---- dolu formalar ----
-	_draw_contact_shadow(shadow_ring, r)
+	if lod >= 1:
+		draw_colored_polygon(_ellipse_ring(shadow_ring, Vector2(1.0, 0.62),
+			-Palette.LIGHT_DIR * (r * 0.22)), Color(Palette.OUTLINE, 0.45))
+	else:
+		_draw_contact_shadow(shadow_ring, r)
 	_draw_birth_ring(r)
 	## Bioluminessensiya halosu: yastı disk yox, mərkəzdən kənara yumşaq sönən
 	## paylaşılmış radial teksturadır. Gərginlik əvvəlki kimi işığı artırır.
@@ -1515,26 +1671,18 @@ func _draw() -> void:
 		var gel_lit := _light.lerp(Palette.BODY_LIGHT, 0.28).lerp(Palette.DANGER, strain * 0.18)
 		var sol_dark := _base.lerp(Palette.OUTLINE, 0.30).lerp(Palette.DANGER, strain * 0.30)
 		var sol_lit := _base.lerp(Palette.BODY_LIGHT, 0.28).lerp(Palette.DANGER, strain * 0.20)
-		draw_colored_polygon(ring, gel_dark)
-		var gel_shape := _lit_polygon(ring, r)
-		if gel_shape.size() >= 3:
-			draw_colored_polygon(gel_shape, gel_lit)
-		draw_colored_polygon(inner_ring, sol_dark)
-		var sol_shape := _lit_polygon(inner_ring, r)
-		if sol_shape.size() >= 3:
-			draw_colored_polygon(sol_shape, sol_lit)
+		_draw_skin(ring, r, gel_dark, gel_lit)
+		_draw_skin(inner_ring, r, sol_dark, sol_lit)
 	else:
 		# Əvvəlki 0.30 alfa fonu gövdənin içindən göstərir və silueti öldürürdü.
 		# İndi iki qat da TAM TUTQUNDUR: tünd baza + yuxarı-sola sürüşmüş açıq qat.
 		var dark_skin := _base.lerp(Palette.OUTLINE, 0.30).lerp(Palette.DANGER, strain * 0.30)
 		var lit_skin := _base.lerp(Palette.BODY_LIGHT, 0.28).lerp(Palette.DANGER, strain * 0.20)
-		draw_colored_polygon(ring, dark_skin)
-		var lit_shape := _lit_polygon(ring, r)
-		if lit_shape.size() >= 3:
-			draw_colored_polygon(lit_shape, lit_skin)
+		_draw_skin(ring, r, dark_skin, lit_skin)
 	## Spekulyar hər üç növdə, amöbin iki material qatının isə yalnız üstündədir;
 	## beləliklə yaş səth oxunur, daxildə əlavə “top” yaranmır.
-	draw_colored_polygon(_specular_polygon(r), Color(Palette.BODY_LIGHT, SPECULAR_ALPHA))
+	if lod < 1:
+		draw_colored_polygon(_specular_polygon(r), Color(Palette.BODY_LIGHT, SPECULAR_ALPHA))
 	# Daxili kölgə həcm üçündür, amöbdə isə həcmi ARTIQ iki qat verir —
 	# üçüncü ləkə onların sərhədini bulandırır və "qalın zolaq + dolğun iç"
 	# oxunuşunu itirir. Ona görə yalnız digər növlərdə çəkilir.
@@ -1565,13 +1713,17 @@ func _draw() -> void:
 			# yoxdur, çünki onlarda belə bir sərhəd olmazdı.
 			draw_arc(Vector2.ZERO, r * 0.72, 0.0, TAU, 28, Color(_light, 0.30), 1.6, true)
 		elif not crawler:
-			_draw_cilia(r, rush, heading)
+			if lod >= 1:
+				_draw_cilia_lite(r, rush, heading)
+			else:
+				_draw_cilia(r, rush, heading)
 			_draw_tail(r, heading, rush)
 
 	# Rim HƏR ŞEYDƏN sonra siluetin aşağı-sağ qövsünü geri çıxarır. Cilia və
 	# ayaqlar onun üstünə düşsəydi gövdə ilə hərəkət orqanının sərhədi itərdi.
 	var rim_w := maxf(1.4, r * 0.06)
-	var rim := _rim_segment(ring, outline_w * 0.5 + rim_w * 0.5)
+	var rim := _rim_segment(ring, outline_w * 0.5 + rim_w * 0.5) if lod < 1 \
+		else PackedVector2Array()
 	if rim.size() >= 2:
 		draw_polyline(rim, Color(_light, 0.55), rim_w, true)
 
@@ -1614,7 +1766,7 @@ func _draw() -> void:
 		_draw_ready_sparks(r)
 
 	if _flash > 0.0:
-		var f := _flash / FLASH_TIME
+		var f := 1.0 if _hitstop > 0.0 else _flash / FLASH_TIME
 		draw_colored_polygon(ring, Color(Palette.HIT_FLASH, 0.92 * f * f))
 
 
@@ -2100,6 +2252,51 @@ static func _tapered_ribbon(path: PackedVector2Array, root_half: float,
 ##
 ## Kölgənin sürüşməsi daxili axını göstərir (bax [method _track_motion]):
 ## kirpiklidə geri qalır, ayaqlıda öndəki ayağa doğru axır.
+## Gövdənin dərisi: tam detalda tünd rəng + işıqlı ləkə, MİNİMUM-da düz orta rəng.
+func _draw_skin(ring: PackedVector2Array, r: float, dark: Color, lit: Color) -> void:
+	if lod >= 1:
+		draw_colored_polygon(ring, dark.lerp(lit, 0.45))
+		return
+	draw_colored_polygon(ring, dark)
+	var shape := _lit_polygon(ring, r)
+	if shape.size() >= 3:
+		draw_colored_polygon(shape, lit)
+
+
+## Kirpiklərin sadə halı — yarı sayda, iki seqmentli xətt, HAMISI bir çağırışda.
+##
+## Tam halda hər kirpik ayrıca lent poliqonudur və 18–30 çəkiliş çağırışı
+## edir. Döyüntü, əyilmə və hərəkət istiqaməti eynidir — kirpikli yenə
+## kirpikli kimi oxunur, sadəcə nazik cizgilərlə.
+func _draw_cilia_lite(r: float, rush: float, heading: float) -> void:
+	var n := clampi(int(r * 0.42), CILIA_MIN, CILIA_MAX) / 2
+	var length := clampf(r * 0.26, 7.15, 13.0)
+	var beat := CILIA_BEAT * (0.55 + 0.9 * rush)
+	var sweep := 0.35 + 0.55 * rush
+	var stretch := 1.0 + STRETCH_MAX * rush
+	var squash := 1.0 / stretch
+	var axis := Vector2.from_angle(heading)
+	var side := Vector2(-axis.y, axis.x)
+	var col := Color(_light.lerp(Palette.BODY_LIGHT, 0.18), 0.85)
+	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	for i in n:
+		var a := TAU * float(i) / float(n)
+		var circle := Vector2.from_angle(a)
+		var out := (axis * (circle.dot(axis) / stretch)
+			+ side * (circle.dot(side) / squash)).normalized()
+		var tangent := Vector2(-out.y, out.x)
+		var base := circle * (r * 0.97)
+		var root := axis * (base.dot(axis) * stretch) + side * (base.dot(side) * squash)
+		var bend := sin(_t * beat - a * CILIA_WAVES) * sweep
+		var mid := root + (out * 0.75 + tangent * bend).normalized() * (length * 0.55)
+		var tip := mid + (out * 0.35 + tangent * (bend * 1.6)).normalized() * (length * 0.6)
+		pts.append_array(PackedVector2Array([root, mid, mid, tip]))
+		cols.append_array(PackedColorArray([col, col]))
+	if not pts.is_empty():
+		draw_multiline_colors(pts, cols, maxf(r * 0.04, 1.2))
+
+
 func _draw_core(r: float, strain: float) -> void:
 	draw_circle(_core, r * 0.62, Color(_shadow.lerp(Palette.DANGER, strain * 0.35), 0.45))
 
@@ -2157,6 +2354,9 @@ func _draw_inner_balls(r: float) -> void:
 			# dönürdü və SAYILA BİLMİRDİ — halbuki say həm sursat, həm candır.
 			# Sistin içində, gövdə tündləşəndə vəziyyət daha da pisləşirdi.
 			# İndi kontur nazik haşiyədir, parlaq hissə isə böyükdür.
+			if lod >= 1:
+				draw_colored_polygon(_star(p, dot * 1.36, a), tint if i % 2 == 0 else _light)
+				continue
 			draw_colored_polygon(_star(p, dot * 1.42, a), Palette.OUTLINE)
 			draw_colored_polygon(_star(p, dot * 1.30, a), tint if i % 2 == 0 else _light)
 			# İşıq nöqtəsi dairələrdəki ilə eyni səbəbdəndir: forma yox, PARLAQ
@@ -2166,7 +2366,7 @@ func _draw_inner_balls(r: float) -> void:
 					Color(Palette.TEXT, 0.75))
 			continue
 		draw_circle(p, dot, Color(_light, 0.95))
-		if lit:
+		if lit and lod < 1:
 			draw_circle(p - Vector2(dot * 0.3, dot * 0.3), dot * 0.35, Color(Palette.TEXT, 0.8))
 
 

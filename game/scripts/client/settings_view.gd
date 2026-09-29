@@ -141,15 +141,20 @@ func _build_audio_column() -> void:
 func _build_video_column() -> void:
 	var box := _column("QRAFİKA")
 
-	quality_seg = _segment_row(box, "Keyfiyyət", ["YÜKSƏK", "AŞAĞI"], int(Net.quality),
+	quality_seg = _segment_row(box, "Keyfiyyət", ["YÜKSƏK", "AŞAĞI", "MİNİMUM"], int(Net.quality),
 		func(i: int) -> void:
 			Net.quality = Const.quality_from(i)
+			Settings.quality_chosen = true
+			# Öyrənilmiş kətan sıxlığı KÖHNƏ səviyyəyə aiddir — yenisi öz həddindən
+			# başlayır, tənzimləyici lazım olsa yenidən endirir.
+			Settings.auto_dpr = 0.0
 			Settings.commit())
 
 	_segment_row(box, "Kadr həddi", Settings.FPS_NAMES,
-		maxi(Settings.FPS_CAPS.find(Settings.fps_cap), 0),
+		maxi(Settings.FPS_CAPS.find(Settings.effective_fps_cap()), 0),
 		func(i: int) -> void:
 			Settings.fps_cap = Settings.FPS_CAPS[i]
+			Settings.fps_chosen = true
 			Settings.commit())
 
 	_segment_row(box, "Ekran silkələnməsi", Settings.SHAKE_NAMES,
@@ -164,7 +169,7 @@ func _build_video_column() -> void:
 		Settings.commit())
 
 	var note := Hud._make_label(13, Palette.TEXT_MUTED)
-	note.text = "AŞAĞI: işıq effektləri sönür. Oyuna təsiri yoxdur."
+	note.text = "AŞAĞI: işıq effektləri sönür. MİNİMUM: zəif telefon üçün, 30 kadr. Oyuna təsiri yoxdur."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(note)
 

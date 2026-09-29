@@ -87,6 +87,9 @@ var _fps_t := 0.0
 var _local_color := Palette.TEXT
 var _warn_t := 0.0
 var _bar_fill_target := 0.0
+## Son yazılan top sayı və tutum (bax [method update_gauge]).
+var _gauge_balls := -1
+var _gauge_cap := -1
 var _bar_fill_shown := 0.0
 var _gauge_danger := false
 var _gauge_t := 0.0
@@ -578,7 +581,12 @@ func _process(delta: float) -> void:
 		_fps_t += delta
 		if _fps_t >= 1.0:
 			_fps_t = 0.0
-			_fps_lbl.text = "%d FPS" % Engine.get_frames_per_second()
+			# Brauzerdə kətanın sıxlığı da yazılır — telefonun öz ölçüsü: dinamik
+			# tənzimləyici onu kadr büdcəsinə görə endirib-qaldırır (bax
+			# [method Arena._watch_resolution]).
+			_fps_lbl.text = "%d FPS · %.2fx" % [Engine.get_frames_per_second(),
+				minf(Settings.web_dpr(), Settings.device_dpr())] \
+				if OS.has_feature("web") else "%d FPS" % Engine.get_frames_per_second()
 
 	# Snapshot 30 Hz, ekran isə 60+ Hz-dir. Zolaq hədəfə eksponensial yaxınlaşır
 	# ki, doluluq pillə-pillə sıçramasın; sabit sürət böyük artımda gecikirdi.
@@ -610,14 +618,22 @@ func _process(delta: float) -> void:
 
 ## Əsas göstərici: neçə top / tutum.
 func update_gauge(balls: int, capacity: int) -> void:
-	_gauge_lbl.text = "%d / %d" % [balls, capacity]
-	var fill := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
-	var col := Palette.fill_color(fill)
-	_gauge_lbl.add_theme_color_override("font_color", col)
-	_bar.color = col
-	_bar_fill_target = fill
-	_gauge_danger = fill >= 0.85
-	_level_lbl.text = "Səviyyə %d" % Const.level_of(capacity)
+	# Say dəyişməyibsə yazıya və rəngə TOXUNULMUR.
+	#
+	# Funksiya hər tick çağırılır, say isə nadir dəyişir. `add_theme_color_override`
+	# eyni rəngdə də mövzu dəyişikliyi bildirişi yayır və yazı yenidən düzülür —
+	# zəif telefonda (6.5× yavaş CPU) bu, kadra ~1.1 ms idi.
+	if balls != _gauge_balls or capacity != _gauge_cap:
+		_gauge_balls = balls
+		_gauge_cap = capacity
+		_gauge_lbl.text = "%d / %d" % [balls, capacity]
+		var fill := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
+		var col := Palette.fill_color(fill)
+		_gauge_lbl.add_theme_color_override("font_color", col)
+		_bar.color = col
+		_bar_fill_target = fill
+		_gauge_danger = fill >= 0.85
+		_level_lbl.text = "Səviyyə %d" % Const.level_of(capacity)
 
 	# Üç təhlükə var və üçü də ölümcüldür: dolub partlamaq, acından partlamaq,
 	# quru zonada qalmaq.

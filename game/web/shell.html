@@ -1,7 +1,11 @@
 <!DOCTYPE html>
-<html lang="az">
+<html lang="az" translate="no">
 	<head>
 		<meta charset="utf-8">
+		<!-- Brauzer dili başqa olanda Chrome aşağıda "tərcümə et" paneli açır və o, joystik
+		     ilə atəş düyməsinin üstünə düşür (Android emulyatorunda görülüb). Oyun kətanda
+		     çəkilir — tərcüməyə onsuz da heç nə yoxdur. -->
+		<meta name="google" content="notranslate">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 		<meta name="theme-color" content="#071012">
 		<!-- Telefonda "ana ekrana əlavə et" ilə açılanda brauzer paneli olmadan tam ekran. -->
@@ -208,6 +212,17 @@ const engine = new Engine(GODOT_CONFIG);
 // ---------------------------------------------------------------------------
 const MIN_ASPECT = 1280 / 720;   // 16:9 — kadr bundan DAR (hündür) verilmir
 const MAX_DPR = 2;               // çox sıx ekranlarda doldurma yükünü saxlamaq üçün
+// Oyun bu həddi özü ENDİRİR — MİNİMUM qrafikada (bax Settings._apply_render_scale).
+// Kətan kiçik olur, ekrana böyütməni isə brauzerin kompozitoru pulsuz edir: o,
+// kətanı onsuz da ekrana köçürür. Ölçülüb (SwiftShader, doldurmaya həssas GPU
+// modeli): DPR 2 → 1.25 kadrın işini 27–30 ms-dən 8–13 ms-ə endirir.
+let maxDpr = MAX_DPR;
+window.germSetMaxDpr = function (v) {
+	const next = Math.max(0.5, Math.min(Number(v) || MAX_DPR, MAX_DPR));
+	if (next === maxDpr) return;
+	maxDpr = next;
+	fitCanvas();
+};
 
 function fitCanvas() {
 	const canvas = document.getElementById('canvas');
@@ -219,7 +234,7 @@ function fitCanvas() {
 
 	const w = window.innerWidth;
 	const h = Math.min(window.innerHeight, Math.floor(w / MIN_ASPECT));
-	const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+	const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
 	canvas.style.width = w + 'px';
 	canvas.style.height = h + 'px';
 	canvas.width = Math.max(1, Math.floor(w * dpr));

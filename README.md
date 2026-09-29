@@ -157,6 +157,210 @@ gələn ox boyunca ən çox 16 px təpik alır; yaxın rəqibin ölümü mövcud
 > effekt öz zərbəsini yeyərdi. Ona görə donma YALNIZ görüntüdədir — kamera və
 > mikrob animasiyaları dayanır, simulyasiya isə tam sürətlə davam edir.
 
+### Onlayn vuruş — gecikməsiz zərbə
+
+**Problem:** onlayn oyunda rəqibi vuranda zərbə hiss olunmurdu. Top ekranda
+rəqibin içindən keçib o biri tərəfdən çıxırdı, parıltı isə ~250 ms sonra
+yanırdı. Səbəb iki zaman xətti idi: öz topun proqnozla İNDİ uçur, rəqib isə
+interpolyasiyaya görə `100 ms + RTT` KEÇMİŞDƏ çəkilir. Zərbəni isə yalnız
+server deyirdi, onun HIT hadisəsi də növbədə daha 100 ms gözləyirdi.
+
+**Həll Brawl Stars və Overwatch-dakı kimi iki qatdır:**
+
+| Qat | Nə edir | Kod |
+|---|---|---|
+| **Öz topunun proqnozu** | Topun ekranda tam simulyasiya olunur: divardan özü sıçrayır və gördüyün rəqibə dəyən kimi zərbə **elə o kadrda** göstərilir. Serverin eyni hadisəsi sonra gələndə tanınır və ikinci dəfə oynanmır. | [`ShotPrediction`](game/scripts/client/shot_prediction.gd), `Arena._step_own_shots` |
+| **Serverdə geri sarma** (lag compensation) | Atəş paketi oyunçunun ekranda gördüyü tick-i daşıyır. Server son 16 tick-in mövqelərini saxlayır və topu rəqibin **atıcının gördüyü** yerinə qarşı yoxlayır. Ən çox 400 ms geri sarır ([`Const.REWIND_MAX`](game/scripts/shared/constants.gd)) — ölçülüb: RTT 180 ms-də lazım olan geri sarma 300–367 ms-dir, köhnə 300 ms həddi atəşlərin 84%-ni kəsirdi. Yalnız mövqe yox, qurbanın **halı** da geri sarılır: doğuş qalxanı və kist ([`Sim._rewound_bits`](game/scripts/shared/sim.gd)). | [`Sim._rewound`](game/scripts/shared/sim.gd) |
+
+Proqnoz yalnız **görüntüdür**: top sayını, partlamanı və superin açılmasını yenə
+yalnız server verir. Proqnozun vəd etdikləri (`+2` qurbanda, `+3` super
+halqasında) serverin rəqəmi çatana qədər, ən çox 0.6 s göstərilir. Server
+dəyməni saymasa, vəd özü sönür.
+
+Atıcıya aid əlavə siqnallar (hamısı proqnozlaşdırılmış dəymədə, gecikməsiz):
+
+| Siqnal | Nə deyir |
+|---|---|
+| `hit_confirm.wav` | Yalnız atana çalınan "sənin topun dəydi" səsi. Tonu qurbanın doluluğu ilə 1.0-dan 1.3-ə qalxır |
+| Zərbə donması (50 ms) | Yalnız qurbanın animasiyası dayanır və parıltı tam ağ qalır. Ekran donmur, çünki o, öldürməyə saxlanılıb |
+| Qırmızı `+2` | Növbəti top rəqibi partladacaq |
+| Titrəmə 15 ms | Qurbanın titrəməsindən (22 ms) yüngül |
+| Dərhal partlama | Sənin topunla dolan rəqibin partlaması interpolyasiyanı gözləmir |
+
+Snapshot hadisə büdcəsində **baxanın öz hadisələri öndədir**
+([`World._near_flat`](game/scripts/server/world.gd)). Əvvəl hadisələr yalnız
+məsafəyə görə seçilirdi və 400–500 px uzaqda dəyən öz topunun HIT hadisəsi
+yaxındakı qida udmalarının arxasında paketdən düşürdü: server dəyməni sayırdı,
+client isə eşitmirdi.
+
+Proqnozun topu serverinki ilə iki yerdə tutuşdurulur:
+
+- **Gec tapılan atəş.** Server atəşi bəzən proqnozdan bir tick TEZ açır: server
+  tick-ləri girişlərdən asılı olmayaraq 30 Hz-lə gedir və jitter-də bir girişi
+  iki tick işlədə bilir. O halda atəşi yalnız serverin FIRE hadisəsi deyir.
+  Əvvəl top həmin hadisə GƏLƏNDƏ doğulurdu, serverinkindən ~RTT geridə. Server
+  dəyməni əvvəl sayırdı, gec top isə sonra ikinci, boş zərbə göstərirdi. İndi
+  top atəşi açan girişin GÖNDƏRİLDİYİ andan uçur ([`Arena._spawn_own_shot`](game/scripts/client/arena.gd),
+  [`ShotPrediction.catch_up`](game/scripts/client/shot_prediction.gd)).
+- **Xəttə çəkmə.** Proqnoz yalnız öz mikrobunu simulyasiya edir. Serverdə isə
+  mikroblar bir-birini itələyir, ona görə yaxın döyüşdə atəş nöqtəsi 50–80 px
+  fərqlənə bilir. Server topu gələndə proqnoz onun xəttinə yana doğru ~0.1 s-də
+  hamar çəkilir; xətt boyu vaxta toxunulmur ([`ShotPrediction.claim`](game/scripts/client/shot_prediction.gd)).
+
+**Ekranda ölçülüb — köhnə və yeni kod yan-yana.** [`HitProbe`](game/scripts/tools/hit_probe.gd)
+oyunun daxili vəziyyətinə yox, EKRANA baxır: öz topunu sprite rəngindən, rəqibi
+[`GermVisual`](game/scripts/client/germ_visual.gd)-dan, zərbəni parıltının
+yanmasından tanıyır. Ona görə eyni probe köhnə kodda (ayrıca git worktree) və
+yenisində eyni şeyi ölçür. [`AutoClient`](game/scripts/tools/auto_client.gd)
+onu hər dəfə qoşur və çıxışda `PROBE:`, `VURUŞ:` və `XƏTT:` sətirləri yazır.
+Gecikdirici TCP proksi (hər istiqamətdə RTT/2, 15–20 ms jitter), 2 client × 90 s,
+60 FPS:
+
+| | Köhnə kod | Yeni kod |
+|---|---|---|
+| Top ekranda rəqibə çatır → parıltı, RTT 120 ms | median 184–281 ms, ən pisi 528 ms | **0 ms** |
+| Eyni, RTT 180 ms | median 200–361 ms, ən pisi 516 ms | **0 ms** |
+| Top rəqibin içindən keçib o biri tərəfdən çıxır | 45 / 51 toxunuş | **0 / 67** |
+| Top rəqibə girir, zərbə ümumiyyətlə görünmür | 18 / 51 | **0 / 67** |
+| Ekranda göstərilən öz dəymələrindən serverin saydığı, RTT 120 ms | — | **46 / 48 (96%)** |
+| Eyni, RTT 180 ms | — | **17 / 19 (89%)** |
+
+Geri sarmanın özünün payı: RTT 120 ms-də geri sarmasız server ekranda görünən
+dəymələrin yalnız 10 / 21-ni (48%) sayırdı. Təsdiq ekrana RTT + ~40 ms sonra
+çatır (RTT 120-də ~160 ms), amma bu artıq zərbənin gecikməsi deyil, yalnız top
+sayının serverdən gəlmə vaxtıdır. Qalan fərq serverin bildiyi, client-in isə
+bilə bilmədiyi hallardır: kolda gizlənən mikrob topu tutur, doğuş qalxanı
+serverdə bir an əvvəl bitir. Geri sarma serverin tick qiymətini dəyişmir
+(ölçülüb: 1.66 → 1.54 ms, səpələnmə daxilində).
+
+Qaydaya görə dəyməyən hədəfləri probe ayrıca sayır (`+N qayda`): doğuş qalxanlı
+mikrobdan top keçir, amöbün qabığından sıçrayır.
+
+#### Top gövdənin içindən keçib dəymirdi
+
+İkinci şikayət: onlayn oyunda top bəzən rəqibin içindən keçir, ona dəymir.
+Bunu ölçmək üçün probe-a **siluet yoxlaması** əlavə olundu: topun yolu mikrobun
+ÇƏKİLƏN gövdəsinə (toqquşma dairəsinə yox) girib parıltı yanmırsa, bu "keçid"dir.
+Çıxışda `KEÇİD:`, `KEÇİD-DETAL:`, `GÖVDƏ:` və `SƏNƏ:` sətirləri yazılır. Hər
+keçid üçün topun dəymə ellipsinə nə qədər dərin girdiyi (`d`) və gövdədən sonra
+ekranda nə qədər uçduğu (`sonra`) da yazılır: uçmağa davam edibsə, server
+dəyməni saymayıb.
+
+Səbəbləri tapmaq üçün server də ölçüldü (yalnız test nüsxəsində): hər topun
+necə bitdiyi (kimə dəydi, ömrü bitdi, sıçradı) yazıldı. Client-in hər
+təsdiqlənməyən proqnozu topun id-si ilə həmin qeydə tutuşduruldu. Tapılan
+səbəblər:
+
+**Server**
+
+| Səbəb | Düzəliş | Kod |
+|---|---|---|
+| Dəymə forması dairə idi, gövdə isə hərəkətdə uzanır: amöb oxu boyu radiusun 1.58 mislinə çatır, yanlardan 0.6-ya qədər sıxılır | Hərəkət istiqamətində uzanan **ellips**: kirpikli +20% / −14%, ayaqlı +4% / −5%, amöb +24% / −28%. Topun "payı" elə seçilir ki, ellipsin ORTA eni dairəninki qalsın — vurulma ehtimalı dəyişmir (bax aşağıda, «Balans»). Çəkilən gövdə bu ellipsdən bayıra çıxmır ([`GermVisual._fit_hit`](game/scripts/client/germ_visual.gd)): mərkəzi gövdədən keçən top həmişə dəyir. Server də, proqnoz da eyni funksiyanı işlədir | [`Sim.hit_shape`](game/scripts/shared/sim.gd) |
+| Tick-də mikroblar toplardan ƏVVƏL yeriyir. Topa doğru gedən mikrob onun üstünə çıxanda topun 14 px-lik parçası bütünlüklə gövdənin içində qalırdı, sərhəd yoxlaması isə yalnız GİRİŞİ tapır. Serverin öz snapshot-unda top gövdənin 8–29 px içindən keçib uçmağa davam edirdi | İçində başlayan parça da dəymədir (kistdən isə top əvvəlki kimi səkir) | [`Sim.seg_ellipse_hit_t`](game/scripts/shared/sim.gd) |
+| HIT hadisəsi qurbanı demirdi — client zərbəni ən yaxın mikroba TƏXMİN edirdi | `arg` qurbanın rəngini daşıyır (`1 + rəng`), köhnə `arg > 0.5` yoxlaması dəyişmir | [`Const.hit_arg`](game/scripts/shared/constants.gd), `Const.hit_victim` |
+| Paketin hadisə büdcəsində (10 mikrobla tick-də ~7) sənə dəyən top sənin qida udmaların ilə eyni pillədə idi və düşə bilirdi — diaqnostikada tutuldu | Pillələr: sənə dəyən top → öz atəşin və zərbən → öz udman → başqalarının hadisələri (məsafəyə görə) → başqalarının udması | [`World._near_flat`](game/scripts/server/world.gd) |
+| Client topun ömrünü bilmirdi və onu serverin sildiyi yerdən o yana çəkirdi | Qalan ömür istiqamətin uzunluğundadır (`dir × (1 + ömür)`) — əlavə bayt yoxdur | [`World._build_frame`](game/scripts/server/world.gd), `Const.unpack_shots` |
+| İnsanın topu geri sarma ilə yoxlanılır — qurbanın ~0.27 s ƏVVƏLKİ yerinə qarşı. Client bunu bilmirdi | Hər top geri sarma miqdarını daşıyır ([`Const.SF`](game/scripts/shared/constants.gd) `REWIND`, 4 bayt; ən pis paket 1316 / 1392 bayt) | `World._build_frame` |
+| Reyestr botu demirdi, client onu id-dən (`>= BOT_ID_BASE`) çıxarırdı. İnsanın peer nömrəsi təsadüfi 32 bitlik ədəddir və adətən daha böyükdür — o biri oyunçu BOT sayılırdı | Reyestr üçüncü sahədə "bot" bayrağını göndərir | [`World.roster`](game/scripts/server/world.gd) |
+
+> **Balansa yan təsir.** Ellips formasında hərəkət edən amöb yanlardan 22%
+> nazikdir, az vurulur və super yükü (vuranda da, vurulanda da dolur) gec
+> yığılır. Yalnız amöblərdən ibarət bot dünyasında super 60 saniyədə orta hesabla
+> 5.4 dəfədən ~2.7 dəfəyə endi (hər tərəf 5 çalışma). Oyunçu hiss edirsə,
+> `Const.SUPER_ON_TAKEN` və ya amöbün `Sim.HIT_SQUEEZE`-i ilə tənzimlənir.
+
+**Client** ([`Arena`](game/scripts/client/arena.gd), [`ShotPrediction`](game/scripts/client/shot_prediction.gd))
+
+| Səbəb | Düzəliş | Kod |
+|---|---|---|
+| Rəqibin topu hər kadr son snapshot-dan `t = _clock` ilə qurulurdu: iki snapshot arasında yerində durur, 30 Hz-lə pillə-pillə gedir və mikroblardan 0–33 ms GERİDƏ çəkilirdi. Rəqib artıq parlayırdı, top ona 15–30 ms sonra çatırdı | Top snapshot-un gəldiyi ana bağlanır — mikroblarla eyni zaman xətti, hamar hərəkət | `_render_shots` |
+| Rəqibin topu keçmişdə çəkilir, sənin mikrobun isə indi | Sənə tərəf uçan top (yolu gövdənin yaxınından keçir, arada başqa mikrob yoxdur) yaxınlaşdıqca sənin zaman xəttinə keçir; yoluna qəfil girəndə top sıçramır, ~0.25 s-də yetişir | `_remote_shot_pos`, `_aimed_at_me` |
+| İnsanın topu hədəflərinə qarşı `rewind` qədər gec yoxlanılır | Hər top öz hədəflərindən `rewind` qədər QABAQDA çəkilir — keçmişdəki mikrobların yanında da, sənin yanında da. Botda 0-dır | `_remote_shot_pos` |
+| "Sənə dəydi" proqnozunun bir neçə piksellik mövqe xətası sərhəddə nəticəni dəyişirdi | Yalnız ƏMİN dəymə (topun xətti ellipsin 65%-dən dərinindən keçir, yolda başqa mikrob yoxdur) dərhal göstərilir. Sərhəddəki dəymədə top gizlənir, zərbə serverin təsdiqi GƏLƏNDƏ oynanır. Server topu göndərməyə davam edirsə, top GERİ qaytarılır | `SELF_SURE_DEPTH`, `_undo_self_claims` |
+| Təsdiq hədd daxilindəki İLK proqnoza yazılırdı: eyni rəqibə ardıcıl iki top atılanda server ikincinin dəyməsini deyirdi, təsdiq birinciyə düşürdü | Ən YAXIN proqnoz, qurban bilinirsə yalnız onunku | `_match_claim`, `_match_self_claim` |
+| Öz topunun proqnozu serverinkindən bir tick (14 px) çox uçurdu: server topu ömrünün son tick-ində hərəkətsiz silir | Proqnoz serverin addımı ilə, TICK-lərlə uçur (bax aşağıda) — düz 65 tick, kadr tezliyindən asılı olmayaraq | [`ShotPrediction._sim_tick`](game/scripts/client/shot_prediction.gd) |
+| Serverin HIT-i bəzən proqnozun toxunuşundan ƏVVƏL gəlir (gec tapılan atəş) — zərbə iki dəfə göstərilir, proqnoz "boş" sayılırdı | Tez gələn dəymə 0.6 s yadda saxlanır və gecikən toxunuşu təsdiqləyir | `_take_early_hit` |
+
+Probe-un özü də dəqiqləşdirildi: parıltı topun çəkilən gövdəyə toxunmasından
+50 ms-ə qədər ƏVVƏL yanıbsa, bu da cavab sayılır (1–3 kadr fərqi göz ayırmır).
+Belə hallar ayrıca göstərilir (`erkən parıltı`).
+
+**Nəticə** — eyni probe, gecikdirici proksi (RTT 120 və 180 ms, 15–20 ms jitter),
+8 çalışma × 2 client × 90 s. "Köhnə kod" bu işdən əvvəlki vəziyyətdir (RTT 120 ms,
+2 çalışma):
+
+| | Köhnə kod | **Yekun** |
+|---|---:|---:|
+| Öz topun rəqibə toxunur → parıltı | median 184–281 ms, ən pisi 528 ms | **97 / 101 toxunuşda 0–18 ms** |
+| Öz topun rəqibin içindən keçib o biri tərəfdən çıxır | 45 / 51 | **2 / 101** |
+| Öz topun rəqibə girir, zərbə heç görünmür | 18 / 51 | **4 / 101** |
+| Rəqibin topu → sən, gövdəyə girib zərbəsiz | 3 / 10 | **0 / 3** |
+| Rəqibin topu → başqası, gövdəyə girib zərbəsiz | 2 / 7 | **2 / 66** (ikisi də ekrandan kənarda) |
+| Botun sənə dəyməsi: ƏMİN proqnoz, server təsdiqlədi | — | **111 / 127**, yalançı **2 (1.6%)**, qalanı sessiyanın sonunda cavabsız |
+| Botun sənə dəyməsi: SƏRHƏDDƏ, server təsdiqini gözlədi | — | 24 / 30 təsdiq, 5-i dəymədi — top geri qaytarıldı |
+
+"Sənə dəydi" proqnozunun yalançı hissəsi bu işin əvvəlində 22 / 221 (10%) idi.
+
+Emulyatordakı Android Chrome-dan da (bax [Brauzerdə donma, 6-cı bənd](#brauzerdə-android-donma-və-kəsilmə))
+onlayn oynanıb: RTT 120 ms-də zərbə dərhal göstərilir, keçid yoxdur.
+
+#### Öz topunun təsdiqlənməyən dəymələri — əsl səbəblər
+
+Yuxarıdakı işdən sonra öz topunun proqnozlaşdırılmış dəymələrinin hələ
+14 / 138-i (10%) serverdə təsdiqlənmirdi. Fərziyyə itələmə idi: server üst-üstə
+minən mikrobları ayırır, proqnoz isə yalnız öz mikrobunu hərəkət etdirirdi.
+**Ölçü fərziyyəni təkzib etdi:** serverdə hər atəşin anında mikrobun son 8
+tick-dəki itələnməsi yazıldı — təsdiqlənməyən dəymələrin HEÇ BİRİNDƏ itələmə
+yox idi (`sep = 0`). Proqnoz yenə də yaxındakı mikrobları nəzərə alır
+(aşağıda), amma səbəblər başqa imiş. Hər təsdiqlənməyən dəymə serverdəki topun
+taleyi ilə (kimə dəydi, harada öldü, qurbana nə qədər yaxınlaşdı) tutuşduruldu:
+
+| Səbəb (ölçüdə tapılıb) | Düzəliş | Kod |
+|---|---|---|
+| Rəqibin **trixosisti** topu dağıdır. Proqnoz bunu bilmirdi, top ekranda rəqibə çatıb "dəyirdi". Server isə partlayışı İNDİKİ zamanda yoxlayırdı, geri sarılan top isə keçmişdədir | Geri sarılan topun dağılması da `rewind` qədər gecikdirilir ([`Sim._blasts`](game/scripts/shared/sim.gd)): ekranda partlayışdan SONRA rəqibə çatan top serverdə də dəymir, ƏVVƏL çatan dəyir. Client partlayışı görən an radiusdakı öz toplarını dayandırır ([`ShotPrediction.blast`](game/scripts/client/shot_prediction.gd)); bot geri sarılan topu qabaqda görür | `Sim._super_trichocyst`, `_apply_blasts`, `Bot._wants_super` |
+| Serverdə iki giriş bir tick-ə düşəndə (jitter) SONUNCU qalırdı — atəş bitinin istiqaməti və görünən tick-i isə ƏVVƏLKİ girişdə idi. Top başqa bucaqla uçurdu | Birləşmədə atəş girişinin öz nişanı (`fire_aim`) və `view_tick`-i saxlanılır; proqnozun atəş açdığı giriş "shot" biti ilə işarələnir və server soyuma bitənə qədər onu 2 tick gözləyir (`FIRE_WAIT`) | [`World.accept_input`](game/scripts/server/world.gd), `Sim.PlayerInput` |
+| Qurbanın qalxanı və kisti İNDİKİ haldan oxunurdu, mövqeyi isə geri sarılmışdan | Hal da geri sarılır: tarixçədə hər tick-in bitləri saxlanılır | `Sim._rewound_bits`, `HIST_SAFE`, `HIST_CYST` |
+| Geri sarma həddi (300 ms) RTT 180-də atəşlərin çoxunu kəsirdi | 400 ms | `Const.REWIND_MAX` |
+| Qabın kənarında sıçrayış nöqtəsi addımın uzunluğundan asılıdır: proqnoz 60 Hz-lə (7 px), server 30 Hz-lə (14 px) addımlayırdı — 500 px sonra top 18 px aralı uçurdu | Proqnoz topu serverin addımı ilə, TICK-lərlə simulyasiya edir; ekranda tick içində hamar çəkilir | [`ShotPrediction._sim_tick`](game/scripts/client/shot_prediction.gd) |
+| Hədəflər ekranda gəliş VAXTINA görə interpolyasiya olunur; snapshot jitter-lə gələndə rəqib tick-in yarısı qədər qabaqda və ya geridə olur. Server isə qurbanı dəqiq `tick − rewind`-də yoxlayır | Topun `k`-cı tick-i rəqiblərin `görünən tick + k`-dakı halına qarşı yoxlanılır — snapshot buferindən, TICK-ə görə. Mikrobların çəkilişi də gəliş anına yox, hamarlanmış tick saatına bağlandı | `Arena._ghost_targets`, `_tick_time_of` |
+| Qalan yalançıların hamısı qurbanın kənarına **sürtünmə** idi: xətt ellipsin 0.99+ dərinliyindən keçirdi, serverdə isə 1.04–1.05 məsafədən (atəş nöqtəsi bir tick fərqli — 6–10 px) | Xətt ellipsin 0.9-dan dayaz hissəsindən keçirsə, top gövdənin kənarında dayanır, zərbə isə serverin təsdiqi GƏLƏNDƏ oynanır. Server topu göndərməyə davam edirsə, top geri qaytarılır | `OWN_SURE_DEPTH`, `_undo_own_soft` |
+| Qurban ekranda sağdır, amma başqasının topundan artıq partlayıb (hadisə gəlib, interpolyasiyanı gözləyir) | Belə dəymə də təsdiqi gözləyir | `_burst_pending` |
+
+Proqnoz indi yaxındakı mikrobları da (220 px) öz dünyasına qoyur — son
+snapshot-dan irəli çəkilmiş surətlər kimi — və server kimi ayırır
+([`Arena._sync_proxies`](game/scripts/client/arena.gd)). Yan-yana dayanıb itələnən
+mikrobun proqnoz mövqeyi serverinkindən əvvəl 74.8 px aralı düşürdü, indi 0-dır
+(test).
+
+**Botun sənə dəyməsi** ("sənə dəydi" proqnozu) üçün də iki səbəb tapıldı: aradakı
+mikrob topu səndən əvvəl tuta bilər (o, keçmişdə çəkilir), və superi dolu
+kirpikli rəqib topu görən an trixosistlə dağıdır — sən isə onun superini gec
+görürsən. İndi yolda mikrob varsa ([`_proxy_blocks`](game/scripts/client/arena.gd))
+və ya yaxında superi dolmaq üzrə olan kirpikli varsa (`_rival_tricho_near`),
+dəymə ƏMİN sayılmır və serveri gözləyir. Öz trixosistin hazırdırsa, zərbə bir tick
+gecikdirilir: server həmin tick-də superi topdan ƏVVƏL emal edir.
+
+**Başqasına gedən top.** Sənə tərəf uçub yayınan top sənin zaman xəttində qalırdı
+və qabaqdakı mikrobun (keçmişdə çəkilir) gövdəsindən keçirdi. İndi qabaqda mikrob
+varsa, top yavaşıyıb onun zaman xəttinə qayıdır — geri getmir, mikrob yola qəfil
+girəndə isə elə sürətlə ki, ona çatmamış qayıtsın ([`Arena.release_rate`](game/scripts/client/arena.gd)).
+Ömrü bitən top da ölü yerində donub qalmır — serverdə o, həmin tick qidaya çevrilir.
+
+**Yekun ölçü** — eyni probe və diaqnostika, RTT 120 və 180 ms (15–20 ms jitter),
+hər seriya 6 sessiya × 2 client × 90 s:
+
+| | Bu işin əvvəli | **İndi** |
+|---|---:|---:|
+| Öz topunun dərhal göstərilən dəyməsi, server saymadı | 14 / 138 (10%) | **1 / 143** (0.7%) — son iki seriya |
+| Öz topunun sərhəddəki dəyməsi (təsdiqi gözlədi) | — | 13 / 14 təsdiq; hamısının 5–13%-i |
+| Botun sənə ƏMİN dəyməsi, server saymadı | 22 / 221 (10%) → 2 / 127 | **1 / 190** (0.5%) — son iki seriya |
+| Rəqibin topu → başqası, gövdədən zərbəsiz keçir | 14 / 47 → 2 / 66 | **0 / 49** — son seriya |
+| Rəqibin topu → sən, gövdədən zərbəsiz keçir | — | **0** |
+
+Son qalan yalançı öz dəyməsi qurbanın "partlaması hələ gəlməmiş" halıdır (qurban
+serverdə 100 ms əvvəl partlamışdı) — ona qarşı `_burst_pending` bu seriyadan
+SONRA əlavə olundu.
+
 ### Bioluminessensiya (glow)
 
 Parlaq piksellər ətrafa işıq saçır — [`Arena._build_glow`](game/scripts/client/arena.gd).
@@ -273,8 +477,8 @@ oyunçunu sürüşdürməyə məcbur edərdi.
 |---|---|---|
 | **SƏS** | Ümumi · Effektlər · İnterfeys | Üç şin: `Master`, `SFX`, `UI` |
 | | Səssiz rejim | `Master` sıfırda — səviyyələr yadda qalır |
-| **QRAFİKA** | Keyfiyyət YÜKSƏK/AŞAĞI | Glow, HDR buferi, zərrəcik sıxlığı |
-| | Kadr həddi 30/60/120/SƏRBƏST | `Engine.max_fps` — telefonda batareya ayarıdır |
+| **QRAFİKA** | Keyfiyyət YÜKSƏK/AŞAĞI/MİNİMUM | Glow, HDR buferi, zərrəcik sıxlığı; MİNİMUM-da sadə mikrob və az piksel — brauzerdə kətan DPR 1.25, tətbiqdə 1280×720 (bax [Zəif telefonlar](#brauzerdə-android-donma-və-kəsilmə)) |
+| | Kadr həddi 30/60/120/SƏRBƏST | `Engine.max_fps` — telefonda batareya ayarıdır. Seçilməyibsə MİNİMUM-da 30 |
 | | Ekran silkələnməsi QAPALI/AZ/NORMAL | Yalnız kamera; səs, parıltı və donmuş kadr qalır |
 | | Kadr sayğacı | HUD-un yuxarı-mərkəzində FPS |
 | **İDARƏ** | Sol əl düzümü | Joystick sağ yarıya, atəş və super sol aşağıya |
@@ -389,6 +593,7 @@ game/                    Godot layihəsi
       burst_fx.gd        Partlayaraq ölmə effekti (dalğa, damcı, membran parçaları)
       juice_fx.gd        Qısa VFX-lər — bütün hadisələr bir node-da, ən çox 3 batch
       shot_trails.gd     Uçan topların izi — hamısı BİR çəkiliş çağırışında
+      shot_prediction.gd Öz topunun proqnozu — serveri gözləmədən uçur və dəyir
       water_motes.gd     Suda asılı zərrəciklər — axını gözlə görünən edir
       minimap.gd         Petri qabının kiçik xəritəsi
       touch_stick.gd     Üzən virtual joystick (hərəkət)
@@ -399,8 +604,9 @@ game/                    Godot layihəsi
       chunky_box.gd      Brawl Stars düymə dili: kontur + dodaq + parıltı, konturlu yazı
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
     tools/
-      sim_test.gd        260 headless test
+      sim_test.gd        358 headless test
       auto_client.gd     Şəbəkə testi üçün insansız client
+      hit_probe.gd       Vuruşu EKRANDA ölçür: toxunuş → parıltı, topun rəqibdən keçməsi
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
@@ -448,7 +654,7 @@ GODOT --path game -- --practice --species 2
 # Rejimi seçərək (0 sonsuz · 1 TƏK QALAN · 2 CÜT · 3 ÜÇLÜK):
 GODOT --path game -- --practice --mode 3
 
-# Qrafika səviyyəsi (0 yüksək · 1 aşağı):
+# Qrafika səviyyəsi (0 yüksək · 1 aşağı · 2 minimum) — sabit qalır, avtomatika işləmir:
 GODOT --path game -- --practice --quality 1
 ```
 Eyni `World` və `Sim` kodu yerli işləyir; fərq yalnız snapshot-ların şəbəkədən
@@ -473,7 +679,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (260 test)
+# Simulyasiya + World testləri (358 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -537,6 +743,238 @@ cədvəldə ayrıca ölçülməlidir.
 > maneələr sprite-a keçirildi. Godot yalnız ARDICIL və eyni teksturalı elementləri
 > bir çağırışa yığır — qarışıq düzülsə, hər qida topu ayrıca çağırış olur.
 
+### Brauzerdə (Android) donma və kəsilmə
+
+Şikayət: Android-də brauzerdə açanda oyun donur, oynananda kəsilir. Telefon
+qoşulu olmadığı üçün Chrome-da Android emulyasiya olunub (puppeteer-core:
+915×412 ekran, DPR 2.625, toxunuş, Android user-agent, **CPU 4× yavaş** — orta
+səviyyəli telefon). Ölçmə üçün layihənin surəti instrumentasiya olunub; əsas
+koda ölçmə kodu girməyib.
+
+**1. Telefon brauzeri masaüstü sayılırdı.** Veb build-də `OS.has_feature("mobile")`
+telefonda da YALANDIR — Godot telefonun brauzerini `web_android` / `web_ios` kimi
+tanıyır (emulyasiyada yoxlanıb: `web_android=true mobile=false`). Nəticədə
+telefonda oyun **YÜKSƏK** keyfiyyətlə (glow + RGBA16F HDR buferi, ~1830×824
+kadrda) və **kadr həddi olmadan** açılırdı: 90/120 Hz ekranda saniyədə 90–120
+kadr. İndi [`Const.is_handheld`](game/scripts/shared/constants.gd) üçünü də
+yoxlayır: telefon brauzeri AŞAĞI + 60 FPS ilə, zəif telefon isə MİNİMUM + 30
+FPS ilə açılır (bax 4-cü bənd).
+
+Menyu OYNA basılanda bütün ayarları yazır, yəni əvvəl oynamış hər kəsdə YÜKSƏK
+diskdə qalmışdı. Ona görə keyfiyyət və kadr həddi yalnız oyunçu onları
+AYARLAR-da **özü seçibsə** fayldan oxunur (`quality_chosen`, `fps_chosen` —
+[`Settings`](game/scripts/shared/settings.gd)).
+
+**2. Açılışda donma.** Yükləmə zolağı bitəndən sonra ekran saniyələrlə donurdu.
+Addım-addım ölçülüb (CPU 4×, eyni sessiyada əvvəl/sonra):
+
+| Addım | Əvvəl | Sonra | Nə dəyişdi |
+|---|---:|---:|---|
+| Mühərrikin açılışı (wasm, shader-lər, şriftlər) | ~5.0 s | ~5.0 s | mühərrikin işidir, GDScript-dən dəyişmir |
+| `boot.gd` yüklənməsi | 2.73–2.84 s | 0.91 s | test alətləri (`SimTest`, `PlayAgent` …, ~6 000 sətir) artıq yalnız lazım olanda yüklənir |
+| Menyunun qurulması | 1.47–1.49 s | 0.91–0.94 s | növ/rejim vərəqi ilk açılışda qurulur; arena və `GermVisual` menyu ilə birlikdə kompilyasiya olunmur |
+| İlk kadrın render-i | 232–249 ms | 131–138 ms | AŞAĞI keyfiyyət (glow yoxdur) |
+| **Menyunun ilk kadrı** | **10.4–10.6 s** | **8.2–8.35 s** | |
+
+**3. Oyunda kəsilmə.** Kadrın ən böyük payı mikrobların hər kadr GDScript-də
+yenidən çəkilməsi idi. Server ekrandan ~3 dəfə böyük sahəni göndərir və
+görünən mikrobların çoxu kadrdan kənarda qalır, amma hamısı çəkilirdi.
+Minixəritə də saniyədə 60 dəfə 26 maneəni təzədən çəkirdi. Düzəlişlər:
+
+- ekrandan kənardakı mikrob yenidən çəkilmir ([`GermVisual.on_screen`](game/scripts/client/germ_visual.gd));
+- AŞAĞI keyfiyyətdə rəqibin FORMASI saniyədə 30 dəfə yenilənir. Hərəkət yenə
+  60 kadrla gedir, çünki mövqe çəkilişdən ayrıdır. Öz mikrobun və zərbə
+  anları hər kadr çəkilir ([`GermVisual.redraw_step`](game/scripts/client/germ_visual.gd));
+- gövdənin forması kadrda bir dəfə qurulur (əvvəl kölgə üçün ikinci dəfə);
+- minixəritə saniyədə 10 dəfə yenilənir, maneələri isə ayrı qatdadır və yalnız
+  divar dağılanda çəkilir.
+
+Sabit toxumlu benchmark (görüş dairəsində 10 mikrob — TƏK QALAN-ın sonu kimi
+sıx döyüş), CPU 4×, 3 çalışma:
+
+| | Əvvəl (telefonda YÜKSƏK) | Sonra (telefonda AŞAĞI) |
+|---|---:|---:|
+| Kadrda çəkilən mikrob | 10.1 | 4.0 |
+| Mikrobların çəkilişi | ~46 ms | ~17 ms |
+| Kadr | 70.5–72.6 ms (~14 FPS) | **35.3–35.6 ms (~28 FPS)** |
+| 50 ms-dən uzun kadr | 100% | 1–5% |
+
+Qalan xərc: bir mikrobun çəkilişi hələ də bahalıdır (içindəki toplar, kirpiklər,
+işıqlandırma poliqonu). Növbəti addımlar ölçüyə görə budur: içindəki topları
+teksturaya bişirmək və 3D-siz xüsusi veb şablonu (mühərrikin açılışındakı 3D
+shader kompilyasiyası CPU 4×-də ~1.9 s çəkir).
+
+**4. Zəif telefonlar — MİNİMUM səviyyə.** Ucuz Android telefonların çoxu
+hələ də Helio G85 / Unisoc T606 / Snapdragon 680 sinfindədir: iki böyük A75
+nüvəsi + altı kiçik A55 (Snapdragon 680-də dörd A73 + dörd A53), qrafika Mali-G52 MC2, Mali-G57 MP1 və ya
+Adreno 610, yaddaş 2–4 GB. Bu çiplərin CPU-su orta telefondan (yuxarıdakı 4×
+emulyasiya) təxminən 1.6 dəfə zəifdir, ona görə ölçü **6.5× yavaş CPU** ilə
+təkrarlandı. AŞAĞI səviyyədə kadrın işi 37 ms idi, yəni 60-lıq hədd heç vaxt
+tutulmurdu, kadrlar 25–60 ms arasında atlanırdı.
+
+Buna görə üçüncü səviyyə əlavə olundu — **MİNİMUM**:
+
+| | AŞAĞI | MİNİMUM |
+|---|---|---|
+| Kadr həddi | 60 | **30**, oyunçu hədd seçməyibsə. Sabit 30 kadr, 30 ilə 60 arasında atlanmaqdan hamar görünür |
+| Render ölçüsü | brauzerdə kətan DPR ≤ 2 (`web/shell.html`): 915×412 CSS → 1830×824 | brauzerdə **kətan DPR 1.25**: 1143×515, ekrana böyütməni brauzer edir. Telefon tətbiqində (APK) 1280×720, sonra böyüdülür (`VIEWPORT`) |
+| Mikrob ([`GermVisual.lod`](game/scripts/client/germ_visual.gd)) | tam | kirpiklərin yarısı bir çağırışda çəkilir, kölgə tək qatdır, parıltı və kənar işığı yoxdur, içindəki toplar sadədir |
+| Su zərrəcikləri | 34+14 | 12+8 |
+| Minixəritə | 10 Hz | 5 Hz |
+
+**Avtomatik seçim iki qatdır.**
+- **Birinci qat — cihazın özü** ([`Const.default_quality`](game/scripts/shared/constants.gd)).
+  Yaddaş ≤ 3 GB-dırsa və ya qrafikanın adı zəiflər siyahısındadırsa, telefon
+  MİNİMUM ilə açılır. Yaddaş `navigator.deviceMemory`-dən oxunur; brauzer onu
+  2/4/8-ə yuvarlaqlaşdırır. Ad `WEBGL_debug_renderer_info`-dan gəlir; siyahıda
+  Mali-G31/G51/G52, Mali-T, PowerVR, Adreno 3xx/4xx/50x/51x/60x/610 var.
+  Qalan telefonlar AŞAĞI ilə açılır.
+- **İkinci qat — oyunun içində kadr vaxtı** ([`Arena._watch_performance`](game/scripts/client/arena.gd)).
+  Siyahı yanıla bilər: brauzer adı gizlədə bilər, siyahıda olmayan zəif çip də
+  var. Arena açılandan 4 s sonra hər 5 s-də kadrlar yoxlanır. Median kadr
+  büdcədən 35% uzundursa və ya hər onuncu kadr iki qat uzundursa, səviyyə bir
+  pillə enir: YÜKSƏK → AŞAĞI → MİNİMUM. Ekranda "QRAFİKA AVTOMATİK" yazılır və
+  seçim yadda qalır (`auto_quality`).
+
+Oyunçu keyfiyyəti AYARLAR-da özü seçibsə, heç nə avtomatik dəyişmir.
+
+Sabit toxumlu benchmark (görüş dairəsində 10 mikrob), CPU 6.5×, 2 çalışma:
+
+| | Əvvəlki kod, YÜKSƏK | AŞAĞI | **MİNİMUM** |
+|---|---:|---:|---:|
+| Kadrın işi | 76.7–77.4 ms | 36.7–37.4 ms | **29.7–29.8 ms** |
+| Kadr | 82.6–83.1 ms (~12 FPS) | 42.3–43.0 ms | **36.0–36.1 ms** (30-luq hədd) |
+| Bir mikrobun bir çəkilişi | 5.5 ms | 5.3–5.4 ms | **2.6 ms** |
+| 50 ms-dən uzun kadr | 100% | 19–23% | **0.5–2.3%** |
+
+Avtomatika emulyasiyada da yoxlanıb. Onlayn oyun AŞAĞI ilə açıldı, ilk
+yoxlamada yavaşlığı tapıb MİNİMUM-a keçdi və kadr 37–43 ms-ə düşdü (iş 27–32 ms).
+
+Sonra onlayn oyunun özü profil edildi (MİNİMUM, 6.5×). HUD hər tick
+lazımsız iş görürdü:
+
+| | Əvvəl | Sonra | Nə dəyişdi |
+|---|---:|---:|---|
+| Doluluq göstəricisi | 0.86–2.33 ms | 0.22–0.42 ms | Say dəyişməyibsə yazıya və rəngə toxunulmur. `add_theme_color_override` eyni rəngdə də yazını yenidən düzürdü |
+| Atəş düyməsi | 0.76–1.55 ms | 0.45–0.70 ms | Atəşdən sonrakı 1 s-də yalnız halqa təzədən çəkilir; o, ayrı qatdadır |
+| Minixəritə | 0.47–0.90 ms | 0.13–0.26 ms | 26 maneə ayrı qatdadır və yalnız divar dağılanda çəkilir |
+| **HUD-un cəmi** | **2.5–4.8 ms** | **0.9–1.3 ms** | kadr başına ~70% az |
+
+Rəqəmlər kadr başınadır: təzə serverdə köhnə və yeni build növbə ilə, iki
+sessiyada ölçülüb. Kadrın ümumi işi hər sessiyada ekrandakı döyüşdən asılı
+olaraq 25–38 ms arasında dəyişir. Ona görə HUD-un qənaəti ayrıca, hissə-hissə
+verilib. Eyni səhnəyə yaxın bir cütdə kadrın işi 29.2 ms-dən 25.7 ms-ə endi,
+50 ms-dən uzun kadr isə 58 / 654-dən 25 / 708-ə düşdü.
+
+**5. GPU yükü — piksel sayı.** Chrome-un CPU yavaşlatması yalnız səhifənin
+JS/wasm işini yavaşladır, GPU işinə toxunmur. Ona görə GPU tərəfi ayrıca
+ölçüldü: **SwiftShader** (Chrome-un proqram GPU-su, `--use-angle=swiftshader`)
+hər pikseli CPU-da rəngləyir, yəni zəif mobil GPU kimi piksel doldurmaya
+həssasdır. Məşq oyunu, MİNİMUM detalı, iki çalışma:
+
+| Render | Piksel | FPS | Kadrın işi |
+|---|---:|---:|---:|
+| Kətan DPR 2 (AŞAĞI) | 1.51 M | 32–36 | 27–30 ms |
+| `VIEWPORT` 1280×720 (MİNİMUM-un əvvəlki halı) | 0.92 M + böyütmə | 33–40 | 24–29 ms |
+| Kətan DPR 1.5 | 0.85 M | 42–44 | 22 ms |
+| **Kətan DPR 1.25** | **0.59 M** | **57–59** | **8–13 ms** |
+| Kətan DPR 1.0 | 0.38 M | 60 (hədd) | 5–6 ms |
+
+`VIEWPORT` rejimi brauzerdə az qazanc verir: kətan onsuz da DPR 2 ilə
+məhduddur, səhnə 1280×720-də çəkilsə də üstəlik ayrıca böyütmə keçidi gedir.
+Kətanı kiçiltmək isə birbaşa işləyir — ekrana böyütməni brauzerin kompozitoru
+onsuz da edir. Ona görə brauzerdə MİNİMUM indi kətanın sıxlığını endirir
+([`Settings._apply_render_scale`](game/scripts/shared/settings.gd) →
+`window.germSetMaxDpr` [`web/shell.html`](game/web/shell.html)-də). Yekun
+build-də (SwiftShader) AŞAĞI 1830×824-də ~30 FPS-də qalır, kadrın işi 32–33 ms-dir;
+MİNİMUM 1143×515-də 30-luq həddi tutur, kadrın işi **6.3–6.6 ms**-dir.
+
+Real telefonların GPU-su da yoxlandı — shader-lər **sığırmı**. Godot-un hər
+shader proqramının adi uniform-ları sayıldı (WebGL2, masaüstü Chrome): ən çoxu
+**36 vektor**dur, qalanı UBO-dadır (ən böyüyü 4 KB). WebGL2-nin minimumu 224
+vektor və 16 KB-dır, Adreno adətən 256 verir — yəni ehtiyat böyükdür.
+
+**6. Real Android brauzeri — emulyatorda.** Telefon qoşulu olmadığı üçün
+Android SDK-ya emulyator quruldu: Android 14, Chrome 113, **2 GB yaddaş**,
+4 nüvə, ekran 1080×2400 (DPR 2.625), yatay. Oyun `localhost` üzərindən
+(`adb reverse`) açıldı — `navigator.deviceMemory` yalnız təhlükəsiz kontekstdə
+işləyir. Chrome DevTools protokolu ilə idarə olundu.
+
+| | Nəticə |
+|---|---|
+| Avtomatik seçim | `deviceMemory = 2` → **MİNİMUM**, kadr həddi 30 — heç bir bayraq verilmədən |
+| Kətan | CSS 866×308 (Chrome-un paneli çıxılır) → **1082×385** (DPR 1.25) |
+| MİNİMUM | sabit **30 FPS**, kadrın işi 11.7–13.1 ms |
+| AŞAĞI (müqayisə) | kətan 1732×616, **49 FPS** — 60-lıq hədd tutulmur |
+| Onlayn (RTT 120 ms proksi ilə) | zərbə dərhal göstərilir, keçid yoxdur, 29.9 FPS |
+| Açılış | 3–6 s |
+
+Emulyatorun **proqram GPU-su** ilə (`-gpu swiftshader_indirect`) oyun heç
+çəkilmədi: `Fragment shader active uniforms exceed GL_MAX_FRAGMENT_UNIFORM_VECTORS (261)`.
+Səbəb emulyatorun GLES tərcüməçisidir — o, UBO-ları adi uniform-lara çevirir
+(256 + 36 > 261). Real telefon sürücüsü UBO-nu özü saxlayır (yuxarıdakı yoxlama),
+ona görə ölçmə host GPU ilə (`-gpu host`) aparıldı.
+
+Emulyatorda bir problem də tapıldı: brauzerin dili başqa olanda Chrome aşağıda
+**"tərcümə et" paneli** açırdı və o, joystik ilə atəş düyməsinin üstünə düşürdü.
+`web/shell.html`-ə `translate="no"` və `<meta name="google" content="notranslate">`
+əlavə olundu — panel artıq çıxmır.
+
+**7. Zəif GPU — dinamik kətan sıxlığı.** Yuxarıdakı ölçülər emulyasiyadır:
+SwiftShader piksel doldurmaya həssas modeldir, amma real Mali/Adreno-nun
+millisaniyəsi başqa olacaq, və o telefon əlimizdə yoxdur. Ona görə oyun artıq
+GPU-nun mütləq sürətinə bel bağlamır — kadr vaxtını **həmin telefonun özündə**
+ölçüb kətanın piksel sıxlığını tənzimləyir ([`Arena._watch_resolution`](game/scripts/client/arena.gd)):
+
+- Keyfiyyət səviyyəsi birinci addımdır (4-cü bənd). MİNİMUM-da (və ya oyunçu
+  səviyyəni özü seçibsə) hər 3 s-lik pəncərədə kadrlar yoxlanır. Kadrın medianı
+  30 kadrın büdcəsini 10% aşırsa, və ya kadrların onda biri 35% uzundursa — və
+  yük GPU-dadırsa — kətanın sıxlığı 15% kiçilir, 0.75-ə qədər.
+- **Yük GPU-dadırmı** — brauzerdə GPU CPU-dan ayrı işləyir, ona görə kadr
+  CPU-nun işindən (oyun məntiqi + fizika + çəkilişin CPU hissəsi, `RenderingServer`-in
+  ölçüsü) xeyli uzundursa, qalan vaxt GPU-nu gözləməkdir. CPU işi kadrın 70%-dən
+  çoxdursa, sıxlıq dəyişmir: piksel azaltmaq kömək etməzdi.
+- Kiçiltmə iki addımda (piksel ~48% az) orta kadrı qısaltmayıbsa, yük pikseldə
+  deyil — sıxlıq geri qaytarılır və bu sessiyada daha kiçilmir.
+- 4 pəncərə ardıcıl rahatdırsa, sıxlıq 12% böyüyür. Böyümə kadrı yavaşladırsa,
+  əvvəlki sıxlığa qayıdır və o, sessiyanın tavanı olur — titrəmir.
+- Büdcə kadr həddindən asılı olmayaraq 30 kadrdır: məqsəd zəif GPU-da oyunu
+  OYNANAN saxlamaqdır, 60 kadr xatirinə şəkli bulandırmaq yox. Enerjiyə qənaət
+  rejimində brauzer kadrı özü 30-a kəsir — büdcə 60 olsaydı, sıxlıq boş yerə
+  dibə enərdi.
+- Öyrənilən sıxlıq yadda qalır (`video/auto_dpr`); keyfiyyəti dəyişəndə sıfırlanır.
+
+Tənzimləyici GPU-nun geniş aralığında modeldə yoxlanıb (`_test_resolution_converges`):
+GPU işi piksel sayı ilə artır, kadr 60 Hz ekranın vsync-inə yuvarlanır, ±8% səs-küy:
+
+| 1.25 sıxlıqda kadrın GPU işi | Tənzimləyici gəlir | Ən böyük uyğun sıxlıq | Kadr |
+|---:|---:|---:|---:|
+| 12 ms, 30 ms | 1.25 (dəyişmir) | 1.25 | 30 FPS |
+| 45 ms | 1.01 | 1.04 | 30 FPS |
+| 60 ms | 0.86 | 0.90 | 30 FPS |
+| 80 ms | 0.77 | 0.78 | 30 FPS |
+| 110 ms, 150 ms | 0.75 (aşağı hədd) | — | 20, 15 FPS |
+| CPU yüklü (45 ms), GPU yüngül | 1.25 (dəyişmir) | | |
+| Ölçülməyən CPU işi | kiçilir, kömək etmədiyini görüb 1.25-ə qayıdır | | |
+| Enerjiyə qənaət (brauzer 30 kadr verir) | 1.25 (dəyişmir) | | |
+
+Yəni SwiftShader-in 6.5 ms-lik MİNİMUM kadrından **12 dəfə** zəif GPU-da da oyun
+30 kadrı tutur. Ondan da zəifində sıxlıq aşağı həddə enir və oyun o GPU-nun
+verə bildiyi ən yaxşı kadrla gedir.
+
+**Real telefonda ölçü necə oxunur.** Telefon qoşulan kimi heç nə qurmadan:
+AYARLAR → «Kadr sayğacı» açılır — brauzerdə yanında kətanın sıxlığı da yazılır
+(`30 FPS · 1.25x`). Uzaqdan sazlamada (`chrome://inspect`) konsola hər 30 s-dən
+bir və sıxlıq dəyişəndə bir sətir düşür:
+
+```
+[perf] MİNİMUM · kətan 1.25 · kadr p50 33.3 / p90 33.4 ms (orta 30 FPS) · CPU 9.8 ms · hədd 30 FPS · GPU Mali-G52
+[perf] kətan sıxlığı 1.25 → 1.06 ([perf] MİNİMUM · kətan 1.25 · kadr p50 50.0 / p90 50.1 ms ...)
+```
+
+Ölçü serverə göndərilmir: yeni RPC köhnə APK-ların RPC nömrələrini sürüşdürərdi
+(Godot onları metod adına görə sıralayır).
+
 ### Telefon uyğunluğu — ölçülmüş vəziyyət
 
 | Yoxlanan | Nəticə |
@@ -544,7 +982,7 @@ cədvəldə ayrıca ölçülməlidir.
 | Nisbətlər 16:9 … 21:9 və 4:3 | HUD bütöv, kəsilmə yoxdur |
 | Görüş sahəsi ekranın küncünə çatır | bəli, ehtiyat **18%** (ən dar hal 21:9) |
 | Ekran forması üstünlük verirmi | **yox** — görünən sahə hər ekranda eynidir |
-| Qrafika səviyyəsi | YÜKSƏK / AŞAĞI, telefonda ilkin dəyər AŞAĞI |
+| Qrafika səviyyəsi | YÜKSƏK / AŞAĞI / MİNİMUM. Telefonda ilkin dəyər AŞAĞI, zəif telefonda MİNİMUM, telefonun brauzerində də (`web_android`, `web_ios`). Kadrlar yavaşdırsa səviyyə oyunun içində özü enir, brauzerdə MİNİMUM-da isə kətanın sıxlığı da (1.25 → 0.75, bax 7-ci bənd) |
 | Çox toxunuş (hərəkət + atəş + super) | hər idarə öz `_touch_index`-ini izləyir |
 | Safe area (çıxıntı/notch) | `DisplayServer.get_display_safe_area()` tətbiq olunur |
 | Portret pəncərə | yatay kadra letterbox olunur (bax [boot.gd](game/scripts/boot.gd)) |
@@ -574,8 +1012,11 @@ sonsuz uzaqlaşmır. `_test_aoi_covers_screen` altı real telefon nisbətini yox
 
 ### Qrafika səviyyəsi
 
-Dişli → AYARLAR → QRAFİKA → **Keyfiyyət: YÜKSƏK / AŞAĞI**. Telefonda ilkin
-dəyər AŞAĞI-dır. Seçim MATÇIN ORTASINDA da işləyir (bax [`Arena._apply_quality`](game/scripts/client/arena.gd)):
+Dişli → AYARLAR → QRAFİKA → **Keyfiyyət: YÜKSƏK / AŞAĞI / MİNİMUM**. Telefonda
+ilkin dəyər AŞAĞI-dır, zəif telefonda MİNİMUM (bax [Brauzerdə donma, 4-cü bənd](#brauzerdə-android-donma-və-kəsilmə)).
+Brauzerdə MİNİMUM-un altında daha bir pillə var — kətanın sıxlığı kadr vaxtına
+görə özü enib-qalxır (bax [Brauzerdə donma, 7-ci bənd](#brauzerdə-android-donma-və-kəsilmə)).
+Seçim MATÇIN ORTASINDA da işləyir (bax [`Arena._apply_quality`](game/scripts/client/arena.gd)):
 mühit həmişə qurulur, glow isə yandırılıb-söndürülür — əvvəl `WorldEnvironment`
 AŞAĞI-da ümumiyyətlə yaradılmırdı və oyunçu ayarı dəyişəndə növbəti matça qədər
 heç nə dəyişmirdi.
@@ -590,6 +1031,12 @@ buferini RGBA16F-ə qaldırır — mobil GPU-da hər kadr iki dəfə çox yadda�
 > Bu fərq masaüstündə **ölçülə bilmir**: eyni konfiqurasiyanın iki çalışması
 > arasındakı səpələnmə (2.0 ms və 3.3 ms) konfiqurasiyalar arasındakı fərqdən
 > böyükdür. Ona görə seçim oyunçuya verilib — telefonda ölçmək lazımdır.
+
+MİNİMUM AŞAĞI-nın üstünə mikrobun özünü sadələşdirir və daha az pikseldə
+çəkir: brauzerdə kətanın sıxlığı DPR 2-dən 1.25-ə enir, telefon tətbiqində
+səhnə 1280×720-də çəkilib böyüdülür. Bu fərq ölçülüb: 6.5× yavaş CPU-da kadrın
+işi 37 ms-dən 30 ms-ə, piksel doldurmaya həssas GPU-da (SwiftShader) isə
+32–33 ms-dən 6.3–6.6 ms-ə düşür (bax [Brauzerdə donma, 4–6-cı bəndlər](#brauzerdə-android-donma-və-kəsilmə)).
 
 Səviyyə YALNIZ görüntüyə təsir edir: qaydalar, görüş sahəsi və şəbəkə eynidir,
 yəni aşağı keyfiyyət nə üstünlük verir, nə də məhrum edir.
@@ -733,9 +1180,10 @@ Client (60 FPS)                          Server (30 Hz, headless)
 > 420 px/s getdiyinə görə bu, 42 piksel, mikrobun radiusundan (28 px) çox.
 > Ekranda görünən budur ki, top mikrobun **arxasında** peyda olur, gövdənin
 > içindən keçir və qabaqdan çıxır — sanki kənardan atılıb. Ona görə öz topun
-> atəş açılan andakı doğuş nöqtəsindən uçur və serverin sözünü gözləmir;
-> serverin xəttinə yalnız divardan sıçrayanda qayıdır, çünki sıçrayışı proqnoz
-> bilmir.
+> serverin topu ilə yox, öz proqnozu ilə çəkilir ([`ShotPrediction`](game/scripts/client/shot_prediction.gd)):
+> atəş anında mərkəzdən çıxır, divardan özü sıçrayır və rəqibə dəyməni də özü
+> göstərir. Server isə eyni dəyməni geri sararaq yoxlayır — bax
+> [«Onlayn vuruş»](#onlayn-vuruş--gecikməsiz-zərbə).
 
 ### Görüş sahəsi (area of interest)
 

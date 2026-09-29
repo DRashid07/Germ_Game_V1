@@ -45,6 +45,15 @@ const FPS_NAMES := ["30", "60", "120", "SƏRBƏST"]
 const SHAKE_LEVELS := [0.0, 0.5, 1.0]
 const SHAKE_NAMES := ["QAPALI", "AZ", "NORMAL"]
 
+## Brauzerdə kətanın piksel sıxlığı (CSS pikseli başına): adi hal və MİNİMUM.
+## 2 — `web/shell.html`-in öz həddidir. 1.25 zəif GPU-da kadrın işini 2-3 dəfə
+## azaldır, yazılar isə hələ oxunaqlı qalır (bax [method _apply_render_scale]).
+const WEB_MAX_DPR := 2.0
+const WEB_MIN_DPR := 1.25
+## Dinamik sıxlığın alt həddi (bax [member auto_dpr]). Bundan aşağıda yazılar
+## artıq oxunmur; oyun isə hələ oynanır (915 CSS px enli ekranda 686 px).
+const WEB_FLOOR_DPR := 0.75
+
 # ---------- səs ----------
 ## Hamısı 0..1 xətti amplitudadır; şinə `linear_to_db` ilə verilir.
 var master := 0.9
@@ -54,6 +63,29 @@ var muted := false
 
 # ---------- görüntü ----------
 var fps_cap := default_fps_cap()
+## Keyfiyyəti və kadr həddini oyunçu ÖZÜ seçibmi (ayarlar ekranında).
+##
+## Seçməyibsə fayldakı rəqəm OXUNMUR — cihazın ilkin dəyəri götürülür. Səbəb:
+## menyu OYNA basılanda bütün ayarları yazır ([method MenuV2._save_settings]),
+## yəni seçilməmiş ilkin dəyər də diskə düşür. Telefon brauzeri əvvəl masaüstü
+## sayılırdı ([method Const.is_handheld]) və orada YÜKSƏK + həddsiz kadr
+## yazılmışdı; bayraq olmasa düzəlişdən sonra da həmin oyunçular yazılmış
+## dəyərlə qalardı. Bayraq yalnız oyunçu ayarı əli ilə dəyişəndə qalxır.
+var quality_chosen := false
+var fps_chosen := false
+## Avtomatik tənzimləyicinin BU cihazda öyrəndiyi keyfiyyət; -1 = hələ yoxdur
+## (bax [method Arena._watch_performance]). Oyunçu özü seçməyibsə, növbəti
+## açılış elə bu səviyyədən başlayır — hər dəfə yenidən kəsilib öyrənməsin.
+var auto_quality := -1
+## Tənzimləyicinin BU cihazda öyrəndiyi kətan sıxlığı (brauzer); 0 = səviyyənin
+## öz həddi (bax [method Arena._watch_resolution]).
+##
+## Keyfiyyət səviyyəsi ilk addımdır, sıxlıq isə onun altında işləyən ikincidir:
+## MİNİMUM-da da kadrlar büdcəni aşırsa, kətan daha da kiçilir, ehtiyat
+## yarananda isə geri böyüyür. Beləliklə oyun GPU-nun mütləq sürətindən asılı
+## olmur — Mali-G52 və ya Adreno 610-un millisaniyəsi nə olursa olsun, sıxlıq
+## həmin telefonda büdcəni tutan yerə gəlir.
+var auto_dpr := 0.0
 var shake := 1.0
 var show_fps := false
 
@@ -88,14 +120,17 @@ func _ready() -> void:
 ## batareyanı və istiliyi iki dəfə artırır. Masaüstündə 0 — orada qərar
 ## vsync-indir və oyunçu onu sürücüdən idarə edir.
 static func default_fps_cap() -> int:
-	return 60 if OS.has_feature("mobile") else 0
+	# Brauzerdə də: telefonun brauzeri 90/120 Hz ekranda requestAnimationFrame-i
+	# o tezlikdə çağırır və həddsiz oyun hər kadrı çəkirdi (bax [method Const.is_handheld]).
+	return 60 if Const.is_handheld() else 0
 
 
 # ---------------------------------------------------------------- fayl
 
-func load_from_disk() -> void:
+## [param path] yalnız test üçündür — oyun həmişə [constant PATH]-i oxuyur.
+func load_from_disk(path := PATH) -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(PATH) != OK:
+	if cfg.load(path) != OK:
 		return
 
 	# Oyunçu kimliyi və seçimləri [Net]-də yaşayır: onları şəbəkə təbəqəsi
@@ -104,15 +139,26 @@ func load_from_disk() -> void:
 	# Fayl əl ilə redaktə oluna bilər — hər dəyər çərçivəyə salınır.
 	Net.species = Const.species_from(int(cfg.get_value("player", "species", 0)))
 	Net.mode = Const.mode_from(int(cfg.get_value("player", "mode", 0)))
-	Net.quality = Const.quality_from(int(cfg.get_value(
-		"video", "quality", int(Const.default_quality()))))
+	quality_chosen = bool(cfg.get_value("video", "quality_chosen", false))
+	fps_chosen = bool(cfg.get_value("video", "fps_chosen", false))
+	Net.quality = Const.default_quality()
+	auto_quality = int(cfg.get_value("video", "auto_quality", -1))
+	if not quality_chosen and auto_quality >= 0:
+		# İlk təxmin ilə öyrənilən səviyyədən AŞAĞI olanı götürülür.
+		Net.quality = Const.quality_from(maxi(int(Net.quality), auto_quality))
+	if quality_chosen:
+		Net.quality = Const.quality_from(int(cfg.get_value(
+			"video", "quality", int(Net.quality))))
+	auto_dpr = clampf(float(cfg.get_value("video", "auto_dpr", 0.0)), 0.0, WEB_MAX_DPR)
 
 	master = clampf(float(cfg.get_value("audio", "master", master)), 0.0, 1.0)
 	sfx = clampf(float(cfg.get_value("audio", "sfx", sfx)), 0.0, 1.0)
 	ui = clampf(float(cfg.get_value("audio", "ui", ui)), 0.0, 1.0)
 	muted = bool(cfg.get_value("audio", "muted", muted))
 
-	fps_cap = int(cfg.get_value("video", "fps_cap", fps_cap))
+	fps_cap = default_fps_cap()
+	if fps_chosen:
+		fps_cap = int(cfg.get_value("video", "fps_cap", fps_cap))
 	if not FPS_CAPS.has(fps_cap):
 		fps_cap = default_fps_cap()
 	shake = clampf(float(cfg.get_value("video", "shake", shake)), 0.0, 1.0)
@@ -140,7 +186,11 @@ func save() -> void:
 	cfg.set_value("audio", "muted", muted)
 
 	cfg.set_value("video", "quality", int(Net.quality))
+	cfg.set_value("video", "quality_chosen", quality_chosen)
+	cfg.set_value("video", "auto_quality", auto_quality)
+	cfg.set_value("video", "auto_dpr", auto_dpr)
 	cfg.set_value("video", "fps_cap", fps_cap)
+	cfg.set_value("video", "fps_chosen", fps_chosen)
 	cfg.set_value("video", "shake", shake)
 	cfg.set_value("video", "show_fps", show_fps)
 
@@ -174,6 +224,10 @@ func reset() -> void:
 	haptics = true
 	address = Const.default_server()
 	Net.quality = Const.default_quality()
+	quality_chosen = false
+	fps_chosen = false
+	auto_quality = -1
+	auto_dpr = 0.0
 	commit()
 
 
@@ -184,7 +238,73 @@ func apply() -> void:
 		return
 	_apply_audio()
 	if not _fps_locked:
-		Engine.max_fps = fps_cap
+		Engine.max_fps = effective_fps_cap()
+	_apply_render_scale()
+
+
+## İşlək kadr həddi. MİNİMUM-da oyunçu özü seçməyibsə 30: simulyasiya onsuz
+## da saniyədə 30 tick-dir, zəif telefonda isə sabit 30 kadr "gah 60, gah 35"
+## kadrdan daha hamar görünür və telefonu qızdırmır.
+func effective_fps_cap() -> int:
+	if not fps_chosen and Net.quality == Const.Quality.MINIMUM:
+		return 30
+	return fps_cap
+
+
+## MİNİMUM-da kadr daha az pikseldə çəkilir.
+##
+## `canvas_items` rejimi hər şeyi pəncərənin ÖZ ölçüsündə çəkir, kadr başına
+## bir neçə qat (fon, maneələr, mikroblar üst-üstə). Zəif GPU-da (Mali-G52 MC2,
+## PowerVR GE8320) əsas məhdudiyyət məhz piksel sayıdır.
+##
+## BRAUZERDƏ kətanın özü kiçilir ([constant WEB_MIN_DPR], bax `web/shell.html`
+## `germSetMaxDpr`): Godot kiçik pəncərə görür, ekrana böyütməni isə brauzerin
+## kompozitoru onsuz da edir. Əvvəl burada `viewport` rejimi idi — səhnə
+## 1280×720-də çəkilir, sonra ayrıca keçidlə kətana böyüdülürdü. Brauzerdə
+## kətan onsuz da DPR 2 ilə məhduddur (~1.5 milyon piksel), yəni `viewport`
+## cəmi ~40% qənaət edib üstəlik bir keçid əlavə edirdi. Ölçülüb (SwiftShader,
+## doldurmaya həssas): kadrın işi DPR 2-də 27–30 ms, `viewport`-da 24–29 ms,
+## DPR 1.25-də 8–13 ms.
+##
+## Telefon tətbiqində (APK) pəncərə ekranın tam ölçüsündədir (2400×1080 =
+## 2.6 milyon piksel) və kətan yoxdur — orada `viewport` rejimi qalır.
+func _apply_render_scale() -> void:
+	if not is_inside_tree():
+		return
+	var minimum := Net.quality == Const.Quality.MINIMUM
+	var want := Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	if minimum and not OS.has_feature("web"):
+		want = Window.CONTENT_SCALE_MODE_VIEWPORT
+	var root := get_tree().root
+	if root.content_scale_mode != want:
+		root.content_scale_mode = want
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.germSetMaxDpr && window.germSetMaxDpr(%s)"
+			% str(web_dpr()))
+
+
+## Keyfiyyət səviyyəsinin kətan sıxlığı həddi (brauzer).
+static func tier_dpr(quality: int) -> float:
+	return WEB_MIN_DPR if quality == int(Const.Quality.MINIMUM) else WEB_MAX_DPR
+
+
+## Brauzerdə kətanın indiki sıxlıq həddi: səviyyənin öz həddi, tənzimləyici
+## daha aşağı öyrənibsə o ([member auto_dpr]).
+func web_dpr() -> float:
+	var cap := tier_dpr(int(Net.quality))
+	return clampf(auto_dpr, WEB_FLOOR_DPR, cap) if auto_dpr > 0.0 else cap
+
+
+## Ekranın öz sıxlığı (`window.devicePixelRatio`); brauzer deyilsə 1.
+##
+## Kətan ondan sıx olmur (bax `web/shell.html` `fitCanvas`): masaüstü ekranda
+## (1.0) 1.25 həddi heç nəyi dəyişmir və tənzimləyici bunu bilməlidir — yoxsa
+## "kiçildir", kadr isə dəyişmir.
+static func device_dpr() -> float:
+	if not OS.has_feature("web"):
+		return 1.0
+	var v: Variant = JavaScriptBridge.eval("window.devicePixelRatio || 1", true)
+	return maxf(float(v), 0.5) if v != null else WEB_MAX_DPR
 
 
 ## Səs şinləri motorda YARADILIR, `default_bus_layout.tres` faylı ilə yox.

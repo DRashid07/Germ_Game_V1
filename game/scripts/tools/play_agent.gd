@@ -267,7 +267,7 @@ func _coming_soon_test(menu: MenuV2) -> void:
 		return
 	if menu._toast == null or not menu._toast.visible:
 		_issue("menyu", "MAĞAZA basıldı, 'TEZLİKLƏ' bildirişi çıxmadı — düymə cavabsız qaldı")
-	if menu._sheet.visible or menu._settings != null or menu._joining:
+	if (menu._sheet != null and menu._sheet.visible) or menu._settings != null or menu._joining:
 		_issue("menyu", "MAĞAZA basıldı və başqa bir ekran/qoşulma işə düşdü")
 	await _snap("menyu_tezliklə")
 	await _wait(1.8)
@@ -280,7 +280,7 @@ func _pick_species(menu: MenuV2) -> void:
 		return
 	await _click(rail, "MİKROBLAR")
 	await _wait(0.5)
-	if not menu._sheet.visible:
+	if menu._sheet == null or not menu._sheet.visible:
 		_issue("menyu", "MİKROBLAR basıldı, növ vərəqi açılmadı")
 		return
 	_check_layout(menu, "növ vərəqi")
@@ -316,7 +316,7 @@ func _pick_species(menu: MenuV2) -> void:
 		await _wait(0.6)
 	if int(Net.species) != species:
 		_issue("menyu", "Növ %d seçildi, seçilən növ %d oldu" % [species, int(Net.species)])
-	if menu._sheet.visible:
+	if menu._sheet != null and menu._sheet.visible:
 		_issue("menyu", "Növ seçildi, vərəq bağlanmadı")
 	await _snap("menyu_növ_seçildi")
 
@@ -324,7 +324,7 @@ func _pick_species(menu: MenuV2) -> void:
 func _pick_mode(menu: MenuV2) -> void:
 	await _click(menu._mode_card, "REJİM kartı")
 	await _wait(0.5)
-	if not menu._sheet.visible:
+	if menu._sheet == null or not menu._sheet.visible:
 		_issue("menyu", "REJİM kartı basıldı, rejim vərəqi açılmadı")
 		return
 	_check_layout(menu, "rejim vərəqi")
@@ -333,7 +333,7 @@ func _pick_mode(menu: MenuV2) -> void:
 	await _wait(0.6)
 	if int(Net.mode) != mode:
 		_issue("menyu", "Rejim sətri %d basıldı, seçilən rejim %d oldu" % [mode, int(Net.mode)])
-	if menu._sheet.visible:
+	if menu._sheet != null and menu._sheet.visible:
 		_issue("menyu", "Rejim seçildi, vərəq bağlanmadı")
 
 
@@ -954,7 +954,7 @@ func _click_through_test(menu: MenuV2, where: String) -> void:
 	if menu._joining:
 		_issue("menyu", "%s açıq ikən boş yerə basmaq arxadakı OYNA-nı işə saldı" % where)
 		await _click(menu._play, "OYNA (ləğv)")
-	if not menu._sheet.visible:
+	if menu._sheet == null or not menu._sheet.visible:
 		_issue("menyu", "%s açıq ikən boş yerə basmaq vərəqi bağladı" % where)
 
 

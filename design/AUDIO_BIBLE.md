@@ -23,7 +23,7 @@ nəticə fasiləsiz xışıltı olardı. Ona görə səslər üç səviyyəyə b
 | Səviyyə | Səslər | Qayda |
 |---|---|---|
 | **1. Sənə olan** | `you_burst`, `level_up`, `danger` | Həmişə tam səslə |
-| **2. Sənin etdiyin** | `eject`, `absorb`, `spawn` | Tam səslə, amma qısa |
+| **2. Sənin etdiyin** | `eject`, `hit_confirm`, `absorb`, `spawn` | Tam səslə, amma qısa |
 | **3. Ətrafda olan** | başqasının `eject` (−6 dB), `hit`, `burst` | Sönük və ya seyrək |
 
 İki konkret qərar:
@@ -44,6 +44,7 @@ nəticə fasiləsiz xışıltı olardı. Ona görə səslər üç səviyyəyə b
 | `blunk.wav` | 115 ms | −7.0 dB | Top pərdəni **yarıb çıxdı** — enən "blunk" |
 | `absorb.wav` | 90 ms | −8.0 dB | Qida udulur — qalxan "blup" |
 | `hit.wav` | 145 ms | −4.5 dB | Top rəqibin içinə keçdi — yaş "çırt" |
+| `hit_confirm.wav` | 80 ms | −7.0 dB | Sənin topun dəydi — qalxan, parlaq qabarcıq "pop" |
 | `burst.wav` | 700 ms | −1.5 dB | **Mikrob öldü** — qopma + cırılma + alt gurultu + damcılar |
 | `spawn.wav` | 420 ms | −4.0 dB | Doğuş — üç qalxan qabarcıq |
 | `danger.wav` | 240 ms | −5.0 dB | İki qısa siqnal: dolursan və ya acsan |
@@ -51,7 +52,7 @@ nəticə fasiləsiz xışıltı olardı. Ona görə səslər üç səviyyəyə b
 | `you_burst.wav` | 1180 ms | −2.0 dB | **SƏN öldün** — eyni partlayış, daha dərin + sönən nəfəs |
 | `ui_click.wav` | 55 ms | −8.0 dB | Menyu toxunuşu |
 
-Ümumi: 9 fayl, ~295 KiB.
+Ümumi: 11 fayl, ~311 KiB.
 
 ---
 
@@ -76,6 +77,11 @@ Vaxtı `Arena` yox, görüntü node-u bilir: `GermVisual` pərdəni yardığı k
 Səbəb: oyunçu ekranın yalnız bir hissəsinə baxır. Top atdığını gözü ilə görür,
 amma **dəydiyini eşitməlidir**. İki səs eyni sahədə olsaydı, fasiləsiz atəşdə
 biri o birini örtərdi.
+
+**`hit` və `hit_confirm` bir cütdür.** `hit` hamıya “nəyəsə dəydi” deyir;
+`hit_confirm` isə yalnız atıcıya “SƏNİN topun dəydi” cavabını verir. Buna görə
+təsdiq səsi `hit`-in aşağı gövdəsindən ayrı, yüksək zolaqdadır. Hədəf dolduqca
+`pitch_scale` qalxır və qulaq onun partlamağa yaxınlaşdığını eşidir.
 
 **`burst` yeganə alt tezlikli səsdir** (240 → 34 Hz). Dünyada ən vacib hadisə odur;
 başqa heç bir klip ora enmir, ona görə telefonun kiçik dinamikində belə seçilir.
@@ -143,7 +149,7 @@ SFX ─┴→ Master → cihaz
 | Şin | Nə gedir | İlkin |
 |---|---|---|
 | `UI` | `ui_click` | 80% |
-| `SFX` | qalan 9 klip | 100% |
+| `SFX` | qalan 10 klip | 100% |
 | `Master` | hamısı | 90% |
 
 **Sürgü klipin öz səviyyəsinə TOXUNMUR.** Yuxarıdakı üçpilləli iyerarxiya

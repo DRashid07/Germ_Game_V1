@@ -21,6 +21,10 @@ const BUDGET := 1.0 / 60.0
 var duration := 20.0
 
 var _frames: Array[float] = []
+## Kadrın ÖZ hesablama vaxtı (skriptlər + çəkilişin hazırlanması) — ekranın
+## tezliyindən asılı deyil. Brauzerdə kadr aralığı həmişə requestAnimationFrame-ə
+## bağlıdır; yükü aralıqdan yox, bundan oxumaq lazımdır.
+var _cpu: Array[float] = []
 var _elapsed := 0.0
 var _warmup_left := WARMUP
 var _peak_draw := 0
@@ -37,6 +41,7 @@ func _process(delta: float) -> void:
 
 	_elapsed += delta
 	_frames.append(delta)
+	_cpu.append(Performance.get_monitor(Performance.TIME_PROCESS))
 	# Sıçrayışın NƏ VAXT olduğu ölçüsü qədər vacibdir: başlanğıcda bir dəfə
 	# olan sıçrayış shader kompilyasiyasıdır, oyun ortasında təkrarlanan isə
 	# əsl problemdir. Orta rəqəm ikisini də gizlədir.
@@ -83,6 +88,14 @@ func _report() -> void:
 	if _worst > 0.0:
 		print("  Ən pis sıçrayış: %.1f ms, ölçmənin %.1f-ci saniyəsində" % [
 			_worst * 1000.0, _worst_at])
+	var cpu := _cpu.duplicate()
+	cpu.sort()
+	var cpu_total := 0.0
+	for c in _cpu:
+		cpu_total += c
+	print("  Kadrın işi    : %.2f ms orta, %.2f ms 1%% ən pis (TIME_PROCESS)" % [
+		cpu_total / float(_cpu.size()) * 1000.0,
+		float(cpu[mini(int(float(cpu.size()) * 0.99), cpu.size() - 1)]) * 1000.0])
 	print("  Çəkiliş çağ.  : %d (pik)" % _peak_draw)
 	print("  Node sayı     : %d" % int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)))
 	print("  Statik yaddaş : %.1f MB" % (Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0))

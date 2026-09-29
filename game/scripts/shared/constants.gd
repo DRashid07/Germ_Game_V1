@@ -51,6 +51,17 @@ const AOI_FACTOR := 1.35
 const TICK_RATE := 30
 const TICK_DELTA := 1.0 / float(TICK_RATE)
 const INTERP_DELAY := 0.1       ## Rəqiblər 100 ms geridə interpolate olunur
+## Server topu ən çox bu qədər saniyə KEÇMİŞƏ sararaq yoxlayır (bax [member Sim.lag_comp]).
+##
+## Atıcının ekranı serverdən `RTT + interpolyasiya (100 ms) + tick gözləməsi
+## (0–33 ms) + jitter` qədər geridədir. Ölçülüb: RTT 120 ms-də 267–283 ms, RTT
+## 180 ms-də 300–367 ms. Əvvəlki 300 ms həddi RTT 180-də topların 84%-ni kəsirdi:
+## server qurbanı atıcının gördüyündən 1–2 tick SONRAKI yerində yoxlayırdı və
+## kənara yaxın dəymələr boşa çıxırdı. 400 ms RTT ~230 ms-ə qədər örtür (mobil
+## şəbəkənin adi halı); daha böyük pinqdə atıcı qabağa nişan almalıdır — yoxsa
+## pis bağlantı qurbanı divar arxasında vurmağa icazə verərdi. Tarixçə
+## ([constant Sim.HISTORY], 16 tick = 533 ms) buna yetir.
+const REWIND_MAX := 0.40
 const DEFAULT_PORT := 27015
 ## Telefon və masaüstü build-lərinin ilkin server ünvanı (Render, bax `deploy/render/`).
 ## `wss://` olduğuna görə client avtomatik WebSocket nəqliyyatını seçir.
@@ -208,7 +219,7 @@ const MTU_SAFE := 1392
 ## paket MTU-nu aşır — ölçülüb, 10 mikrob + 16 top + 12 hadisə + 32 qida
 ## birlikdə 1604 bayt verirdi.
 const GERM_BYTES := 36
-const SHOT_BYTES := 24
+const SHOT_BYTES := 28
 const EVENT_BYTES := 20
 const FOOD_BYTES := 12
 
@@ -488,15 +499,45 @@ static func mode_name(mode: int) -> String:
 enum Quality {
 	HIGH = 0,   ## Glow, HDR kadr buferi, tam zərrəcik sıxlığı
 	LOW = 1,    ## Glow və HDR sönülü, zərrəciklər yarıya qədər
+	## Zəif telefon: sadə mikrob gövdəsi, 30 FPS, səhnə baza ölçüdə (1280×720)
+	## render olunur. Oyun qaydası, görüş sahəsi və şəbəkə EYNİDİR.
+	MINIMUM = 2,
 }
 
 
+## HIT hadisəsinin `arg`-ı mikroba dəyəndə: `1 + qurbanın rəngi`.
+##
+## Sıçrayış və qabıq zərbəsi `0`-dır, yəni köhnə `arg > 0.5` yoxlaması
+## ("mikroba dəydimi") dəyişmir. Ayrıca sahə paketi böyüdərdi.
+static func hit_arg(victim_color: int) -> float:
+	return 1.0 + float(maxi(victim_color, 0))
+
+
+## HIT hadisəsinin qurbanının rəngi; sıçrayışdırsa -1 (bax [method hit_arg]).
+static func hit_victim(arg: float) -> int:
+	return int(round(arg)) - 1 if arg > 0.5 else -1
+
+
 static func quality_from(value: int) -> Quality:
-	return Quality.LOW if value == int(Quality.LOW) else Quality.HIGH
+	match value:
+		int(Quality.LOW): return Quality.LOW
+		int(Quality.MINIMUM): return Quality.MINIMUM
+		_: return Quality.HIGH
 
 
 static func quality_name(q: int) -> String:
-	return "AŞAĞI" if q == int(Quality.LOW) else "YÜKSƏK"
+	match q:
+		int(Quality.LOW): return "AŞAĞI"
+		int(Quality.MINIMUM): return "MİNİMUM"
+		_: return "YÜKSƏK"
+
+
+## Glow, HDR və ağır effektlər sönülüdürmü — AŞAĞI və MİNİMUM-da.
+##
+## Yoxlama BİR yerdədir: əvvəl hər yerdə `quality == LOW` yazılırdı və üçüncü
+## səviyyə gələndə hər biri MİNİMUM-u səhvən YÜKSƏK sayardı.
+static func is_light(q: int) -> bool:
+	return q != int(Quality.HIGH)
 
 
 ## Cihaza görə ilkin keyfiyyət.
@@ -509,8 +550,99 @@ static func quality_name(q: int) -> String:
 ##
 ## Oyunçu istəsə menyudan YÜKSƏK-ə qaldıra bilər — qərar ondadır, sadəcə
 ## ilkin dəyər təhlükəsiz tərəfə əyilir.
+##
+## Zəif telefonda isə elə ilk açılışdan MİNİMUM (bax [method is_weak_device]).
+## Bu yalnız ilk təxmindir — oyun işləyərkən kadr vaxtı ölçülür və lazım gəlsə
+## səviyyə endirilir (bax [method Arena._watch_performance]).
 static func default_quality() -> Quality:
-	return Quality.LOW if OS.has_feature("mobile") else Quality.HIGH
+	if not is_handheld():
+		return Quality.HIGH
+	return Quality.MINIMUM if is_weak_device() else Quality.LOW
+
+
+## Zəif telefondurmu — RAM və GPU-nun adına görə İLK təxmin.
+##
+## Büdcə telefonlarının prosessoru bu oyunun sınandığı masaüstündən 6–7 dəfə
+## yavaşdır (Geekbench 6 tək nüvə: Helio G85 ~420, Unisoc T606 ~377, masaüstü
+## ~2 500), ən zəifləri (Helio A22/P35) 15 dəfə. GPU-ları Mali-G52 MC2, Adreno
+## 610 və PowerVR GE8320-dir. Siyahı qəsdən qısadır: səhv "güclü" təxmin
+## oyunu öldürmür — [method Arena._watch_performance] ilk saniyələrdə endirir.
+static func is_weak_device() -> bool:
+	if _weak < 0:
+		_weak = 1 if _probe_weak() else 0
+	return _weak == 1
+
+
+## Cihaz sorğusu bir dəfə edilir — nəticə dəyişmir, JS və GPU sorğusu isə ucuz deyil.
+static var _weak := -1
+
+
+static func _probe_weak() -> bool:
+	var ram_gb := _ram_gb()
+	if ram_gb > 0.0 and ram_gb <= 3.0:
+		return true
+	var gpu := _gpu_name().to_lower()
+	for weak in WEAK_GPUS:
+		if gpu.contains(weak):
+			return true
+	return false
+
+
+## GPU adında bunlardan biri varsa, telefon zəif sayılır (kiçik hərflə).
+const WEAK_GPUS := ["mali-g31", "mali-g51", "mali-g52", "mali-t", "powervr",
+	"ge8", "adreno (tm) 3", "adreno (tm) 4", "adreno (tm) 50", "adreno (tm) 51",
+	"adreno (tm) 60", "adreno (tm) 610"]
+
+
+## Cihazın RAM-ı (GB); bilinmirsə 0. Brauzerdə `navigator.deviceMemory`.
+static func _ram_gb() -> float:
+	if OS.has_feature("web"):
+		var mem = JavaScriptBridge.eval("navigator.deviceMemory || 0")
+		return float(mem) if (mem is float or mem is int) else 0.0
+	var info := OS.get_memory_info()
+	return float(info.get("physical", 0)) / 1073741824.0
+
+
+## GPU-nun adı ölçü sətri üçün (bax [method Arena.perf_line]) — bir dəfə sorğulanır.
+static func gpu_label() -> String:
+	if _gpu_cached.is_empty():
+		_gpu_cached = _gpu_name().strip_edges()
+		if _gpu_cached.is_empty():
+			_gpu_cached = "?"
+	return _gpu_cached
+
+
+static var _gpu_cached := ""
+
+
+## GPU-nun adı. Brauzerdə Godot yalnız "WebKit WebGL" görür, ona görə həqiqi
+## ad `WEBGL_debug_renderer_info` ilə səhifədən oxunur.
+static func _gpu_name() -> String:
+	if OS.has_feature("web"):
+		var js := "(function(){try{var c=document.createElement('canvas');" \
+			+ "var g=c.getContext('webgl2')||c.getContext('webgl');" \
+			+ "var e=g&&g.getExtension('WEBGL_debug_renderer_info');" \
+			+ "return e?String(g.getParameter(e.UNMASKED_RENDERER_WEBGL)):'';" \
+			+ "}catch(x){return ''}})()"
+		var name = JavaScriptBridge.eval(js)
+		return String(name) if name is String else ""
+	return RenderingServer.get_video_adapter_name()
+
+
+## Telefonda (və ya planşetdə) işləyirikmi — tətbiq kimi də, BRAUZERDƏ də.
+##
+## `mobile` teqi YALNIZ Android/iOS tətbiqində var. Veb build telefonun
+## brauzerində açılanda `mobile` YALANDIR — telefon orada `web_android` /
+## `web_ios` kimi görünür (Godot sənədi, "Feature tags": "OS.has_feature('mobile')
+## will return false when running a project exported to Web on a mobile device").
+##
+## Əvvəl yalnız `mobile` yoxlanırdı və Android-in brauzeri MASAÜSTÜ sayılırdı:
+## oyun telefonda YÜKSƏK keyfiyyətlə (glow + RGBA16F HDR buferi) və kadr
+## həddi OLMADAN açılırdı — 120 Hz ekranda saniyədə 120 dəfə. Brauzerdə donma
+## və kəsilmənin əsas səbəbi elə bu idi.
+static func is_handheld() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("web_android") \
+		or OS.has_feature("web_ios")
 
 
 ## Oyunun ilkin server ünvanı.
@@ -677,13 +809,16 @@ enum GFlag {
 	## isə cəmi dördünü daşıyır. design/MODES.md §4 iki bit deyirdi — səhvdir.
 	TEAM_SHIFT = 8, TEAM_MASK = 1792,
 }
-enum SF { ID, COLOR, X, Y, DX, DY }
+## `REWIND` — server bu topu qurbanlarının neçə saniyə ƏVVƏLKİ yerinə qarşı
+## yoxlayır (bax [member Sim.lag_comp]); botun topunda 0. `LIFE` şəbəkədə ayrıca
+## getmir — [method unpack_shots] onu istiqamətdən açır.
+enum SF { ID, COLOR, X, Y, DX, DY, REWIND, LIFE }
 
 ## Bir topun sıx axındakı ədəd sayı — [enum SF] ilə eyni.
 ##
 ## Topun id-si ardıcıl sayğacdır (peer nömrəsi deyil), ona görə mikrobdan
 ## fərqli olaraq `float32`-də təhlükəsiz saxlanılır.
-const SHOT_STRIDE := 6
+const SHOT_STRIDE := 7
 
 
 ## Sıx top axınını sətirlərə açır — [method unpack_germs] ilə eyni səbəbdən.
@@ -692,7 +827,13 @@ static func unpack_shots(d: PackedFloat32Array) -> Array:
 	var n := d.size() / SHOT_STRIDE
 	for i in n:
 		var b := i * SHOT_STRIDE
-		out.append([d[b], d[b + 1], d[b + 2], d[b + 3], d[b + 4], d[b + 5]])
+		# İstiqamətin uzunluğu `1 + qalan ömür`-dür (bax [method World._build_frame]):
+		# client topu ömrünün sonundan o yana çəkməsin və ona "dəydi" deməsin.
+		var dir := Vector2(d[b + 4], d[b + 5])
+		var len := dir.length()
+		var unit := dir / len if len > 0.0001 else Vector2.RIGHT
+		out.append([d[b], d[b + 1], d[b + 2], d[b + 3], unit.x, unit.y, d[b + 6],
+			maxf(len - 1.0, 0.0)])
 	return out
 enum EF { KIND, X, Y, ARG, COLOR }
 

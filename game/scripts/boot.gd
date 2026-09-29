@@ -13,7 +13,7 @@ func _ready() -> void:
 	get_window().size_changed.connect(_keep_landscape)
 	var args := OS.get_cmdline_user_args()
 	if args.has("--simtest"):
-		get_tree().quit(SimTest.run())
+		get_tree().quit(_tool("sim_test").run())
 	elif args.has("--server"):
 		_start_server(args)
 	elif args.has("--practice"):
@@ -56,14 +56,20 @@ func _start_practice(args: PackedStringArray) -> void:
 	if not mode.is_empty():
 		Net.mode = Const.mode_from(int(mode))
 
-	# `--quality <0|1>` — qrafika səviyyəsi (0 yüksək, 1 aşağı).
+	# `--quality <0|1|2>` — qrafika səviyyəsi (0 yüksək, 1 aşağı, 2 minimum).
 	#
 	# `--species` və `--mode` ilə eyni səbəb: məşq menyunu keçir, yəni
 	# `settings.cfg` oxunmur. Onsuz aşağı keyfiyyətin görüntüsünü təkrarlana
 	# bilən şəkildə yoxlamaq mümkün deyil.
+	#
+	# Səviyyə yalnız çəkilişi yox, kadr həddini və render ölçüsünü də dəyişir
+	# (MİNİMUM: 30 kadr, 1280×720) — ona görə ayarlar yenidən tətbiq olunur.
+	# Avtomatika da söndürülür: seçilmiş səviyyə ölçmə boyu sabit qalmalıdır.
 	var q := _arg_value(args, "--quality", "")
 	if not q.is_empty():
 		Net.quality = Const.quality_from(int(q))
+		Settings.quality_chosen = true
+		Settings.apply()
 
 	# `--at x,y` — mikrobu xəritənin müəyyən yerində doğurur (yalnız yoxlama).
 	# `configure_practice`-dən ƏVVƏL oxunmalıdır: yerli dünya mikrobu məhz
@@ -71,7 +77,9 @@ func _start_practice(args: PackedStringArray) -> void:
 	# yerdə olardı və ilk düzəliş mikrobu geri sıçradardı.
 	var at := _arg_value(args, "--at", "")
 
-	var arena: Arena = load("res://scenes/game/arena.tscn").instantiate()
+	# Tipsizdir — tipli yazılsaydı arena (və onun bütün asılılıqları) HƏR
+	# açılışda kompilyasiya olunardı, menyuya da (bax [method _tool]).
+	var arena = load("res://scenes/game/arena.tscn").instantiate()
 	if not at.is_empty():
 		var parts := at.split(",")
 		if parts.size() == 2:
@@ -119,9 +127,20 @@ func _keep_landscape() -> void:
 		w.content_scale_aspect = want
 
 
+## Test və yoxlama alətini YALNIZ həmin rejim seçiləndə yükləyir.
+##
+## Sinif adı ilə yazılanda (`SimTest.run()`, `PlayAgent.new()`) GDScript onları
+## `boot.gd`-nin özü ilə birlikdə, yəni HƏR açılışda yükləyib kompilyasiya
+## edirdi — oyunçunun heç vaxt işlətmədiyi ~6 000 sətir test kodu da daxil.
+## Ölçülüb: brauzerdə, 4× yavaşladılmış CPU-da `boot.gd` 1.7 s yüklənirdi və
+## həmin müddətdə ekran donmuş qalırdı (bax README, «Brauzerdə donma»).
+static func _tool(file: String) -> Script:
+	return load("res://scripts/tools/%s.gd" % file)
+
+
 ## Növün görüntü stendi — oyun məntiqi olmadan tək mikrob (bax [SpeciesPreview]).
 func _start_preview(args: PackedStringArray) -> void:
-	var stand := SpeciesPreview.new()
+	var stand = _tool("species_preview").new()
 	stand.species = Const.species_from(int(_arg_value(args, "--preview-species", "2")))
 	stand.balls = int(_arg_value(args, "--preview-balls", "9"))
 	stand.capacity = int(_arg_value(args, "--preview-cap", "16"))
@@ -146,7 +165,7 @@ func _start_old_menu(args: PackedStringArray) -> void:
 
 ## Xəritə düzümünün stendi — bütün qab yuxarıdan (bax [MapPreview]).
 func _start_map(args: PackedStringArray) -> void:
-	var stand := MapPreview.new()
+	var stand = _tool("map_preview").new()
 	stand.layout = int(_arg_value(args, "--map-layout", "0"))
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(stand)
@@ -161,7 +180,7 @@ func _start_map(args: PackedStringArray) -> void:
 ## burada birbaşa `Net`-ə yazılmır.
 func _start_agent(args: PackedStringArray) -> void:
 	get_tree().change_scene_to_file.call_deferred("res://scenes/ui/menu.tscn")
-	var agent := PlayAgent.new()
+	var agent = _tool("play_agent").new()
 	agent.out_dir = _arg_value(args, "--agent-out", "user://agent")
 	agent.species = int(_arg_value(args, "--agent-species", "-1"))
 	agent.mode = int(_arg_value(args, "--agent-mode", "-1"))
@@ -184,7 +203,7 @@ func _setup_perf(args: PackedStringArray) -> void:
 	var secs := _arg_value(args, "--perf", "")
 	if secs.is_empty():
 		return
-	var probe := PerfProbe.new()
+	var probe = _tool("perf_probe").new()
 	probe.duration = maxf(float(secs), 3.0)
 	get_tree().root.add_child.call_deferred(probe)
 
@@ -195,7 +214,7 @@ func _setup_screenshot(args: PackedStringArray) -> void:
 	var shot := _arg_value(args, "--shot", "")
 	if shot.is_empty():
 		return
-	var cam := Screenshot.new()
+	var cam = _tool("screenshot").new()
 	cam.path = shot
 	cam.delay_frames = int(_arg_value(args, "--shot-delay", "90"))
 	cam.count = maxi(1, int(_arg_value(args, "--shot-count", "1")))
@@ -205,7 +224,7 @@ func _setup_screenshot(args: PackedStringArray) -> void:
 
 ## Şəbəkə inteqrasiya testi üçün insansız client.
 func _start_auto_client(args: PackedStringArray) -> void:
-	var client := AutoClient.new()
+	var client = _tool("auto_client").new()
 	client.name = "AutoClient"
 	client.host = _arg_value(args, "--host", "127.0.0.1")
 	client.port = int(_arg_value(args, "--port", str(Const.DEFAULT_PORT)))
@@ -214,6 +233,8 @@ func _start_auto_client(args: PackedStringArray) -> void:
 	client.quit_after = float(_arg_value(args, "--quit-after", "0"))
 	client.mode = int(_arg_value(args, "--mode", "0"))
 	client.species = int(_arg_value(args, "--species", "0"))
+	# Vuruş probe-unun kadrları (bax [HitProbe]) — yalnız pəncərəli client-də.
+	client.probe_shots = _arg_value(args, "--probe-shots", "")
 	get_tree().root.add_child.call_deferred(client)
 
 	# `--shot` burada da işləməlidir: onsuz ONLAYN oyunun görüntüsünü çəkmək

@@ -119,6 +119,9 @@ class ShotState:
 	var dir := Vector2.RIGHT
 	var life := 0.0
 	var bounces := 0
+	## Atıcının ekranı serverdən neçə tick GERİDƏ idi (bax [method _rewound]).
+	## 0 = geri sarma yoxdur: bot, proqnoz və köhnə client.
+	var rewind := 0.0
 
 
 ## Yerdəki sərbəst top (qida). Atılıb boşa gedən toplar da buna çevrilir —
@@ -143,15 +146,44 @@ class PlayerInput:
 	var aim := 0.0
 	var fire := false
 	var use_super := false
+	## Atəş anında oyunçunun EKRANINDA olan server tick-i (kəsrli).
+	##
+	## Rəqiblər client-də interpolyasiya ilə keçmişdə çəkilir, öz topun isə
+	## indidə uçur. Server bu ədədlə topu atıcının GÖRDÜYÜ rəqiblərə qarşı
+	## yoxlayır (bax [method Sim._rewound]). Mənfi = bilinmir, geri sarma yoxdur.
+	var view_tick := -1.0
+	## Atəşin ÖZ nişanı — atəş basılan paket növbədə yenisinə birləşəndə (bax
+	## [method World.accept_input]). NAN = atəş bu paketin öz [member aim]-i ilə açılır.
+	##
+	## Şəbəkədə getmir: server iki paketi bir tick arasında alanda köhnəsini
+	## atır, atəşi isə yenisinə köçürür. Əvvəl atəş YENİ paketin nişanı ilə
+	## açılırdı, proqnoz isə köhnəsininki ilə — ölçülüb, RTT 120–180 ms-də atəşlərin
+	## 19%-i birləşirdi, onların üçdə birində bucaq 1°-dən çox fərqlənirdi (ən
+	## çoxu 147°). Proqnoz top bir xətlə uçurdu, serverinki başqa xətlə.
+	var fire_aim := NAN
+	## Client-in proqnozu atəşi MƏHZ bu paketdə açıb.
+	##
+	## [member fire] düymənin basılı olduğunu deyir və basılı saxlanan düymədə hər
+	## paketdə durur; proqnoz isə atəşi soyuma bitən İLK paketdə açır. Server
+	## soyumanı bir tick fərqli sayanda (girişlər birləşəndə, gecikəndə) atəşi
+	## başqa paketdə — başqa nişan və görünən tick ilə — açırdı. Bu bayraqla
+	## server proqnozun atəşini tanıyır ([method World.accept_input]) və soyuma
+	## bir-iki tick gecikəndə onu itirmir ([constant World.FIRE_WAIT]).
+	##
+	## Köhnə client bu biti göndərmir — server onda əvvəlki qayda ilə işləyir.
+	var shot := false
+	## Server tərəfi: proqnozun atəşi neçə tick soyumanı gözləyib.
+	var fire_wait := 0
 
 	static func make(p_seq: int, p_move: Vector2, p_aim: float, p_fire: bool,
-			p_super := false) -> PlayerInput:
+			p_super := false, p_view := -1.0) -> PlayerInput:
 		var i := PlayerInput.new()
 		i.seq = p_seq
 		i.move = p_move.limit_length(1.0)
 		i.aim = p_aim
 		i.fire = p_fire
 		i.use_super = p_super
+		i.view_tick = p_view
 		return i
 
 	## İki bayraq BİR ədəddə gedir, ayrı-ayrı sahələrdə yox.
@@ -159,13 +191,23 @@ class PlayerInput:
 	## Giriş paketi saniyədə 30 dəfə göndərilir və Variant massivində hər ədəd
 	## 9 bayt tutur. Atəş onsuz da 0/1 idi — super onun yanındakı bitə girir və
 	## massivin uzunluğu DƏYİŞMİR.
+	##
+	## Görünən tick YALNIZ atəşli paketə yazılır: server onu yalnız topu
+	## doğanda oxuyur, qalan 29 paketdə isə boş yerə 9 bayt olardı.
 	func to_array() -> Array:
-		return [seq, move.x, move.y, aim, (1 if fire else 0) | (2 if use_super else 0)]
+		var out := [seq, move.x, move.y, aim,
+			(1 if fire else 0) | (2 if use_super else 0) | (4 if shot else 0)]
+		if fire and view_tick >= 0.0:
+			out.append(view_tick)
+		return out
 
 	static func from_array(a: Array) -> PlayerInput:
 		var bits := int(a[4])
-		return PlayerInput.make(int(a[0]), Vector2(a[1], a[2]), float(a[3]),
-			(bits & 1) != 0, (bits & 2) != 0)
+		var view := float(a[5]) if a.size() > 5 else -1.0
+		var i := PlayerInput.make(int(a[0]), Vector2(a[1], a[2]), float(a[3]),
+			(bits & 1) != 0, (bits & 2) != 0, view)
+		i.shot = (bits & 4) != 0 and i.fire
+		return i
 
 
 var tick := 0
@@ -210,6 +252,32 @@ var events: Array[Dictionary] = []
 var burst_log: Array[Dictionary] = []
 
 var rng := RandomNumberGenerator.new()
+
+## Geri sarma (lag compensation) — YALNIZ [World] yandırır.
+##
+## ── Niyə lazımdır ────────────────────────────────────────────────────────
+## Atıcının ekranında iki ayrı zaman var: öz topu İNDİ uçur (proqnoz), rəqib
+## isə interpolyasiyaya görə keçmişdədir — `INTERP_DELAY + RTT` qədər. Server
+## isə topu rəqibin İNDİKİ yerinə qarşı yoxlayırdı. Nəticə: ekranda top
+## rəqibin düz ortasına girir, serverdə isə rəqib artıq 40-60 px aralıdadır
+## və top ya boşa gedir, ya da dəymə bir anlıq gecikmə ilə başqa yerdə olur.
+##
+## Həll atıcının tərəfini tutur (favor the shooter): top rəqiblərin atıcının
+## GÖRDÜYÜ mövqeyinə və halına (qalxan, kist) qarşı yoxlanılır. Geri sarma
+## [constant Const.REWIND_MAX] ilə hədlənir — Overwatch və Battlefield 4-də
+## 250 ms-dir; bizdə 30 Hz interpolyasiyası (100 ms) tək başına onun yarısıdır.
+##
+## Client-in proqnozu bunu yandırmır: orada rəqib yoxdur.
+var lag_comp := false
+
+## Son [constant HISTORY] tick-in mikrob mövqeləri: slot = tick % HISTORY.
+## Hər slot `{id: Vector2}` — mikrob o tick-də yox idisə açar da yoxdur,
+## yəni yeni doğulan mikrob keçmişdə "olduğu" yerdə vurula bilmir.
+const HISTORY := 16
+var _hist: Array[Dictionary] = []
+## Eyni slotların hal bitləri: `{id: int}` (bax [method germ_bits]).
+var _hist_bits: Array[Dictionary] = []
+var _hist_tick := PackedInt64Array()
 
 var _next_shot_id := 1
 var _next_food_id := 1
@@ -256,11 +324,15 @@ func add_germ(id: int, germ_name: String, color: int, bot := false,
 	return g
 
 
+## Mikrobu dünyadan çıxarır. Onun UÇAN topları isə uçmağa davam edir — sahibsiz.
+##
+## Əvvəl toplar da silinirdi: bot partlayanda onun hələ uçan topu serverdə
+## yox olurdu, client isə onu snapshot-dan düşənə qədər (RTT + interpolyasiya)
+## uçurdurdu və top ekranda sənə DƏYİRDİ — ölçülüb, yalançı "sənə dəydi"-lərin
+## bir hissəsi belə idi. Atılmış top sahibindən asılı olmamalıdır: dəyəndə
+## sahibə super yükü və partlatma xalı sadəcə verilmir (sahib yoxdur).
 func remove_germ(id: int) -> void:
 	germs.erase(id)
-	for i in range(shots.size() - 1, -1, -1):
-		if shots[i].owner_id == id:
-			shots.remove_at(i)
 
 
 ## Mikrobun açarını dəyişir.
@@ -333,6 +405,10 @@ func step(inputs: Dictionary, dt: float) -> void:
 
 	_step_germs(inputs, dt)
 	_separate_germs()
+	# Tarixçə TOPLARDAN ƏVVƏL yazılır: bu tick-in slotu snapshot-a gedən
+	# mövqedir (mikroblar tick-in qalanında tərpənmir), client də onu görür.
+	if lag_comp:
+		_record_history()
 	_step_shots(dt)
 	_step_food(dt)
 	_dry_food()
@@ -356,6 +432,13 @@ func step_movement(inputs: Dictionary, dt: float, keep_events := true) -> void:
 	_no_metabolism = true
 	_step_germs(inputs, dt)
 	_no_metabolism = false
+	# Proqnozda yaxın rəqiblərin kölgəsi də var (bax [method Arena._sync_proxies]):
+	# server mikrobları hər tick bir-birindən AYIRIR, və proqnoz bunu bilməyəndə
+	# sıxılan mikrob bir yerdə, serverdə başqa yerdə olurdu. Ölçülüb — nöqtə-nöqtə
+	# döyüşdə atəşin başlanğıcı 12–24 px fərqlənirdi və top rəqibin kənarından
+	# serverdə keçib gedirdi. Ayırma serverdəki funksiyanın ÖZÜDÜR.
+	if germs.size() > 1:
+		_separate_germs()
 	shots.clear()
 	if not keep_events:
 		events.clear()
@@ -460,7 +543,7 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 			_use_super(g)
 
 		if inp != null and inp.fire and g.cooldown <= 0.0 and g.balls >= Const.FIRE_MIN_BALLS:
-			_fire(g)
+			_fire(g, inp.view_tick, inp.fire_aim)
 
 		if g.balls < Const.MIN_BALLS and not _no_metabolism:
 			starved.append(g)
@@ -541,7 +624,18 @@ func _super_trichocyst(g: GermState) -> void:
 
 	var survivors: Array[ShotState] = []
 	for shot in shots:
-		if shot.owner_id != g.id and shot.pos.distance_squared_to(g.pos) <= reach2:
+		if shot.owner_id == g.id:
+			survivors.append(shot)
+			continue
+		# İnsanın topu atıcının ekranında `rewind` qədər QABAQDADIR: atıcı bu
+		# partlayışı o qədər GEC görür, qurban isə topu elə o qədər qabaqda görür
+		# (bax [method Arena._remote_shot_pos]). Yoxlama həmin ana saxlanılır —
+		# o zaman iki ekran da eyni şeyi deyir (bax [method _apply_blasts]).
+		if shot.rewind > 0.0:
+			_blasts.append([float(tick) + shot.rewind, shot.id, g.pos, reach2])
+			survivors.append(shot)
+			continue
+		if shot.pos.distance_squared_to(g.pos) <= reach2:
 			# Sahib SIFIR verilir: dağılan top artıq heç kimin deyil, hamı
 			# eyni anda yeyə bilər.
 			_drop_food(shot.pos, shot.dir * 60.0, 0)
@@ -670,13 +764,22 @@ func _separate_germs() -> void:
 			b.pos += n * push
 
 
-func _fire(g: GermState) -> void:
-	var dir := Vector2.from_angle(g.aim)
+## [param view_tick] — atıcının ekranındakı tick ([member PlayerInput.view_tick]).
+## [param aim] — atəşin öz nişanı ([member PlayerInput.fire_aim]); NAN = mikrobun nişanı.
+func _fire(g: GermState, view_tick := -1.0, aim := NAN) -> void:
+	var dir := Vector2.from_angle(g.aim if is_nan(aim) else aim)
 	var s := ShotState.new()
 	s.id = _next_shot_id
 	_next_shot_id += 1
 	s.owner_id = g.id
 	s.color = g.color
+	# Geri sarma atəş anında BİR dəfə ölçülür və uçuş boyu sabit qalır: top
+	# client-də də o andan sabit sürətlə uçur, rəqiblər isə eyni gecikmə ilə
+	# görünməyə davam edir. Client uydurma keçmiş göndərə bilər, ona görə
+	# hədd var — ondan uzağa sarmaq olmur.
+	if lag_comp and view_tick >= 0.0:
+		s.rewind = clampf(float(tick) - view_tick, 0.0,
+			Const.REWIND_MAX * float(Const.TICK_RATE))
 	# Top mikrobun İÇİNDƏN doğulur və membranı yararaq çıxır.
 	#
 	# Əvvəl membranın kənarında, bir neçə piksel ARALIDA
@@ -707,12 +810,14 @@ func _fire(g: GermState) -> void:
 	events.append({
 		"t": "fire",
 		"pos": g.pos + dir * g.radius(),
-		"arg": g.aim,
+		"arg": dir.angle(),
 		"color": g.color,
 	})
 
 
 func _step_shots(dt: float) -> void:
+	if not _blasts.is_empty():
+		_apply_blasts(dt)
 	var survivors: Array[ShotState] = []
 
 	for s in shots:
@@ -727,6 +832,10 @@ func _step_shots(dt: float) -> void:
 		# Ən yaxın toqquşmanı tapırıq: maneə mikrobdan öndədirsə, top ona dəyir.
 		var best := 2.0
 		var victim: Sim.GermState = null
+		## Qurbanın dəyilən andakı mövqeyi — geri sarılıbsa keçmişdəki.
+		var victim_at := Vector2.ZERO
+		var victim_shape := Vector3.ZERO
+		var victim_cyst := false
 		var hit_obstacle := Vector4.ZERO
 		var hit_index := -1
 
@@ -751,7 +860,7 @@ func _step_shots(dt: float) -> void:
 		var owner: GermState = germs.get(s.owner_id)
 		for id in germs:
 			var g: GermState = germs[id]
-			if not g.alive or g.id == s.owner_id or g.safe_t > 0.0:
+			if not g.alive or g.id == s.owner_id:
 				continue
 			# DOST ATƏŞİ YOXDUR — top yoldaşın içindən keçir.
 			#
@@ -760,10 +869,32 @@ func _step_shots(dt: float) -> void:
 			# yoldaşından qaçmağa məcbur edərdi.
 			if owner != null and owner.team >= 0 and g.team == owner.team:
 				continue
-			var t := _seg_circle_t(from, to, g.pos, g.radius() + Const.SHOT_RADIUS)
+			# Doğuş qalxanı və kist də atıcının GÖRDÜYÜ andan oxunur, mövqe kimi.
+			# İndikindən oxunanda top ekranda hələ qabıqsız amöbə girirdi, serverdə
+			# isə yeni bağlanmış qabıqdan səkirdi — ölçülüb, boş dəymələrin bir
+			# qismi belə idi.
+			var bits := germ_bits(g) if s.rewind <= 0.0 else _rewound_bits(g, s.rewind)
+			if bits & HIST_SAFE:
+				continue
+			var cyst := (bits & HIST_CYST) != 0
+			var state := Vector4(g.pos.x, g.pos.y, g.vel.x, g.vel.y) if s.rewind <= 0.0 \
+				else _rewound_state(g, s.rewind)
+			var at := Vector2(state.x, state.y)
+			# Ucuz ilk süzgəc: top-mikrob cütlərinin çoxu uzaqdadır, ellipsin
+			# qurulması və kəsişməsi isə yalnız yaxındakına lazımdır.
+			var near := hit_reach(g.capacity) + Const.SHOT_SPEED * dt
+			if at.distance_squared_to(from) > near * near:
+				continue
+			var shape := hit_shape(int(g.species), g.capacity, Vector2(state.z, state.w))
+			# Kistdən top SƏKİR, ona görə orada yalnız kənardan giriş sayılır.
+			var t := seg_ellipse_t(from, to, at, shape) if cyst \
+				else seg_ellipse_hit_t(from, to, at, shape)
 			if t >= 0.0 and t < best:
 				best = t
 				victim = g
+				victim_at = at
+				victim_shape = shape
+				victim_cyst = cyst
 				hit_index = -1
 
 		if best <= 1.0:
@@ -772,8 +903,8 @@ func _step_shots(dt: float) -> void:
 				# Sistləşmiş amöb müvəqqəti QABIQDIR: top içəri girmir, səkir.
 				# Səkən top başqasına dəyə bilər — səni vuran öz topunu geri
 				# ala bilər.
-				if victim.in_cyst():
-					var cn := (hit_pos - victim.pos).normalized()
+				if victim_cyst:
+					var cn := ellipse_normal(hit_pos, victim_at, victim_shape)
 					if _bounce(s, hit_pos, cn):
 						survivors.append(s)
 					continue
@@ -802,6 +933,135 @@ func _step_shots(dt: float) -> void:
 		survivors.append(s)
 
 	shots = survivors
+
+
+## Bu tick-in mikrob mövqelərini tarixçəyə yazır (bax [member lag_comp]).
+##
+## Hər tick bir kiçik lüğət: on mikrob üçün on açar. Slot dairəvi təkrar
+## işlədilir, köhnə tick özü düşür.
+func _record_history() -> void:
+	if _hist.size() != HISTORY:
+		_hist.resize(HISTORY)
+		_hist_bits.resize(HISTORY)
+		_hist_tick.resize(HISTORY)
+		_hist_tick.fill(-1)
+	var frame := {}
+	var bits := {}
+	for id in germs:
+		var hg := germs[id] as GermState
+		# Sürət də yazılır: toqquşma forması ondan asılıdır (bax [method hit_shape]).
+		frame[id] = Vector4(hg.pos.x, hg.pos.y, hg.vel.x, hg.vel.y)
+		# Qalxan və kist də — onlar da dəyməni həll edir (bax [method _step_shots]).
+		# Çoxunda ikisi də yoxdur, ona görə yalnız olanlar yazılır.
+		var b := germ_bits(hg)
+		if b != 0:
+			bits[id] = b
+	var slot := tick % HISTORY
+	_hist[slot] = frame
+	_hist_bits[slot] = bits
+	_hist_tick[slot] = tick
+
+
+## Tarixçədə mikrobun dəyməni dəyişən halları (bax [method germ_bits]).
+const HIST_SAFE := 1
+const HIST_CYST := 2
+
+
+## Mikrobun İNDİKİ halı: doğuş qalxanı və kist.
+static func germ_bits(g: GermState) -> int:
+	return (HIST_SAFE if g.safe_t > 0.0 else 0) | (HIST_CYST if g.in_cyst() else 0)
+
+
+## Mikrobun [param back] tick əvvəlki halı — atıcının ekranındakı kimi.
+##
+## Client rəqibi iki snapshot arasında çəkir, bayraqları isə YENİ snapshot-dan
+## götürür ([method Arena._render_germs]) — ona görə burada da yuxarı yuvarlanır.
+## Keçmiş bilinmirsə indiki hal qaytarılır, mövqedəki kimi.
+func _rewound_bits(g: GermState, back: float) -> int:
+	var t := ceili(float(tick) - back)
+	if t >= tick or t < 0 or _hist.size() != HISTORY:
+		return germ_bits(g)
+	var slot := t % HISTORY
+	if _hist_tick[slot] != t or not _hist[slot].has(g.id):
+		return germ_bits(g)
+	return int(_hist_bits[slot].get(g.id, 0))
+
+
+## Trixosistin geri sarılan toplara gecikən təsiri: `[an, top id, mərkəz, radius²]`.
+##
+## Kirpikli superini [code]tick[/code] anında açır, insanın topunu isə atıcı
+## `rewind` qədər QABAQDA görür (bax [member ShotState.rewind]). Atıcının
+## ekranında partlayış `rewind` gec görünür və o anda topu olduğu yerdə tutur;
+## qurbanın ekranında isə top elə o qədər qabaqda çəkilir. İki ekranın ortaq
+## anı budur — `tick + rewind`. Əvvəl top dərhal dağıdılırdı: atıcının ekranında
+## top hələ uçub rəqibə DƏYİRDİ (zərbə, səs, +2), serverdə isə yox idi —
+## ölçülüb, öz topunun təsdiqlənməyən dəymələrinin yarısından çoxu belə idi.
+var _blasts: Array = []
+
+
+## Vaxtı çatan trixosist partlayışlarını tətbiq edir (bax [member _blasts]).
+##
+## Tick-in əvvəlində top əvvəlki tick-in sonundadır; partlayışın anı onunla
+## bu an arasındadır, ona görə top o qədər geri çəkilib yoxlanılır.
+func _apply_blasts(dt: float) -> void:
+	var now := float(tick)
+	var keep := []
+	for b in _blasts:
+		if float(b[0]) > now:
+			keep.append(b)
+			continue
+		for i in shots.size():
+			var s := shots[i]
+			if s.id != int(b[1]):
+				continue
+			var at := s.pos - s.dir * (Const.SHOT_SPEED * dt * (now - float(b[0])))
+			if at.distance_squared_to(b[2]) <= float(b[3]):
+				_drop_food(at, s.dir * 60.0, 0)
+				shots.remove_at(i)
+			break
+	_blasts = keep
+
+
+## Mikrobun [param back] tick əvvəlki mövqeyi — kəsrli, iki slot arasında xətti.
+##
+## Keçmiş bilinmirsə (mikrob yenicə doğulub, tarixçə hələ dolmayıb) İNDİKİ
+## mövqe qaytarılır: geri sarma həmişə "ən pis halda köhnə qayda"ya enir.
+## Mikrob o aralıqda [constant REWIND_JUMP]-dan çox yer dəyişibsə də indiki
+## götürülür — bu sürüşmə deyil, teleportdur (raund başlanğıcı, dirilmə).
+func _rewound(g: GermState, back: float) -> Vector2:
+	var st := _rewound_state(g, back)
+	return Vector2(st.x, st.y)
+
+
+## Geri sarılmış mövqe VƏ sürət: `Vector4(x, y, vx, vy)`.
+func _rewound_state(g: GermState, back: float) -> Vector4:
+	var now := Vector4(g.pos.x, g.pos.y, g.vel.x, g.vel.y)
+	var t := float(tick) - back
+	var t0 := floori(t)
+	var p0: Variant = _hist_at(t0, g.id)
+	var p1: Variant = _hist_at(t0 + 1, g.id)
+	if p0 == null or p1 == null:
+		return now
+	var st := (p0 as Vector4).lerp(p1 as Vector4, t - float(t0))
+	if Vector2(st.x, st.y).distance_squared_to(g.pos) > REWIND_JUMP * REWIND_JUMP:
+		return now
+	return st
+
+
+## Geri sarılmış mövqe indikindən bundan uzaqdırsa, keçmiş etibarsız sayılır.
+##
+## Ən sürətli qanuni yerdəyişmə cərəyan deşiyi ilə trixosist təkanıdır
+## (~520 px/s); 300 ms-də bu, ~160 px edir. İki qatı ehtiyatla 320.
+const REWIND_JUMP := 320.0
+
+
+func _hist_at(t: int, id: int) -> Variant:
+	if t < 0 or _hist.size() != HISTORY:
+		return null
+	var slot := t % HISTORY
+	if _hist_tick[slot] != t:
+		return null
+	return _hist[slot].get(id)
 
 
 ## Topu səthdən sıçradır. Sıçrama haqqı bitibsə topu qidaya çevirir və
@@ -850,7 +1110,9 @@ func _crack(i: int, at: Vector2, s: ShotState) -> void:
 ## olmalıdır, əks halda dolu rəqib sadəcə atəş açaraq sonsuza qədər sağ qalır.
 func _inject(victim: GermState, at: Vector2, s: ShotState) -> void:
 	victim.balls += Const.SHOT_PAYLOAD
-	events.append({"t": "hit", "pos": at, "arg": 1.0, "color": s.color})
+	# `arg` qurbanı da daşıyır (bax [method Const.hit_victim]): client zərbəni
+	# ən yaxın mikroba TƏXMİN etmir, "sənə dəydi" proqnozu isə dəqiq təsdiqlənir.
+	events.append({"t": "hit", "pos": at, "arg": Const.hit_arg(victim.color), "color": s.color})
 	# Super hücum edəni mükafatlandırır — Brawl Stars-dakı məntiq. Dəyən
 	# tərəf də bir az alır: üç superdən ikisi qaçış vasitəsidir və məhz
 	# sıxılan oyunçuya lazım olur.
@@ -1152,6 +1414,119 @@ func bush_of(g: GermState) -> int:
 		if g.pos.distance_squared_to(Vector2(o.x, o.y)) <= o.z * o.z:
 			return i
 	return -1
+
+
+## ── Toqquşma forması ───────────────────────────────────────────────────
+##
+## Mikrob hərəkətdə DAİRƏ deyil: gövdə sürət oxu boyu uzanır, yanlardan daralır
+## (amöb tam sürətdə orta hesabla 1.25 r önə, 1.40 r arxaya uzanır, yanları
+## 0.75 r-ə enir). Toqquşma dairə qalanda top ekranda amöbün burnundan KEÇİRDİ,
+## yandan isə gövdəyə çatmamış "havada" dəyirdi.
+##
+## Forma ellipsdir: gövdənin yarım-oxları sürət boyu `r·(1 + k₁·s)`, yana
+## `r·(1 − k₂·s)`, burada `s` sürətin tavan sürətə nisbətidir. Əmsallar görünən
+## gövdəyə uyğunlaşdırılıb ([GermVisual] siluetinin kadrları, s = 0…1, tutum
+## 10…60). Görünən gövdə bu ellipsdən BAYIRA ÇIXMIR — [method GermVisual._fit_hit]
+## onu içəridə saxlayır, yəni mərkəzi gövdədən keçən top həmişə dəyir.
+##
+## ── Balans: orta en dairəninkidir ───────────────────────────────────────
+## Topun dəymə ehtimalı formanın topun yoluna DİK enindən asılıdır, top isə hər
+## tərəfdən gəlir — ölçü ORTA endir: qabarıq fiqurun perimetri / π. Dayanan
+## mikrobda (dairə) o, `2·(r + SHOT_RADIUS)`-dir. Ellipsə sadəcə topun radiusu
+## əlavə olunanda orta en böyüyürdü (amöbdə +8%, kirpiklidə +3%) və hərəkətdəki
+## mikrob asan vurulurdu. Ölçülüb — 300 bot dünyası × 60 s: bütün-amöb dünyasında
+## dəymələr 75.4 → 79.6, ölüm +21%, super 4.37 → 3.98 (dairə → köhnə ellips).
+##
+## İndi topun "payı" ([method _even_margin]) elə seçilir ki, orta en dəqiq
+## dairəninki olsun: forma dəyişir, dəymə ehtimalı dəyişmir. Növlər arasında da
+## fərq yoxdur — [constant Const.SPECIES_BODY] kimi qaydadır: hədəf kimi hamı
+## eyni ölçüdədir.
+##
+## Server də, client-in proqnozu da EYNİ düsturu işlədir; sürət snapshot-da gəlir.
+const HIT_STRETCH: Array[float] = [0.20, 0.04, 0.24]
+const HIT_SQUEEZE: Array[float] = [0.14, 0.05, 0.28]
+
+
+## Toqquşma ellipsi: `Vector3(sürət boyu yarım-ox, yana yarım-ox, bucaq)`.
+## Topun payı İKİ oxa da əlavə olunub.
+static func hit_shape(species: int, capacity: int, vel: Vector2) -> Vector3:
+	var r := Const.germ_radius(capacity)
+	var sp := clampi(species, 0, HIT_STRETCH.size() - 1)
+	var s := clampf(vel.length() / maxf(Const.germ_speed(capacity), 1.0), 0.0, 1.0)
+	var angle := vel.angle() if vel.length_squared() > 1.0 else 0.0
+	var a := r * (1.0 + HIT_STRETCH[sp] * s)
+	var b := r * (1.0 - HIT_SQUEEZE[sp] * s)
+	var m := _even_margin(a, b, r + Const.SHOT_RADIUS)
+	return Vector3(a + m, b + m, angle)
+
+
+## Toqquşma ellipsinin mərkəzdən ən uzaq nöqtəsi heç vaxt bundan uzaqda deyil —
+## ucuz ilk süzgəc üçün (bax [method _step_shots]). `SimTest` hər növ, tutum və
+## sürətdə yoxlayır.
+static func hit_reach(capacity: int) -> float:
+	return Const.germ_radius(capacity) * 1.3 + Const.SHOT_RADIUS + 2.0
+
+
+## Ellipsin perimetri (Ramanujan) — bu ölçülərdə xətası 0.01%-dən azdır.
+static func ellipse_perimeter(a: float, b: float) -> float:
+	return PI * (3.0 * (a + b) - sqrt((3.0 * a + b) * (a + 3.0 * b)))
+
+
+## Hər iki yarım-oxa əlavə olunan pay: `(a + m, b + m)` ellipsinin perimetri
+## radiusu [param circle] olan dairəninkinə bərabərdir. Dairədə `m` topun
+## radiusudur; uzanan gövdədə bir az kiçik, daralanda bir az böyük.
+##
+## Perimetr `m`-ə görə demək olar xəttidir (təpəsində `2π`), ona görə bir
+## düzəliş addımı bəs edir: qalan xəta 0.001%-dən azdır.
+static func _even_margin(a: float, b: float, circle: float) -> float:
+	var m := circle - ellipse_perimeter(a, b) / TAU
+	return m + circle - ellipse_perimeter(a + m, b + m) / TAU
+
+
+## [param dir] istiqamətli, [param at]-dan keçən düz xəttin ellipsdən nə qədər
+## DƏRİN keçdiyi: 0 = mərkəzdən, 1 = sərhədə toxunur, > 1 = kənardan.
+##
+## Proqnozun bir neçə piksellik xətası sərhəddə nəticəni dəyişir, dərində yox —
+## client dəymənin nə qədər "əmin" olduğunu bununla ölçür.
+static func line_depth(at: Vector2, dir: Vector2, center: Vector2, shape: Vector3) -> float:
+	var k := Vector2(1.0 / shape.x, 1.0 / shape.y)
+	var a := (at - dir * 4000.0 - center).rotated(-shape.z) * k
+	var b := (at + dir * 4000.0 - center).rotated(-shape.z) * k
+	return Geometry2D.get_closest_point_to_segment(Vector2.ZERO, a, b).length()
+
+
+## Parça-ellips kəsişməsi — ellips vahid dairəyə çevrilir, kəsişmə anı
+## xətti çevirmədə dəyişmir. [0,1] və ya -1 ([method _seg_circle_t] kimi).
+static func seg_ellipse_t(a: Vector2, b: Vector2, center: Vector2, shape: Vector3) -> float:
+	var la := (a - center).rotated(-shape.z)
+	var lb := (b - center).rotated(-shape.z)
+	return _seg_circle_t(Vector2(la.x / shape.x, la.y / shape.y),
+		Vector2(lb.x / shape.x, lb.y / shape.y), Vector2.ZERO, 1.0)
+
+
+## Top mikroba DƏYİRMİ: sərhəddən girir və ya tick-i elə onun İÇİNDƏ başlayır.
+##
+## [method seg_ellipse_t] yalnız sərhədin kəsildiyi anı tapır — parça bütünlüklə
+## ellipsin içindədirsə "yox" deyir. Tick-də mikroblar toplardan ƏVVƏL yeriyir
+## (bax [method step]): topa doğru gedən mikrob onun üstünə çıxırdı, topun 14 px-lik
+## parçası gövdənin içində qalırdı və dəymə sayılmırdı. Növbəti tick-də dönən
+## mikrobun ellipsi də dönür, top artıq çöldə olur — çıxışda da tutulmurdu.
+## Ölçülüb: botun sənə "dəydi" proqnozlarının yalançı çıxanlarının çoxu budur —
+## serverin öz snapshot-unda top gövdənin 8–29 px içindən keçib uçmağa davam edirdi.
+static func seg_ellipse_hit_t(a: Vector2, b: Vector2, center: Vector2, shape: Vector3) -> float:
+	var la := (a - center).rotated(-shape.z)
+	if (la.x * la.x) / (shape.x * shape.x) + (la.y * la.y) / (shape.y * shape.y) <= 1.0:
+		return 0.0
+	return seg_ellipse_t(a, b, center, shape)
+
+
+## Ellipsin [param at] nöqtəsindəki xarici normalı — qabıqdan sıçrayış üçün.
+static func ellipse_normal(at: Vector2, center: Vector2, shape: Vector3) -> Vector2:
+	var l := (at - center).rotated(-shape.z)
+	var n := Vector2(l.x / (shape.x * shape.x), l.y / (shape.y * shape.y))
+	if n.length_squared() < 0.000001:
+		return (at - center).normalized()
+	return n.normalized().rotated(shape.z)
 
 
 ## Parça-dairə kəsişməsi. Kəsişmə anını [0,1] qaytarır, yoxdursa -1.

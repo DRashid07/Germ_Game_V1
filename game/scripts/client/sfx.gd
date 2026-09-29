@@ -13,7 +13,7 @@ extends Node
 const POOL_SIZE := 14
 
 const CLIPS := [
-	"eject", "blunk", "absorb", "hit", "burst", "spawn",
+	"eject", "blunk", "absorb", "hit", "hit_confirm", "burst", "spawn",
 	"danger", "level_up", "you_burst", "ui_click",
 ]
 
@@ -53,6 +53,21 @@ func _ready() -> void:
 
 ## [param pitch_spread] tonu təsadüfi olaraq ±bu qədər dəyişir (0.03 = ±3%).
 func play(clip: String, pitch_spread := 0.0, volume_db := 0.0) -> void:
+	var pitch := 1.0 if is_zero_approx(pitch_spread) \
+		else randf_range(1.0 - pitch_spread, 1.0 + pitch_spread)
+	_play(clip, pitch, volume_db)
+
+
+## Klipi DƏQİQ tonla çalır — tonun özü məlumat daşıyanda.
+##
+## [method play]-in təsadüfi sürüşməsi fasiləsiz atəşi canlı saxlayır, amma
+## `hit_confirm`-də ton qurbanın doluluğunu deyir (bax [method Arena._own_hit_feel]):
+## orada təsadüf məlumatı pozardı.
+func play_pitched(clip: String, pitch: float, volume_db := 0.0) -> void:
+	_play(clip, pitch, volume_db)
+
+
+func _play(clip: String, pitch: float, volume_db: float) -> void:
 	if _silent or not enabled:
 		return
 	var stream: AudioStream = _streams.get(clip)
@@ -68,8 +83,7 @@ func play(clip: String, pitch_spread := 0.0, volume_db := 0.0) -> void:
 	# kanal bir dəfə menyu toxunuşunu, sonra partlayışı çalır.
 	p.bus = Settings.BUS_UI if UI_CLIPS.has(clip) else Settings.BUS_SFX
 	p.volume_db = volume_db
-	p.pitch_scale = 1.0 if is_zero_approx(pitch_spread) \
-		else randf_range(1.0 - pitch_spread, 1.0 + pitch_spread)
+	p.pitch_scale = pitch
 	p.play()
 
 

@@ -60,6 +60,11 @@ extends Control
 ## [method _coming_soon]) — oyunçu aldadılmır. Sistemlər gələndə qəhrəman və
 ## OYNA yerini dəyişməyəcək.
 
+## Arena səhnəsi — TİPSİZ yüklənir (`var arena = load(...)`).
+##
+## `var arena: Arena` yazılanda arena, [GermVisual], [Sim], [World] və qalan
+## oyun kodu menyunun özü ilə birlikdə kompilyasiya olunurdu — oyunçu OYNA-ya
+## basmamışdan, menyu açılarkən. Brauzerdə bu, açılış donmasının bir hissəsi idi.
 const ARENA_SCENE := "res://scenes/game/arena.tscn"
 
 ## Kənar boşluq. Yatayda kənarlar barmağın altında qalır, ona görə heç bir
@@ -259,6 +264,9 @@ var _plate_name: Label
 var _plate_super: Label
 ## Tam ekran vərəq: MİKROBLAR və REJİMLƏR eyni çərçivəni paylaşır.
 var _sheet: Control
+## Vərəqin uşaq sırasındakı yeri — o, ilk açılışda qurulur (bax [method _ensure_sheet]),
+## amma sonradan əlavə olunan bildiriş və ayarlar ekranının ALTINDA qalmalıdır.
+var _sheet_slot := -1
 var _sheet_title: Label
 var _sheet_species: Control
 var _sheet_modes: Control
@@ -288,7 +296,11 @@ func _ready() -> void:
 	_build_top_bar()
 	_build_hero()
 	_build_home()
-	_build_sheet()
+	# Növ və rejim vərəqi burada QURULMUR — ilk açılışda qurulur
+	# ([method _ensure_sheet]). Açılışda görünmür, qurulması isə menyunun ən
+	# bahalı hissəsi idi: üç böyük kart şəkli və növ səhifəsi. Ölçülüb: brauzerdə,
+	# 4× yavaş CPU-da menyunun açılışına ~350 ms əlavə edirdi.
+	_sheet_slot = get_child_count()
 	_refresh_species()
 	_refresh_mode()
 	_apply_quality()
@@ -380,7 +392,7 @@ func _build_background() -> void:
 	# qalır, deməli düymə ölü sayılır. Üstəlik ən bahalı ekran (bloom-lu menyu)
 	# zəif telefonda bahalı qalırdı.
 	_apply_quality()
-	if Net.quality == Const.Quality.LOW:
+	if Const.is_light(int(Net.quality)):
 		return
 
 	var env := Environment.new()
@@ -1459,7 +1471,9 @@ func _open_detail(kind: Const.Species) -> void:
 	stage.position = Vector2(75, 82)
 	stage.scale = Vector2(1.0, 1.0) * (Const.BASE_RADIUS / Const.germ_radius(GERM_CAPACITY))
 	_detail_live.add_child(stage)
-	var g := GermVisual.new()
+	# `load` ilə, sinif adı ilə yox: tipli istinad ~2 300 sətirlik görüntü kodunu
+	# menyunun ÖZÜ ilə birlikdə, açılışda kompilyasiya etdirirdi (bax [constant ARENA_SCENE]).
+	var g = load("res://scripts/client/germ_visual.gd").new()
 	g.setup(MENU_GERM_COLOR, "", true, kind)
 	stage.add_child(g)
 	g.apply(Vector2.ZERO, 0.0, GERM_BALLS, GERM_CAPACITY, false, true)
@@ -1551,6 +1565,7 @@ func _build_mode_list() -> void:
 ## vərəqin başlığının altına, OYNA isə GERİ-nin yanına düşürdü — iki
 ## interfeys üst-üstə oxunurdu.
 func _open_sheet(which: String) -> void:
+	_ensure_sheet()
 	_hero.visible = false
 	for c in _home_ui():
 		c.visible = false
@@ -1571,6 +1586,17 @@ func _sheet_back() -> void:
 		_close_detail()
 	else:
 		_close_sheet()
+
+
+## Vərəqi ilk dəfə lazım olanda qurur və əvvəlki yerinə qoyur.
+func _ensure_sheet() -> void:
+	if _sheet != null:
+		return
+	_build_sheet()
+	if _sheet_slot >= 0:
+		move_child(_sheet, mini(_sheet_slot, get_child_count() - 1))
+	_refresh_species()
+	_refresh_mode()
 
 
 func _close_sheet() -> void:
@@ -1676,7 +1702,7 @@ func _on_settings_changed() -> void:
 ## işləyir. Bufer və zərrəciklər isə elə indi dəyişir, yəni düymə basılan kimi
 ## ekranda gözlə görünən fərq olur — oyunçu ayarın işlədiyini bilir.
 func _apply_quality() -> void:
-	var low := Net.quality == Const.Quality.LOW
+	var low := Const.is_light(int(Net.quality))
 	get_viewport().use_hdr_2d = not low
 	if _motes != null:
 		_motes.count = 26 if low else 54
@@ -1910,7 +1936,7 @@ func _practice() -> void:
 	# Yoxlama üçün açılmış bağlantı məşqdə lazım deyil — açıq qalsa server
 	# oyunçunu onlayn sayardı.
 	Net.disconnect_from_server()
-	var arena: Arena = load(ARENA_SCENE).instantiate()
+	var arena = load(ARENA_SCENE).instantiate()
 	arena.configure_practice()
 	_swap_to(arena)
 
@@ -1944,7 +1970,7 @@ func _on_join_rejected(reason: String) -> void:
 
 
 func _on_world_joined(info: Dictionary) -> void:
-	var arena: Arena = load(ARENA_SCENE).instantiate()
+	var arena = load(ARENA_SCENE).instantiate()
 	arena.configure_online(info)
 	_swap_to(arena)
 

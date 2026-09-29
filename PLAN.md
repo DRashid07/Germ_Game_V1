@@ -129,6 +129,7 @@ parça-dairə kəsişməsi). Nəticədə eyni kod həm serverdə, həm client pr
 - [x] 30 Hz tick + görüş sahəsinə görə snapshot
 - [x] Client prediction + reconciliation
 - [x] Rəqiblər 100 ms interpolyasiya, toplar xətti hesablama
+- [x] Öz topunun proqnozu (dəymə dərhal görünür) + serverdə geri sarma (lag compensation, ≤ 300 ms)
 - [x] Bağlantı kəsiləndə mikrob 20 s saxlanılır, sessiya nişanı ilə qayıtma
 - [x] İnteqrasiya testi: 1 server + 2 insansız client + qəsdən şəbəkə kəsilməsi
 

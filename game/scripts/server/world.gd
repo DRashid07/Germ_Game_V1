@@ -16,6 +16,10 @@ extends RefCounted
 const BOT_ID_BASE := 1_000_000
 ## Bot partlayandan sonra yerinə yenisi bu qədər saniyəyə gəlir.
 const BOT_RESPAWN := 2.0
+## Proqnozun açdığı atəş serverdə soyumanı ən çox bu qədər tick gözləyir (bax
+## [method tick]). Girişlərin birləşməsi soyumanı bir tick sürüşdürür; iki tick
+## ehtiyatdır.
+const FIRE_WAIT := 2
 
 var id: int
 var sim: Sim
@@ -92,6 +96,9 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	id = p_id
 	mode = p_mode
 	sim = Sim.new()
+	# Atıcının gördüyü keçmişə qarşı yoxlama — həm onlayn serverdə, həm
+	# məşqdə (orada da rəqiblər 100 ms geridə çəkilir, öz topun isə indidə).
+	sim.lag_comp = true
 	# Qabın kənarı elə İNDİ qurulur, ilk tick-i gözləmədən.
 	#
 	# Oyunçu [method add_player] ilə tick-dən ƏVVƏL doğulur və
@@ -293,7 +300,7 @@ func _step_revive(dt: float) -> void:
 			bool(r["bot"]), Const.species_from(int(r["species"])))
 		g.team = int(r["team"])
 		if bool(r["bot"]):
-			_bots[gid] = Bot.new(gid, randf_range(0.7, 1.3))
+			_bots[gid] = Bot.new(gid, sim.rng.randf_range(0.7, 1.3), sim.rng.randi())
 		sim.events.append({
 			"t": "super", "pos": g.pos, "arg": 0.0, "color": g.color})
 
@@ -451,10 +458,14 @@ func _add_bot() -> void:
 	_next_bot_id += 1
 	_bot_name_no += 1
 	# Çətinlik təsadüfidir: dünyada həm asan, həm təhlükəli mikroblar olsun.
-	var bot := Bot.new(bid, randf_range(0.7, 1.3))
+	#
+	# Təsadüf dünyanın ÖZ generatorundandır ([member Sim.rng]), qlobaldan yox:
+	# onun bir toxumu bütün dünyanı — doğuşları, botların növünü və qərarlarını —
+	# təkrarlana bilən edir. Oyunda o, onsuz da təsadüfi başlayır.
+	var bot := Bot.new(bid, sim.rng.randf_range(0.7, 1.3), sim.rng.randi())
 	_bots[bid] = bot
 	# Botların növü təsadüfidir ki, dünyada hər üç növ görünsün.
-	var species := Const.species_from(randi() % Const.SPECIES_COUNT)
+	var species := Const.species_from(sim.rng.randi() % Const.SPECIES_COUNT)
 	var g := sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true, species)
 	g.team = _free_team()
 	teams[bid] = g.team
@@ -535,6 +546,18 @@ func accept_input(peer: int, packed: Array) -> void:
 	# doğulurdu.
 	var queued: Sim.PlayerInput = _inputs.get(peer)
 	if queued != null:
+		# Atəş öz ANI ilə köçür: görünən tick və nişan atəşin paketindəndir. Tick
+		# olmasa geri sarma itərdi; nişan olmasa top yeni paketin nişanı ilə,
+		# proqnozunku isə köhnəsininki ilə uçardı (bax [member Sim.PlayerInput.fire_aim]).
+		#
+		# Hansı paket atəşin paketidir: proqnozun atəşi açdığı ([member
+		# Sim.PlayerInput.shot]); o bilinmirsə (köhnə client) — düymənin İLK
+		# basıldığı, çünki proqnoz atəşi soyuma bitən ilk paketdə açır.
+		if queued.fire and (queued.shot or not inp.shot):
+			inp.fire_aim = queued.aim if is_nan(queued.fire_aim) else queued.fire_aim
+			inp.view_tick = queued.view_tick
+			inp.shot = queued.shot
+			inp.fire_wait = queued.fire_wait
 		inp.fire = inp.fire or queued.fire
 		inp.use_super = inp.use_super or queued.use_super
 	_inputs[peer] = inp
@@ -578,11 +601,26 @@ func tick(dt: float) -> Array:
 	# Atəş və super BİR DƏFƏLİK hadisələrdir. Paket itsə, saxlanan giriş təkrar
 	# oxunar və oyunçu istəmədən yenidən atəş açar (super isə kirpiklidə üstəlik
 	# iki top xərcləyər) — ona görə emaldan sonra ikisi də sıfırlanır.
+	#
+	# Bir istisna: proqnozun AÇDIĞI atəş ([member Sim.PlayerInput.shot]) serverdə
+	# soyuma hələ bitməyibsə, [constant FIRE_WAIT] tick gözləyir. Soyumanı iki
+	# tərəf eyni saxlayır, amma girişlər birləşəndə server onu bir tick gec
+	# başlayır — o halda proqnoz atəşi açırdı, server isə "hələ tezdir" deyib
+	# atırdı: ekranda uçan top serverdə heç olmurdu. Sürət dəyişmir — atəş yenə
+	# yalnız soyuma bitəndə açılır.
 	for gid in _inputs:
 		var inp: Sim.PlayerInput = _inputs[gid]
-		if sim.germs.has(gid):
+		var g: Sim.GermState = sim.germs.get(gid)
+		if g != null:
 			_last_seq[gid] = inp.seq
-		inp.fire = false
+		var waits := inp.fire and inp.shot and inp.fire_wait < FIRE_WAIT \
+			and g != null and g.cooldown < Const.FIRE_COOLDOWN - 0.0001
+		if waits:
+			inp.fire_wait += 1
+		else:
+			inp.fire = false
+			inp.shot = false
+			inp.fire_wait = 0
 		inp.use_super = false
 
 	# YER — matçlı rejimdə partlayan mikrob o anda sağ qalanların sayı + 1
@@ -658,7 +696,11 @@ func roster() -> Dictionary:
 	var out := {}
 	for gid in sim.germs:
 		var g: Sim.GermState = sim.germs[gid]
-		out[gid] = [g.name, g.color]
+		# Üçüncü sahə: bot, yoxsa insan. Client bunu id-dən çıxara bilməz — insanın
+		# peer nömrəsi təsadüfi 32 bitlik ədəddir və adətən [constant BOT_ID_BASE]-dən
+		# böyükdür (bax [member Arena._bot_colors]). Topun özü isə nə qədər geri
+		# sarıldığını snapshot-da daşıyır ([enum Const.SF] `REWIND`).
+		out[gid] = [g.name, g.color, _bots.has(gid)]
 	return out
 
 
@@ -696,7 +738,14 @@ func _build_frame() -> void:
 
 	_frame_shots.clear()
 	for s in sim.shots:
-		_frame_shots.append([s.pos, s.id, s.color, s.pos.x, s.pos.y, s.dir.x, s.dir.y])
+		# Qalan ömür istiqamətin UZUNLUĞUNDADIR: `dir × (1 + ömür)` — ayrıca sahə
+		# paketi böyüdərdi (bax [method Const.unpack_shots]).
+		var packed := s.dir * (1.0 + maxf(s.life, 0.0))
+		# Geri sarma SANİYƏ ilə gedir: client insanın topunu məhz bu qədər irəli
+		# çəkir ki, ekrandakı toxunuş serverin qərarı ilə üst-üstə düşsün
+		# (bax [method Arena._remote_shot_pos]).
+		_frame_shots.append([s.pos, s.id, s.color, s.pos.x, s.pos.y, packed.x, packed.y,
+			s.rewind * Const.TICK_DELTA])
 
 	# Qida düz ədəd axını kimi paketlənir (bax [constant Const.FOOD_STRIDE]).
 	#
@@ -784,7 +833,7 @@ func snapshot_for(peer: int) -> Array:
 		germs,
 		_near_shots(_frame_shots, eye, r2, shot_n),
 		_near_food(_frame_food_pos, _frame_food_id, eye, r2, food_n),
-		_near_flat(_frame_events, eye, r2, event_n),
+		_near_flat(_frame_events, eye, r2, event_n, g.color if g != null else -1),
 		_frame_board,
 		# ƏHALİ və SAĞ SAY eyni tərifdən çıxır ([method _alive_count]).
 		#
@@ -862,12 +911,39 @@ static func _near_shots(rows: Array, eye: Vector2, r2: float, limit: int) -> Pac
 ## cəmi 3 ola bilir (bax [method snapshot_for]), yəni uzaqda partlayan üç
 ## mikrob OYUNÇUNUN ÖZ SUPERİNİ paketdən çıxarırdı — basırdın, doluluq
 ## sıfırlanırdı, amma ekranda heç nə olmurdu.
-static func _near_flat(rows: Array, eye: Vector2, r2: float, limit: int) -> PackedFloat32Array:
+##
+## BAXANIN ÖZ hadisələri ([param own_color]) məsafədən asılı olmayaraq
+## öndədir. Öz topun 400-500 px uzaqda dəyir, baxanın yanında isə hər tick
+## onlarla qida udulur: yalnız məsafəyə görə seçəndə dəymə hadisəsi paketdən
+## düşürdü. Server dəyməni sayırdı, client isə heç vaxt eşitmirdi — proqnozun
+## göstərdiyi zərbə "təsdiqsiz" qalırdı və proqnozsuz zərbə ümumiyyətlə
+## görünmürdü. Öz hadisələri azdır (atəş, dəymə, udma), büdcəni yemir.
+static func _near_flat(rows: Array, eye: Vector2, r2: float, limit: int,
+		own_color := -1) -> PackedFloat32Array:
 	var near: Array = []
 	for row in rows:
 		var d := eye.distance_squared_to(row[0])
 		if d > r2:
 			continue
+		var kind := int(row[1])
+		var own := own_color >= 0 and int(row[row.size() - 1]) == own_color
+		if own_color >= 0 and kind == Const.EvKind.HIT \
+				and Const.hit_victim(float(row[4])) == own_color:
+			# Baxana DƏYƏN top hamıdan öndədir — atan başqası olsa belə.
+			#
+			# Əvvəl o, baxanın öz qida udmaları ilə eyni pillədə idi. Bir tick-də
+			# üç qida yeyəndə (büdcənin alt həddi 3-dür) zərbə paketdən düşürdü:
+			# server dəyməni sayırdı, client-in "sənə dəydi" proqnozu isə
+			# təsdiqsiz qalırdı. Diaqnostikada məhz belə bir hal tutuldu.
+			d = -3.0
+		elif own and kind != Const.EvKind.ABSORB:
+			d = -2.0
+		elif own:
+			d = -1.0
+		elif kind == Const.EvKind.ABSORB:
+			# Başqasının qida udması yalnız bəzəkdir: qidanın özü onsuz da siyahıdan
+			# çıxır. Büdcə sıxılanda ilk o düşür, zərbə və partlama yox.
+			d += r2
 		near.append([d, row])
 
 	if limit > 0 and near.size() > limit:

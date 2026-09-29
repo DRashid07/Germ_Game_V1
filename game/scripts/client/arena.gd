@@ -40,12 +40,70 @@ const FOOD_SCALE := 0.85
 ## paket obyekti yanıb-söndürməsin.
 const VIEW_GRACE := Const.INTERP_DELAY + Const.TICK_DELTA
 
-## Yerli doğuş nöqtəsi bu qədər saniyə gözləyir (bax [method _remember_muzzle]).
+## Proqnozun atdığı top serverin FIRE hadisəsini bu qədər saniyə gözləyir
+## (bax [method ShotPrediction.take_unseen_fire]).
 ##
 ## Atəş fasiləsindən (FIRE_COOLDOWN = 1 s) KİÇİK olmalıdır: belə olanda
 ## növbədə heç vaxt iki gözləyən atəş qalmır, yəni səhv uyğunlaşma mümkün
-## deyil. Serverin qəbul etmədiyi atəş isə özü düşüb gedir.
+## deyil.
 const MUZZLE_GRACE := 0.6
+
+## Proqnozlaşdırılmış dəymənin vədi (top sayı, super doluluğu) bu qədər
+## saniyə saxlanılır. Serverin sözü RTT + interpolyasiya (~250 ms) sonra
+## ekrana çatır; server dəyməni qəbul etməsə, vəd bu müddətdən sonra sönür.
+const PROMISE_HOLD := 0.6
+
+## Proqnozun dəymə/sıçrayışı serverin hadisəsini bu qədər saniyə gözləyir.
+## Uyğun gələn server hadisəsi İKİNCİ dəfə göstərilmir.
+const CLAIM_KEEP := 1.2
+## Proqnozdan əvvəl gələn öz dəyməsi bu qədər gözləyir (bax [method _take_early_hit]).
+const EARLY_HIT_KEEP := 0.6
+## Serverin dəymə nöqtəsi proqnozunkundan bu qədər aralı ola bilər (px).
+## Geri sarma eyni anı yoxlayır, ona görə fərq adətən bir tick-in yoludur
+## (14 px); ehtiyat pinq dəyişkənliyi üçündür.
+const CLAIM_REACH_HIT := 110.0
+## Öz topunun XƏTTİ qurbanın ellipsindən bundan dayaz keçirsə (0 = mərkəz,
+## 1 = sərhəd), zərbə serverin təsdiqini gözləyir — top isə gövdənin kənarında
+## dayanır. Ölçülüb (RTT 120/180 ms, 24 sessiya): təsdiqlənməyən öz dəymələrinin
+## hamısı 0.99+ dərinlikdə idi — atəş nöqtəsinin bir neçə piksellik fərqi sərhəddə
+## nəticəni dəyişir. Təsdiqlənən dəymələrin isə yalnız ~6%-i bundan dayazdır.
+const OWN_SURE_DEPTH := 0.9
+const CLAIM_REACH_WALL := 70.0
+
+## Öz topunun dəydiyi qurbanın PARTLAMASI bu qədər saniyə ərzində gələrsə,
+## interpolyasiyanı gözləmədən dərhal göstərilir (bax [method _queue_events]).
+const KILL_LINK := 1.5
+
+## Botun topu öz mikrobuna bu qədər yaxınlaşanda (gövdənin kənarından, px)
+## tam OYUNÇUNUN zaman xəttinə keçir; keçid [constant SELF_BLEND] px boyu hamardır.
+## Bax [method _remote_shot_pos].
+const SELF_NEAR := 150.0
+const SELF_BLEND := 300.0
+## Top yalnız yolu gövdənin bu qədər yaxınından keçəndə "sənə uçur" sayılır
+## (bax [method _aimed_at_me]).
+const SELF_AIM_SLACK := 40.0
+## Köçürmənin ən böyük sürəti (1/s): sən topun yoluna qəfil girəndə top
+## irəli sıçramır, ~0.25 s-də hamar yetişir.
+const SELF_CATCH_RATE := 4.0
+## Sənə artıq təhlükə olmayan, qabağında başqa mikrob olan top keçmişə ən azı
+## bu sürətlə qayıdır (px/s, topun öz sürətindən çıxılır: top geri getmir,
+## yalnız yavaşıyır). Qabaqda mikrob [constant SELF_RELEASE_LOOK] px-ə qədər
+## axtarılır. Bax [method _release_room], [method release_rate].
+const SELF_RELEASE_SPEED := 0.6 * Const.SHOT_SPEED
+const SELF_RELEASE_LOOK := 220.0
+## Proqnoz yalnız topun XƏTTİ ellipsin bu qədər içindən keçəndə dərhal oynanır
+## (0 = mərkəzdən, 1 = sərhədə toxunur). Sərhəddə proqnozun bir neçə piksellik
+## xətası nəticəni dəyişir — ölçülüb: yalançı dəymələrin yarısı gövdədən 5–7 px
+## kənardan keçən toplar idi. 0.8-də əmin proqnozların ~5%-i yenə yalançı çıxırdı:
+## serverdə top gövdənin yanından keçirdi. Bax [method _remote_shot_pos].
+const SELF_SURE_DEPTH := 0.65
+## Yolda başqa mikrob bu qədər yaxındırsa (px), top ona dəyə bilər — proqnoz gözləyir.
+const SELF_SURE_GAP := 24.0
+## Server bu qədər (RTT-dən sonra, s) topu hələ də göndərirsə, dəymə olmayıb.
+const SELF_UNDO_WAIT := 0.12
+
+## Minixəritənin yenilənmə tezliyi (bax [method _update_minimap]).
+const MINIMAP_HZ := 10.0
 
 ## Server "super hələ işləyir" deyəndə proqnozun sayğacının uzadıldığı vaxt.
 ##
@@ -97,6 +155,42 @@ var _aim_curr := 0.0
 var _clock := 0.0
 var _snaps: Array[Dictionary] = []  ## {"t": lokal vaxt, "d": snapshot}
 var _last_snap: Array = []
+## [member _last_snap]-ın gəldiyi an və onun topları sonuncu dəfə hansı
+## snapshot-dan oxunub (bax [method _render_shots]).
+var _last_snap_t := 0.0
+var _shots_synced_t := -1.0
+
+## ── Tick saatı ───────────────────────────────────────────────────────────
+##
+## Snapshot-lar xam GƏLİŞ anı ilə yox, tick-dən çıxan HAMAR an ilə çəkilir:
+## `_tick_base + tick × TICK_DELTA`. `_tick_base` gəlişlərin gecikməsinin yavaş
+## ortasıdır. Əvvəl hər snapshot öz gəliş anı ilə interpolyasiya olunurdu və
+## jitter-də (15–20 ms) rəqib tick-in yarısı qədər qabağa-geriyə sürüşürdü:
+## proqnoz topu rəqibi serverin yoxladığı dəqiq tick-də görür ([method _ghost_targets]),
+## ekranda isə rəqib başqa yerdə çəkilirdi — top gövdəyə girib dəymədən keçə
+## bilirdi. İndi ekrandakı rəqib elə həmin tick-dədir, hərəkət də hamardır.
+##
+## Gecikən paket öz anından gec gəlsə də, interpolyasiya gecikməsi (100 ms)
+## jitter-dən xeyli böyükdür — paket göstəriləcəyi anda artıq buferdədir.
+var _tick_base := 0.0
+var _tick_base_set := false
+## [member _last_snap]-ın tick saatındakı anı.
+var _last_snap_tt := 0.0
+## Hamarlanma: hər snapshot ortanı bu qədər dartır (30 Hz-də ~0.7 s zaman sabiti).
+const TICK_BASE_RATE := 0.05
+## Bundan böyük fərq sıçrayışdır (yenidən qoşulma, uzun donma) — orta dərhal köçür.
+const TICK_BASE_SNAP := 0.25
+
+
+## Snapshot tick-inin yerli saatdakı hamar anı; gəlişi də ortaya əlavə edir.
+func _tick_time_of(tick: float) -> float:
+	var sample := _clock - tick * Const.TICK_DELTA
+	if not _tick_base_set or absf(sample - _tick_base) > TICK_BASE_SNAP:
+		_tick_base = sample
+		_tick_base_set = true
+	else:
+		_tick_base = lerpf(_tick_base, sample, TICK_BASE_RATE)
+	return _tick_base + tick * Const.TICK_DELTA
 var _finished := false
 
 ## Mikroba qayıtmaq üçün sessiya nişanı — serverdən dünyaya girəndə gəlir.
@@ -162,12 +256,62 @@ var _food_views := {}               ## food id -> {"node": Sprite2D, "seen": flo
 var _food_pool: Array[Sprite2D] = []
 var _shot_pool: Array[Sprite2D] = []
 var _shot_views := {}               ## shot id -> Dictionary
-## Öz atəşlərinin doğuş nöqtələri — serverin topu təsdiqləməsini gözləyir
-## (bax [method _remember_muzzle]).
-var _muzzles: Array[Dictionary] = []
+## Öz toplarının proqnozu — serveri gözləmədən uçur və dəyir (bax [ShotPrediction]).
+var _own_shots := ShotPrediction.new()
+## Proqnoz topunun sprite-ı: ghost id -> Sprite2D (eyni [member _shot_pool]-dan).
+var _ghost_nodes := {}
+## Proqnozla birləşmiş server toplarının id-si -> birləşmə anı.
+##
+## Snapshot yalnız ən yaxın topları daşıyır və sıx döyüşdə öz topun bir-iki
+## paketdən düşüb geri qayıda bilir. Görüntüsü o arada silinir; bu siyahı
+## olmasa qayıdan top "yeni" sayılıb proqnozun yanında ikinci dəfə çəkilərdi.
+var _own_sids := {}
+## Proqnozun gördüyü, serverin hələ təsdiqləmədiyi təmaslar:
+## `{"pos", "t", "hit": bool}` (bax [method _match_claim]).
+var _claims: Array[Dictionary] = []
+## Öz topunun son dəydiyi qurbanlar: rəng indeksi -> saat (bax [constant KILL_LINK]).
+var _my_victims := {}
+## Gediş-gəliş vaxtının hamar təxmini (s): girişin göndərilməsindən onu
+## təsdiqləyən snapshot-un gəlişinə qədər. Server tick-ini gözləmə də daxildir.
+var _rtt := 0.15
+## Botların rəngləri — reyestrdən (bax [method _on_roster]). Çəkiliş bundan asılı
+## deyil (top öz geri sarmasını daşıyır); ölçmə alətləri insanın topunu ayırmaq
+## üçün işlədir (bax [HitProbe]).
+var _bot_colors := {}
+## Öz mikrobuna proqnozlaşdırılmış dəymələr: `{"pos", "t", "color", "sid", "soft", "lead"}`,
+## rəng ATANINDIR
+## (bax [method _remote_shot_pos]).
+var _self_claims: Array[Dictionary] = []
+## Öz topunun proqnozdan əvvəl gələn server dəymələri: `{"pos", "t", "victim"}`.
+var _early_hits: Array[Dictionary] = []
+## Hər girişin göndərildiyi an: seq -> saat. Serverin FIRE hadisəsindən öyrənilən
+## atəşin topu məhz bu andan uçmağa başlayır (bax [method _spawn_own_shot]).
+var _input_time := {}
+## Son snapshot-un təsdiqlədiyi giriş — həmin tick-də emal olunan giriş.
+var _last_ack := 0
+## Super halqasının vədi — dəymənin +3-ü serveri gözləmədən görünür.
+var _charge_promise := -1
+var _charge_base := 0
+var _charge_until := 0.0
+
+## Proqnozun serverlə nə qədər üst-üstə düşdüyü — oyuna təsiri yoxdur, şəbəkə
+## testi oxuyur ([AutoClient]). `predicted` — ekranda göstərilən öz dəymələrin,
+## `confirmed` — serverin sonra təsdiqlədikləri, `server_only` — proqnozun
+## görmədiyi, amma serverin saydığı dəymələr; `ghost` — ekranda göstərilib
+## serverin heç vaxt saymadıqları; `confirm_s` — təsdiqin cəmi gecikməsi.
+var hit_stats := {"predicted": 0, "confirmed": 0, "server_only": 0, "ghost": 0,
+	"confirm_s": 0.0, "ghost_gone": 0, "lines": 0, "line_off_sum": 0.0, "line_off_max": 0.0, "miss": [],
+	"self_pred": 0, "self_conf": 0, "self_false": 0,
+	"self_soft": 0, "self_soft_conf": 0, "self_soft_miss": 0, "self_undo": 0,
+	"own_soft": 0, "own_soft_conf": 0, "own_soft_miss": 0, "own_soft_undo": 0}
 var _fx_queue: Array[Dictionary] = []
 var _tex := {}
 var _view_span := Const.VIEW_SPAN_BASE
+## Kameranın gördüyü dünya düzbucaqlısı — ekrandan kənardakı mikrobu çəkməmək
+## üçün (bax [member GermVisual.on_screen]). Kamera qurulana qədər bütün dünya.
+var _view_rect := Rect2(-1.0e6, -1.0e6, 2.0e6, 2.0e6)
+## Minixəritənin növbəti yenilənməsinə qalan vaxt (bax [method _update_minimap]).
+var _minimap_wait := 0.0
 var _shake := 0.0
 ## Təsadüfi silkələnmədən ayrı istiqamətli kamera təpiyi.
 ## Ayrı saxlanır ki, zərbənin haradan gəldiyi random titrəyişdə itməsin.
@@ -337,7 +481,11 @@ func _build_glow() -> void:
 ## yoxsa RGBA16F format heç nəyə xidmət etmədən hər kadr iki dəfə çox yaddaş
 ## zolağı yeyər — mobil GPU-da bu, ən böyük tək xərcdir.
 func _apply_quality() -> void:
-	var low := Net.quality == Const.Quality.LOW
+	var low := Const.is_light(int(Net.quality))
+	var minimum := Net.quality == Const.Quality.MINIMUM
+	# Mikrobların detal səviyyəsi dərhal dəyişir (bax [member GermVisual.lod]).
+	for gid in _visuals:
+		(_visuals[gid]["node"] as GermVisual).lod = 1 if minimum else 0
 	get_viewport().use_hdr_2d = not low
 	if _glow != null:
 		_glow.environment.glow_enabled = not low
@@ -347,10 +495,10 @@ func _apply_quality() -> void:
 	# Zərrəcik sıxlığı da keyfiyyətdən asılıdır: onlar oyuna təsir etmir,
 	# yalnız suyun canlı görünməsi üçündür — ilk kəsiləcək şey budur.
 	if _motes_deep != null:
-		_motes_deep.count = 34 if low else 80
+		_motes_deep.count = (12 if minimum else 34) if low else 80
 		_motes_deep.rebuild()
 	if _motes != null:
-		_motes.count = 14 if low else 30
+		_motes.count = (8 if minimum else 14) if low else 30
 		# Cərəyan axını yalnız YÜKSƏK-dədir və ayrıca node deyil: deşiyə
 		# sorulan cizgilər səth zərrəciklərinin mövcud multiline batch-inə
 		# qoşulur.
@@ -450,7 +598,7 @@ func _build_world() -> void:
 	_fx = Node2D.new()
 	add_child(_fx)
 	_juice = JuiceFx.new()
-	_juice.setup(Net.quality == Const.Quality.LOW)
+	_juice.setup(Const.is_light(int(Net.quality)))
 	_fx.add_child(_juice)
 
 	_cam = Camera2D.new()
@@ -632,6 +780,7 @@ func _leave_match() -> void:
 
 func _init_prediction() -> void:
 	pred = Sim.new()
+	_proxy_inputs.clear()
 	# Növ MÜTLƏQ verilməlidir: passiv özəlliklər (sürətlənmə, sönmə, axına
 	# tabelik, maneə radiusu) növdən çıxır və proqnoz onları serverlə eyni
 	# hesablamalıdır. Növsüz yaradılsaydı, hər növ kirpikli kimi proqnozlaşdırılar
@@ -688,6 +837,8 @@ func _process(delta: float) -> void:
 		_tick_accum = 0.0
 
 	_render(delta)
+	_watch_performance(delta)
+	_watch_resolution(delta)
 
 
 ## Xəritənin fasiləsiz iki yumşaq hərəkəti bir yerdə saxlanılır.
@@ -725,6 +876,7 @@ func _do_tick() -> void:
 		return
 
 	var inp := _sample_input()
+	_input_time[inp.seq] = _clock
 
 	if _local_world != null:
 		_local_world.accept_input(my_id, inp.to_array())
@@ -755,8 +907,6 @@ func _do_tick() -> void:
 					"survived": true, "timed_out": res["timed_out"],
 				})
 		_local_world.pending_results.clear()
-	else:
-		Net.send_input.rpc_id(1, inp.to_array())
 
 	pending.append(inp)
 	while pending.size() > Const.INPUT_BUFFER_MAX:
@@ -767,19 +917,31 @@ func _do_tick() -> void:
 	# interpolyasiya olunur (bax [method _shown_state]).
 	_pos_prev = me.pos
 	_aim_prev = me.aim
-	pred.step_movement({my_id: inp}, Const.TICK_DELTA, true)
+	pred.step_movement(_pred_inputs(inp), Const.TICK_DELTA, true)
 	_pos_curr = me.pos
 	_aim_curr = me.aim
+	var tricho := 0.0
 	for e in pred.events:
 		if e.get("t") == "fire":
 			_spawn_fx("spark", e["pos"], 0.5, Palette.germ_color(my_color))
 			_juice.muzzle(e["pos"], float(e["arg"]), Palette.germ_color(my_color))
 			Sfx.play("eject", 0.06)
 			_eject_from(my_color, float(e["arg"]))
-			_remember_muzzle(Vector2(e["pos"]), float(e["arg"]))
+			_spawn_own_shot(Vector2(e["pos"]), float(e["arg"]), 0.0, inp.view_tick)
+			inp.shot = true
+		elif e.get("t") == "super" and float(e["arg"]) > 0.0:
+			# Öz trixosistin (arg = təsir radiusu, bax [method Sim._use_super]).
+			tricho = float(e["arg"])
+	if tricho > 0.0:
+		_pop_remote_shots(tricho)
+	_resolve_self_claims(tricho)
+	# Giriş proqnozdan SONRA gedir: server atəşi proqnozun açdığı paketdə tanısın
+	# (bax [member Sim.PlayerInput.shot]). Məşqdə yerli dünya onu yuxarıda alıb.
+	if _local_world == null:
+		Net.send_input.rpc_id(1, inp.to_array())
 
 	_hud.set_fire_state(me.cooldown / Const.FIRE_COOLDOWN, me.balls >= Const.FIRE_MIN_BALLS)
-	_hud.set_super(float(me.charge) / float(Const.SUPER_MAX), me.super_ready())
+	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready())
 	if _mode != Const.Mode.ENDLESS:
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
 			me.pos.length() > _wet_radius,
@@ -821,7 +983,22 @@ func _sample_input() -> Sim.PlayerInput:
 		_super_flag = false
 		_fire_flag = false
 		return Sim.PlayerInput.make(_seq, Vector2.ZERO, me.aim, false, false)
-	return Sim.PlayerInput.make(_seq, move, aim, _fire_requested(), _super_requested())
+	return Sim.PlayerInput.make(_seq, move, aim, _fire_requested(), _super_requested(),
+		_view_tick())
+
+
+## Ekranda İNDİ görünən server tick-i — rəqiblərin interpolyasiya nöqtəsi.
+##
+## Server topu məhz bu anın rəqiblərinə qarşı yoxlayır ([member Sim.lag_comp]).
+## Kəsrlidir: rəqib iki snapshot arasında çəkilir, 33 ms-lik pillə isə
+## sürətli rəqibdə 6 px xəta deməkdir. Bilinmirsə -1 — server geri sarmır.
+func _view_tick() -> float:
+	var pair := _bracket(_clock - Const.INTERP_DELAY)
+	if pair.is_empty():
+		return -1.0
+	var a := float((pair["a"] as Array)[Const.Snap.TICK])
+	var b := float((pair["b"] as Array)[Const.Snap.TICK])
+	return lerpf(a, b, float(pair["alpha"]))
 
 
 ## WASD / ox düymələri. Diaqonal da normallaşdırılır ki, çəp getmək
@@ -947,7 +1124,7 @@ func _auto_sample() -> Sim.PlayerInput:
 	# botlarda, təsadüfən tutmaq olurdu. İndi `--practice --shot` ilə hər növün
 	# superi təkrarlana bilən şəkildə çəkilir.
 	var use_super := me.super_ready()
-	return Sim.PlayerInput.make(_seq, move, aim, fire, use_super)
+	return Sim.PlayerInput.make(_seq, move, aim, fire, use_super, _view_tick())
 
 
 func _nearest_food() -> Dictionary:
@@ -994,7 +1171,10 @@ func _on_snapshot(data: Array) -> void:
 	data[Const.Snap.SHOTS] = Const.unpack_shots(data[Const.Snap.SHOTS])
 	data[Const.Snap.EVENTS] = Const.unpack_events(data[Const.Snap.EVENTS])
 	_last_snap = data
-	_snaps.append({"t": _clock, "d": data})
+	_last_snap_t = _clock
+	var at := _tick_time_of(float(data[Const.Snap.TICK]))
+	_last_snap_tt = at
+	_snaps.append({"t": at, "d": data})
 	while _snaps.size() > SNAP_BUFFER_MAX:
 		_snaps.pop_front()
 
@@ -1005,7 +1185,7 @@ func _on_snapshot(data: Array) -> void:
 
 	_apply_walls(data[Const.Snap.WALLS])
 	_apply_match(data[Const.Snap.MATCH])
-	_queue_events(data[Const.Snap.EVENTS], _clock)
+	_queue_events(data[Const.Snap.EVENTS], at)
 	_hud.update_board(data[Const.Snap.BOARD], int(data[Const.Snap.POP]), _roster)
 	# Minimap yaş radiusu da bilməlidir: TƏK QALAN-da təhlükəsiz zona 1200-dən
 	# 90 px-ə düşür və oyunçunun "hara qaçım" sualına cavab verən yeganə yer
@@ -1020,6 +1200,16 @@ func _on_snapshot(data: Array) -> void:
 ## ad birdəfəlik boş qalardı — [method _ensure_germ] yalnız bir dəfə qurur.
 func _on_roster(table: Dictionary) -> void:
 	_roster = table
+	_bot_colors.clear()
+	for gid in table:
+		# Bot olduğunu reyestr DEYİR. Əvvəl id-dən çıxarılırdı (`>= BOT_ID_BASE`), amma
+		# insanın peer nömrəsi də adətən böyükdür: o biri oyunçunun topu bot topu
+		# sayılır, sənin zamanına köçürülür və "sənə dəydi" proqnozu alırdı — server
+		# isə insanın topunu geri sarma ilə başqa yerdə yoxlayır. Ölçülüb: yalançı
+		# proqnozların çoxu məhz insan toplarında idi.
+		var info: Array = table[gid]
+		if info.size() > 2 and bool(info[2]):
+			_bot_colors[int(info[1])] = true
 	for gid in table:
 		var entry: Dictionary = _visuals.get(gid, {})
 		if entry.is_empty():
@@ -1092,10 +1282,19 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	var acked := int(me_self[Const.SelfF.ACK])
 	while not pending.is_empty() and pending[0].seq <= acked:
 		pending.pop_front()
+	_last_ack = acked
+	if _input_time.has(acked):
+		_rtt = lerpf(_rtt, clampf(_clock - float(_input_time[acked]), 0.0, 1.0), 0.1)
+	for seq in _input_time.keys():
+		if int(seq) < acked:
+			_input_time.erase(seq)
 
+	# Yaxın rəqiblərin kölgəsi də eyni snapshot-dan qurulur və girişlərlə birlikdə
+	# irəli aparılır (bax [method _sync_proxies]).
+	_sync_proxies()
 	# Hadisələr saxlanmır: eyni atəş səsi hər düzəlişdə təkrar çalınmamalıdır.
 	for inp in pending:
-		pred.step_movement({my_id: inp}, Const.TICK_DELTA, false)
+		pred.step_movement(_pred_inputs(inp), Const.TICK_DELTA, false)
 
 	# Düzəliş tick-dən KƏNARDA da gələ bilər (onlayn rejimdə snapshot istənilən
 	# anda düşür) və onda interpolyasiyanın ucları köhnə qalır.
@@ -1107,6 +1306,88 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	# növbəti tick-də onsuz da öz-özünə düzəlir.
 	if me.pos.distance_to(_pos_curr) > Const.germ_radius(me.capacity):
 		_sync_shown()
+
+
+## ── Proqnozda yaxın rəqiblər ─────────────────────────────────────────────
+##
+## Server mikrobları hər tick bir-birindən ayırır ([method Sim._separate_germs]).
+## Proqnoz əvvəl yalnız öz mikrobunu bilirdi: rəqibə sıxılanda o, serverdə
+## geri itələnirdi, proqnozda isə içindən keçirdi — hər snapshot mikrobu geri
+## dartırdı, nöqtə-nöqtə döyüşdə atəşin başlanğıcı 12–24 px fərqlənirdi və
+## ekranda dəyən top serverdə rəqibin kənarından keçirdi.
+##
+## İndi yaxın rəqiblər proqnozda KÖLGƏ kimi durur: son snapshot-dakı halları
+## ilə qurulur, sonra sürətlərini saxlayaraq irəli gedir (ölü hesab) və server
+## kimi itələnir. Onların öz qərarlarını bilmirik — yalnız RTT qədər irəli
+## təxmin edirik; növbəti snapshot kölgəni yenidən həqiqətə bağlayır.
+##
+## Kölgə çəkilmir — rəqiblər əvvəlki kimi interpolyasiya ilə görünür. Tor da
+## (ayaqlının superi) indi proqnozdadır: yaxın torun yavaşlatması serverlə eynidir.
+
+## Kölgə olmaq üçün məsafə: iki gövdənin kənarları arasında bu qədər piksel.
+## RTT boyu iki mikrob birlikdə ~120 px yaxınlaşa bilər; ehtiyatla 220.
+const PROXY_REACH := 220.0
+## Kölgənin superi snapshot-da "işləyir" deyirsə, proqnoz pəncərəsi boyu işləyir.
+## Qalan vaxtı göndərilmir; bir saniyə RTT-dən xeyli uzundur.
+const PROXY_SUPER := 1.0
+
+## Kölgələrin təxmini girişi: germ id -> [Sim.PlayerInput].
+var _proxy_inputs := {}
+
+
+## Proqnozun bir tick-lik girişi: öz girişin və kölgələrinki.
+func _pred_inputs(inp: Sim.PlayerInput) -> Dictionary:
+	var out := _proxy_inputs.duplicate()
+	out[my_id] = inp
+	return out
+
+
+## Kölgələri son snapshot-dan qurur (bax yuxarıdakı izah). [method _reconcile]
+## öz mikrobunu serverin halına qaytarandan SONRA çağırır.
+func _sync_proxies() -> void:
+	var keep := {}
+	if not _last_snap.is_empty():
+		var my_r := Const.germ_radius(me.capacity)
+		for row in _last_snap[Const.Snap.GERMS]:
+			var gid := int(row[Const.GF.ID])
+			if gid == my_id:
+				continue
+			var at := Vector2(float(row[Const.GF.X]), float(row[Const.GF.Y]))
+			var cap := int(row[Const.GF.CAP])
+			var flags := int(row[Const.GF.FLAGS])
+			var kind := Const.species_from(
+				(flags & Const.GFlag.SPECIES_MASK) >> Const.GFlag.SPECIES_SHIFT)
+			var super_on := (flags & Const.GFlag.SUPER) != 0
+			var r := Const.germ_radius(cap)
+			var reach := my_r + r + PROXY_REACH
+			if super_on and kind == Const.Species.HELIOZOAN:
+				reach = maxf(reach, my_r + r * Const.NET_RADIUS + PROXY_REACH)
+			if at.distance_squared_to(me.pos) > reach * reach:
+				continue
+			var g: Sim.GermState = pred.germs.get(gid)
+			if g == null:
+				g = Sim.GermState.new()
+				g.id = gid
+				pred.germs[gid] = g
+			g.pos = at
+			g.vel = Vector2(float(row[Const.GF.VX]), float(row[Const.GF.VY]))
+			g.aim = float(row[Const.GF.AIM])
+			g.balls = int(row[Const.GF.BALLS])
+			g.capacity = cap
+			g.species = kind
+			g.team = ((flags & Const.GFlag.TEAM_MASK) >> Const.GFlag.TEAM_SHIFT) - 1
+			g.super_t = PROXY_SUPER if super_on else 0.0
+			g.safe_t = 0.0
+			g.alive = true
+			keep[gid] = true
+			# Sürəti SAXLAYAN giriş: suya nisbi sürət hədəf sürətə bərabərdirsə,
+			# [method Sim._step_germs] onu dəyişmir; axın isə öz-özünə əlavə olunur.
+			_proxy_inputs[gid] = Sim.PlayerInput.make(0, g.vel / maxf(g.speed(), 1.0),
+				g.aim, false)
+	for gid in pred.germs.keys():
+		if gid != my_id and not keep.has(gid):
+			pred.germs.erase(gid)
+			_proxy_inputs.erase(gid)
 
 
 ## Oyun sənin üçün bitdi — ya partladın, ya da matçı SAĞ bitirdin.
@@ -1210,6 +1491,13 @@ func _on_rejoin_accepted(info: Dictionary) -> void:
 	# Proqnoz sıfırdan qurulur; ilk snapshot onu dərhal serverin sözünə çəkəcək.
 	pending.clear()
 	_snaps.clear()
+	_tick_base_set = false
+	# Köhnə sessiyanın topları yeni sessiyada təsdiqlənə bilməz: server id-ləri
+	# başqadır. Sprite-ları [method _render_ghosts] növbəti kadrda hovuza qaytarır.
+	_own_shots.clear()
+	_claims.clear()
+	_own_sids.clear()
+	_input_time.clear()
 	_init_prediction()
 	_hud.set_local_color(Palette.germ_color(my_color))
 	_hud.super_button.set_species(Net.species)
@@ -1255,12 +1543,15 @@ func _return_to_menu() -> void:
 func _render(delta: float) -> void:
 	var render_time := _clock - Const.INTERP_DELAY
 	_render_germs(render_time)
+	# Öz topların rəqiblər YERLƏŞƏNDƏN sonra addımlanır: proqnoz məhz bu
+	# kadrda ekranda görünən mövqelərə qarşı yoxlayır.
+	_step_own_shots(delta)
 	_render_shots(render_time)
 	_render_food(render_time)
 	_flush_fx(render_time)
 	_sweep_views()
 	_update_camera(delta)
-	_update_minimap()
+	_update_minimap(delta)
 	_apply_freeze()
 	_watch_capacity()
 	_watch_bush()
@@ -1287,6 +1578,10 @@ func _update_camera(delta: float) -> void:
 	# "nəfəs alan kamera" kimi oxunur və oyunçunu yorur.
 	_punch = move_toward(_punch, 0.0, delta * 0.75)
 	_cam.zoom = Vector2(k, k) * (1.0 + _punch)
+	# Görünən sahə zərbəsiz miqyasdan hesablanır: zərbə kadrı KİÇİLDİR, yəni
+	# bu düzbucaqlı həmişə ekranı tam örtür.
+	var half := vp / (2.0 * maxf(k, 0.001))
+	_view_rect = Rect2(_cam.position - half, half * 2.0)
 
 	# ---- donmuş kadr ----
 	# Kamera YERİNDƏ qalır — donmanın özü elə budur. Miqyas yuxarıda artıq
@@ -1515,14 +1810,19 @@ func _watch_visible_bush(gid: int, at: Vector2, radius: float) -> void:
 	_germ_bushes[gid] = now
 
 
-## Top rəqibin içinə keçdi — zərbənin görüntüsü.
+## Top rəqibin içinə keçdi — serverin HIT hadisəsindən.
 ##
-## Hadisədə ATANIN rəngi yazılır (bax [method Sim._inject]), vuruLANın rəngi
-## isə yazılmır — snapshot-da hər bayt sayılır. Ona görə qurban dəymə
-## nöqtəsinə ƏN YAXIN mikrobdur: nöqtə onun öz səthidir, başqa mikrob isə
-## o qədər yaxın dura bilmir (mikroblar bir-birindən radiusları qədər
-## aralanır).
-func _on_impact(at: Vector2, shooter_color: int) -> void:
+## Hadisədə atanın rəngi [code]color[/code]-dadır, qurbanınkı isə `arg`-dadır
+## (bax [method Const.hit_victim]) — ayrıca bayt getmir. Qurban bilinməsə
+## (köhnə server), dəymə nöqtəsinə ƏN YAXIN mikrob götürülür: nöqtə onun öz
+## səthidir. Amma sıx döyüşdə mikroblar üst-üstə minir və "ən yaxın" başqası
+## ola bilirdi — parıltı yanlış mikrobda yanırdı.
+func _on_impact(at: Vector2, shooter_color: int, victim_color := -1) -> void:
+	if victim_color >= 0:
+		var exact := _germ_by_color(victim_color)
+		if exact != null and exact.visible and not exact.burst:
+			_impact_on(exact, at, shooter_color, (exact.position - at).normalized())
+			return
 	var victim: GermVisual = null
 	var best := INF
 	for gid in _visuals:
@@ -1538,26 +1838,69 @@ func _on_impact(at: Vector2, shooter_color: int) -> void:
 	# vurulan hələ bizə göndərilmir.
 	if victim == null or best > 220.0:
 		return
+	_impact_on(victim, at, shooter_color, (victim.position - at).normalized())
+
+
+## Zərbənin görüntüsü — həm proqnozdan ([method _on_own_contact]), həm serverdən.
+##
+## [param incoming] topun gəliş oxudur. Serverin hadisəsində istiqamət yoxdur
+## və dəymə nöqtəsindən mərkəzə götürülür; proqnoz isə topun ƏSL uçuş oxunu
+## bilir — maili dəymədə fərq açıq görünür.
+##
+## Öz topunun zərbəsi [method _own_hit_feel] ilə gücləndirilir: atıcının
+## eşitdiyi təsdiq səsi, barmağa titrəmə, super halqasının dolması. Başqasının
+## atdığı top buna layiq deyil — ekranda 10 mikrob atəş açır.
+func _impact_on(victim: GermVisual, at: Vector2, shooter_color: int,
+		incoming: Vector2, predicted := false) -> void:
 	# Membran zərbə oxuna DİK genişlənir. Hadisədə ayrıca istiqamət baytı
 	# yoxdur və lazım da deyil: dəymə nöqtəsi artıq qurbanın səthindədir.
 	victim.flash((at - victim.position).angle())
-	# Topun gəliş oxu səth nöqtəsindən mərkəzə doğrudur. Sıçrantı və kamera
-	# eyni oxu paylaşır; radial effekt zərbənin hansı tərəfdən gəldiyini silirdi.
-	var incoming := (victim.position - at).normalized()
+	# Topun gəliş oxu. Sıçrantı və kamera eyni oxu paylaşır; radial effekt
+	# zərbənin hansı tərəfdən gəldiyini silirdi.
 	_juice.impact(at, incoming, Palette.germ_color(shooter_color))
 	if victim.color_index == my_color:
 		_add_shake(4.5, incoming)
 		# Zərbə ƏN vacib xəbərdir: səs qarışıqlıqda itə bilər, parıltı isə
 		# barmağın altında qala bilər. Titrəmə hər ikisindən keçir.
 		Settings.vibrate(22)
+	var gained := victim.balls + Const.SHOT_PAYLOAD
+	var mine := shooter_color == my_color
+	if mine:
+		_own_hit_feel(victim, gained, predicted)
 	# Rəqəm dəymə nöqtəsində yox, QURBANIN ADINDAN yuxarıda doğulur.
 	#
 	# Dəymə nöqtəsi mikrobun üst kənarına düşəndə rəqəm tam adın sətrinə otururdu
 	# və "Mik+2ob" kimi oxunurdu. Ad mikrobun mərkəzindən sabit məsafədədir,
 	# ona görə etibarlı yer odur — dəymə isə gövdənin istənilən yerində olur.
 	var above := victim.position - Vector2(0.0, Const.germ_radius(victim.capacity) + 74.0)
-	_pop_text(Vector2(at.x, minf(at.y, above.y)), "+%d" % Const.SHOT_PAYLOAD,
-		Palette.germ_color(victim.color_index), 26)
+	# Öz zərbəndə rəqəm partlamaya nə qədər qaldığını da deyir: bir zərbəlik
+	# yer qalıbsa QIRMIZI və iri — "növbəti top onu partladır".
+	var color := Palette.germ_color(victim.color_index)
+	var size := 26
+	if mine and gained + Const.SHOT_PAYLOAD > victim.capacity:
+		color = Palette.DANGER
+		size = 32
+	_pop_text(Vector2(at.x, minf(at.y, above.y)), "+%d" % Const.SHOT_PAYLOAD, color, size)
+
+
+## Atıcının öz zərbəsini hiss etməsi — Brawl Stars-ın "vurdum" təsdiqi.
+##
+## Parıltı və sıçrantı hamı üçündür; bunlar isə YALNIZ atana:
+##   • `hit_confirm` — `hit`-dən ayrı, yüksək zolaqda qısa "pop". Tonu qurbanın
+##     doluluğu ilə QALXIR: qulaq rəqibin partlamağa yaxınlaşdığını eşidir.
+##   • qısa titrəmə (15 ms) — qurbanın titrəməsindən (22 ms) yüngül;
+##   • +2 top qurbanda, +3 super halqasında DƏRHAL — serveri gözləmədən.
+##
+## Super vədi YALNIZ proqnozdadır: serverin hadisəsi ilə gələn dəymədə doluluq
+## eyni snapshot-la artıq gəlib ([method _reconcile]) və vəd onu ikiqat sayardı.
+func _own_hit_feel(victim: GermVisual, gained: int, predicted: bool) -> void:
+	var fill := float(gained) / float(maxi(victim.capacity, 1))
+	Sfx.play_pitched("hit_confirm", 1.0 + 0.30 * clampf((fill - 0.3) / 0.7, 0.0, 1.0))
+	Settings.vibrate(15)
+	victim.promise_balls(gained, PROMISE_HOLD)
+	if predicted:
+		_promise_charge(Const.SUPER_ON_HIT)
+	_my_victims[victim.color_index] = _clock
 
 
 ## Uçan rəqəm — hadisənin ÖZ YERİNDƏ yazılır.
@@ -1600,7 +1943,279 @@ func _pop_text(at: Vector2, text: String, color: Color, size: int) -> void:
 	tw.chain().tween_callback(label.queue_free)
 
 
-func _update_minimap() -> void:
+## Rəqibin forması neçə kadrdan bir çəkilir — hədəf saniyədə ~30 forma.
+##
+## YÜKSƏK-də hər kadr. Yüngül səviyyələrdə 60 kadrda iki kadrdan bir;
+## MİNİMUM-un 30 kadr həddində isə hər kadr (yenə saniyədə 30).
+func _remote_redraw_step() -> int:
+	if not Const.is_light(int(Net.quality)):
+		return 1
+	var fps := Engine.max_fps if Engine.max_fps > 0 else 60
+	return maxi(1, int(round(float(fps) / 30.0)))
+
+
+## ── Avtomatik keyfiyyət ──────────────────────────────────────────────────
+##
+## Telefonun gücünü əvvəlcədən bilmək olmur: brauzer GPU-nun adını həmişə
+## vermir, eyni çip isə qızanda iki dəfə yavaşlayır. Ona görə kadr vaxtı
+## OYUNUN İÇİNDƏ ölçülür: arena açılandan [constant PERF_WARMUP] saniyə sonra
+## (yükləmə sıçrayışları sayılmır) hər [constant PERF_WINDOW] saniyədə median
+## və 90-cı faiz yoxlanır. Kadrlar büdcəni ardıcıl aşırsa, keyfiyyət bir pillə
+## endirilir (YÜKSƏK → AŞAĞI → MİNİMUM) və cihaz üçün yadda saxlanılır
+## ([member Settings.auto_quality]) — növbəti açılış elə oradan başlayır.
+##
+## Oyunçu keyfiyyəti AYARLAR-da özü seçibsə, tənzimləyici toxunmur.
+const PERF_WARMUP := 4.0
+const PERF_WINDOW := 5.0
+var _perf_wait := PERF_WARMUP
+var _perf_frames := PackedFloat32Array()
+var _perf_time := 0.0
+
+
+func _watch_performance(delta: float) -> void:
+	if Settings.quality_chosen or Net.quality == Const.Quality.MINIMUM or _finished:
+		return
+	if _perf_wait > 0.0:
+		_perf_wait -= delta
+		return
+	_perf_frames.append(delta)
+	_perf_time += delta
+	if _perf_time < PERF_WINDOW:
+		return
+	var slow := too_slow(_perf_frames, Engine.max_fps)
+	_perf_frames.clear()
+	_perf_time = 0.0
+	if not slow:
+		return
+	var next := Const.Quality.MINIMUM if Net.quality == Const.Quality.LOW else Const.Quality.LOW
+	Net.quality = next
+	Settings.auto_quality = int(next)
+	# Yeni səviyyə öz kətan həddindən başlayır (bax [method _watch_resolution]).
+	Settings.auto_dpr = 0.0
+	Settings.commit()
+	_hud.flash_hint("QRAFİKA AVTOMATİK: %s" % Const.quality_name(int(next)))
+	print("[perf] kadrlar büdcəni aşır — keyfiyyət avtomatik: %s" % Const.quality_name(int(next)))
+	_perf_wait = PERF_WARMUP
+	_res_wait = RES_WARMUP
+
+
+## Kadrlar büdcəni ARDICIL aşırmı: median büdcədən 35% uzun və ya hər onuncu
+## kadr iki qat uzun. Tək-tük sıçrayış (şəbəkə, zibil yığımı) sayılmır.
+## Büdcə kadr həddindən çıxır; hədd yoxdursa 60 kadr götürülür.
+static func too_slow(frames: PackedFloat32Array, fps_cap: int) -> bool:
+	if frames.size() < 20:
+		return false
+	var budget := _frame_budget(fps_cap)
+	var sorted := frames.duplicate()
+	sorted.sort()
+	var median := sorted[sorted.size() / 2]
+	var p90 := sorted[mini(int(float(sorted.size()) * 0.9), sorted.size() - 1)]
+	return median > budget * 1.35 or p90 > budget * 2.0
+
+
+static func _frame_budget(fps_cap: int) -> float:
+	return maxf(1.0 / float(fps_cap if fps_cap > 0 else 60), 1.0 / 60.0)
+
+
+## ── Dinamik kətan sıxlığı (brauzer) ─────────────────────────────────────
+##
+## Keyfiyyət səviyyəsi birinci addımdır ([method _watch_performance]); bu isə
+## onun altında işləyən ikincidir. MİNİMUM-da (və ya oyunçu səviyyəni özü
+## seçibsə) kadr [constant RES_FPS] kadrın büdcəsini aşırsa və yük GPU-dadırsa —
+## kadrın CPU işi kadrın özündən xeyli qısadır — kətanın sıxlığı
+## [constant RES_DOWN] qədər kiçilir, [constant Settings.WEB_FLOOR_DPR]-a qədər.
+## Kadrlar bir müddət rahat gedirsə, geri böyüyür (bax [method resolution_step]).
+## Öyrənilən sıxlıq yadda qalır ([member Settings.auto_dpr]).
+##
+## Büdcə kadr həddindən asılı olmayaraq 30 kadrdır: tənzimləyicinin işi zəif
+## GPU-da oyunu OYNANAN saxlamaqdır, 60 kadr xatirinə şəkli bulandırmaq yox.
+## Enerjiyə qənaət rejimində brauzer kadrı özü 30-a kəsir — büdcə 60 olsaydı,
+## sıxlıq boş yerə dibə enərdi.
+##
+## Niyə lazımdır: zəif GPU-nun yükü SwiftShader modelində ölçülüb, real
+## Mali/Adreno-nun millisaniyəsi isə başqa olacaq. Sabit sıxlıq bir telefonda
+## hələ yavaş, başqasında lazımsız bulanıq qalardı. Burada sıxlıq HƏMİN
+## telefonun öz kadrlarından öyrənilir — GPU nə qədər zəif olsa da, kadr
+## büdcəsi tutulur (bax README, «Zəif GPU — dinamik sıxlıq»).
+const RES_FPS := 30
+const RES_WARMUP := 4.0
+const RES_WINDOW := 3.0
+const RES_DOWN := 0.85
+const RES_UP := 1.12
+## Sıxlıq geri böyüməzdən əvvəl ardıcıl neçə rahat pəncərə.
+const RES_CALM := 4
+## Ölçülən kadr statistikası konsola bu qədər saniyədən bir yazılır — real
+## telefonda (uzaqdan sazlama ilə) elə bundan oxunur.
+const RES_REPORT := 30.0
+var _res_wait := RES_WARMUP
+var _res_frames := PackedFloat32Array()
+var _res_cpu := PackedFloat32Array()
+var _res_time := 0.0
+## Tənzimləyicinin yaddaşı (bax [method resolution_step]); səviyyə dəyişəndə sıfırlanır.
+var _res_state := {}
+var _res_tier := -1
+var _res_report := RES_REPORT
+var _res_measured := false
+## Son pəncərənin ölçüsü: `[kadr p50, kadr p90, CPU işi p50, orta kadr]` (ms) — konsol sətri.
+var res_stats := Vector4.ZERO
+
+
+func _watch_resolution(delta: float) -> void:
+	if not OS.has_feature("web") or _finished:
+		return
+	if not _res_measured:
+		# Çəkilişin CPU hissəsi (əmrlərin GPU-ya verilməsi) — `_process` onu saymır.
+		RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
+		_res_measured = true
+	if int(Net.quality) != _res_tier:
+		_res_tier = int(Net.quality)
+		_res_state = {}
+	if _res_wait > 0.0:
+		_res_wait -= delta
+		return
+	_res_frames.append(delta)
+	_res_cpu.append(_frame_cpu())
+	_res_time += delta
+	_res_report -= delta
+	if _res_time < RES_WINDOW:
+		return
+	var budget := maxf(_frame_budget(Engine.max_fps), 1.0 / float(RES_FPS))
+	var verdict := resolution_verdict(_res_frames, _res_cpu, budget)
+	res_stats = frame_stats(_res_frames, _res_cpu)
+	_res_frames.clear()
+	_res_cpu.clear()
+	_res_time = 0.0
+	# Kətan ekranın öz sıxlığından sıx olmur — tənzimləyici HƏQİQİ sıxlıqla işləyir.
+	var device := Settings.device_dpr()
+	var dpr := minf(Settings.web_dpr(), device)
+	# Səviyyəni endirmək hələ mümkündürsə, birinci o işləyir.
+	var may_shrink := Settings.quality_chosen or Net.quality == Const.Quality.MINIMUM
+	var next := resolution_step(dpr, verdict, res_stats.w, may_shrink,
+		minf(Settings.tier_dpr(int(Net.quality)), device), _res_state)
+	if _res_report <= 0.0:
+		_res_report = RES_REPORT
+		print(perf_line(dpr))
+	if absf(next - dpr) < 0.001:
+		return
+	Settings.auto_dpr = next
+	Settings.commit()
+	print("[perf] kətan sıxlığı %.2f → %.2f (%s)" % [dpr, next, perf_line(dpr)])
+	_res_wait = RES_WINDOW
+
+
+## Kadrın CPU işi (saniyə): oyun məntiqi, fizika və çəkilişin CPU hissəsi.
+func _frame_cpu() -> float:
+	var rid := get_viewport().get_viewport_rid()
+	return Performance.get_monitor(Performance.TIME_PROCESS) \
+		+ Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) \
+		+ (RenderingServer.viewport_get_measured_render_time_cpu(rid)
+			+ RenderingServer.get_frame_setup_time_cpu()) / 1000.0
+
+
+## Bir pəncərədən sonra yeni kətan sıxlığı. [param mean] — pəncərənin orta
+## kadrı, [param state] — tənzimləyicinin sessiya yaddaşı.
+##
+## Yavaşdırsa [constant RES_DOWN] qədər kiçilir və həmin sıxlıq bu sessiyanın
+## TAVANI olur. [constant RES_CALM] pəncərə ardıcıl rahatdırsa [constant RES_UP]
+## qədər böyüyür — tavandan və səviyyənin öz həddindən ([param cap]) yuxarı yox.
+## Böyümə kadrı yavaşladırsa, əvvəlki (rahat) sıxlığa qayıdır və o, tavan olur:
+## sıxlıq bir dəfə sınayır, sonra yerində qalır, titrəmir.
+##
+## Kiçiltmə İKİ addımda (piksel ~48% az) orta kadrı qısaltmayıbsa, yük pikseldə
+## deyil (CPU-nun ölçülməyən işi, brauzerin kadr kəsməsi): sıxlıq başlanğıca
+## qaytarılır və bu sessiyada daha kiçilmir — oyun boş yerə bulanıq qalmasın.
+static func resolution_step(dpr: float, verdict: int, mean: float, may_shrink: bool,
+		cap: float, state: Dictionary) -> float:
+	var grew_from := float(state.get("grew_from", 0.0))
+	state.erase("grew_from")
+	if verdict < 0 and may_shrink and not bool(state.get("futile", false)):
+		state["calm"] = 0
+		if grew_from > 0.0:
+			state["ceiling"] = grew_from
+			return grew_from
+		var steps := int(state.get("steps", 0))
+		if steps == 0:
+			state["from"] = dpr
+			state["from_mean"] = mean
+		elif steps >= 2 and mean >= float(state["from_mean"]) * 0.97:
+			state["futile"] = true
+			state["ceiling"] = float(state["from"])
+			return float(state["from"])
+		state["steps"] = steps + 1
+		state["ceiling"] = minf(float(state.get("ceiling", INF)), dpr * 0.999)
+		return maxf(minf(Settings.WEB_FLOOR_DPR, dpr), dpr * RES_DOWN)
+	if verdict > 0:
+		state["steps"] = 0
+		state["calm"] = int(state.get("calm", 0)) + 1
+		var top := minf(cap, float(state.get("ceiling", INF)))
+		if int(state["calm"]) >= RES_CALM and dpr < top - 0.001:
+			state["calm"] = 0
+			state["grew_from"] = dpr
+			return minf(top, dpr * RES_UP)
+		return dpr
+	state["calm"] = 0
+	return dpr
+
+
+## Pəncərənin hökmü: -1 = yük GPU-dadır, piksel azalmalıdır; +1 = rahatdır,
+## piksel artırıla bilər; 0 = heç nə (CPU yüklüdür və ya sərhəddədir).
+##
+## Kadr həddi olanda rahat oyun da büdcə qədər kadr göstərir, ona görə "rahat"
+## kadrın büdcədən çox uzun olmamasıdır. Kadrın CPU işi kadrın özünün 70%-dən
+## çoxdursa, gecikmə piksel sayından deyil — sıxlıq dəyişmir. GPU brauzerdə
+## CPU-dan AYRI işləyir: kadr CPU-nun işindən xeyli uzundursa, qalan vaxt
+## GPU-nu gözləməkdir. Kadrların onda biri büdcəni 35% aşırsa da yavaşdır (60 Hz
+## ekranda 30 kadr ya 33, ya 50 ms çəkir — hər onuncu 50 ms titrəmə deməkdir);
+## tək-tük sıçrayış (şəbəkə, şeyder yüklənməsi) isə sayılmır.
+static func resolution_verdict(frames: PackedFloat32Array, cpu: PackedFloat32Array,
+		budget: float) -> int:
+	if frames.size() < 20:
+		return 0
+	var st := frame_stats(frames, cpu)
+	var p50 := st.x / 1000.0
+	var p90 := st.y / 1000.0
+	if p50 > budget * 1.1 or p90 > budget * 1.35:
+		return -1 if st.z / 1000.0 < p50 * 0.7 else 0
+	if p50 <= budget * 1.04 and p90 <= budget * 1.2:
+		return 1
+	return 0
+
+
+## `[kadr p50, kadr p90, CPU işi p50, orta kadr]`, millisaniyə ilə.
+static func frame_stats(frames: PackedFloat32Array, cpu: PackedFloat32Array) -> Vector4:
+	if frames.is_empty():
+		return Vector4.ZERO
+	var f := frames.duplicate()
+	f.sort()
+	var c := cpu.duplicate()
+	c.sort()
+	var n := f.size()
+	var total := 0.0
+	for x in f:
+		total += x
+	return Vector4(f[n / 2], f[mini(int(float(n) * 0.9), n - 1)],
+		c[c.size() / 2] if not c.is_empty() else 0.0, total / float(n)) * 1000.0
+
+
+## Real cihazın ölçüsü bir sətirdə — konsola yazılır (uzaqdan sazlama ilə oxunur).
+func perf_line(dpr: float) -> String:
+	return "[perf] %s · kətan %.2f · kadr p50 %.1f / p90 %.1f ms (orta %.0f FPS) · CPU %.1f ms · hədd %d FPS · GPU %s" % [
+		Const.quality_name(int(Net.quality)), dpr, res_stats.x, res_stats.y,
+		1000.0 / maxf(res_stats.w, 0.001), res_stats.z, Engine.max_fps, Const.gpu_label()]
+
+
+## Minixəritə saniyədə [constant MINIMAP_HZ] dəfə yenilənir, hər kadr yox.
+##
+## Əvvəl hər kadr çağırılırdı və hər dəfə 26 maneəni də təzədən çəkirdi:
+## brauzerdə (4× yavaş CPU) kadr başına ~2.8 ms — oyunun ən böyük xərclərindən
+## biri, halbuki xəritədə nöqtə kadrda bir pikseldən az yerini dəyişir. İndi
+## maneələr ayrı qatdadır (bax [member Minimap._dots_layer]) və burada yalnız
+## nöqtələr yenilənir.
+func _update_minimap(delta: float) -> void:
+	_minimap_wait -= delta
+	if _minimap_wait > 0.0:
+		return
+	_minimap_wait = 1.0 / (MINIMAP_HZ * (0.5 if Net.quality == Const.Quality.MINIMUM else 1.0))
 	var dots := []
 	for gid in _visuals:
 		var v: GermVisual = _visuals[gid]["node"]
@@ -1623,6 +2238,9 @@ func _render_germs(render_time: float) -> void:
 	var mine := _ensure_germ(my_id, Net.nickname, my_color, Net.species)
 	mine.apply(_shown_pos(), _shown_aim(), me.balls, me.capacity, me.safe_t > 0.0, true,
 		me.super_t > 0.0)
+	# Öz toqquşma ellipsin proqnozun sürətindən qurulur — rəqibin topu sənə
+	# məhz bu ellipslə "dəyir" (bax [method _remote_shot_pos]), gövdə də onun içində qalır.
+	mine.net_vel = me.vel
 	# Aura yalnız HƏQİQƏTƏN işlədilə bilən superdə yanır: doluluq tamdır, amma
 	# top çatmırsa (kirpikli), düymə kimi aura da susur.
 	mine.super_ready = me.super_ready()
@@ -1657,10 +2275,24 @@ func _render_germs(render_time: float) -> void:
 		var pos := Vector2(float(o[Const.GF.X]), float(o[Const.GF.Y])).lerp(
 			Vector2(float(n[Const.GF.X]), float(n[Const.GF.Y])), alpha)
 		var aim := lerp_angle(float(o[Const.GF.AIM]), float(n[Const.GF.AIM]), alpha)
+		v.net_vel = Vector2(float(o[Const.GF.VX]), float(o[Const.GF.VY])).lerp(
+			Vector2(float(n[Const.GF.VX]), float(n[Const.GF.VY])), alpha)
 		var flags := int(n[Const.GF.FLAGS])
 		v.apply(pos, aim, int(n[Const.GF.BALLS]), int(n[Const.GF.CAP]),
 			(flags & Const.GFlag.SAFE) != 0, true,
 			(flags & Const.GFlag.SUPER) != 0)
+		# Kənar ehtiyatı gövdədən çıxan hər şeyi örtür: ayaqlar (1.75 r) və hazır
+		# ultinin aurası (1.25 × halo). Ən geniş şey — ayaqlının toru (4 r) — yalnız
+		# super açıq olanda var və ehtiyat yalnız onda böyüyür: həmişə 4 r götürəndə
+		# ekrandan kənardakı mikrobların çoxu "görünən" sayılırdı. Kamera
+		# düzbucaqlısı əvvəlki kadrdandır, onun bir kadrlıq sürüşməsi də içindədir.
+		var r := Const.germ_radius(int(n[Const.GF.CAP]))
+		var reach := r * (Const.NET_RADIUS + 0.5) if (flags & Const.GFlag.SUPER) != 0 \
+			and kind == Const.Species.HELIOZOAN else r * 2.2
+		v.on_screen = _view_rect.grow(reach + 40.0).has_point(pos)
+		# AŞAĞI keyfiyyətdə rəqibin FORMASI saniyədə 30 dəfə yenilənir (bax
+		# [member GermVisual.redraw_step]); öz mikrobun həmişə hər kadr.
+		v.redraw_step = _remote_redraw_step()
 		_watch_visible_bush(gid, pos, Const.germ_radius(int(n[Const.GF.CAP])))
 		# RƏQİBİN ultisi hazırdırmı? Doluluq bayraqda onsuz da gəlirdi
 		# ([enum Const.GFlag]), amma indiyə qədər heç yerdə göstərilmirdi.
@@ -1679,6 +2311,10 @@ func _ensure_germ(gid: int, germ_name: String, color: int,
 		return entry["node"]
 	var v := GermVisual.new()
 	v.setup(color, germ_name, gid == my_id, species)
+	v.lod = 1 if Net.quality == Const.Quality.MINIMUM else 0
+	# Gövdə toqquşma ellipsindən bayıra çıxmasın: mərkəzi gövdədən keçən top
+	# həmişə dəyməlidir (bax [method GermVisual._fit_hit]).
+	v.hit_fit = true
 	# "Blunk" atəş anında yox, topun membranı YARDIĞI anda çalınır. Gecikmə
 	# mikrobun ölçüsündən asılıdır, ona görə vaxtı görüntü node-u özü bilir.
 	v.broke_through.connect(_on_broke_through)
@@ -1748,18 +2384,14 @@ static func _index_germs(snap: Array) -> Dictionary:
 ## çəkilir, ÖZ mikrobun isə proqnozdan — yəni İNDİ. Top da rəqiblərlə eyni
 ## gecikməyə salınsaydı (və salınırdı), öz atdığın top mikrobunun 100 ms
 ## əvvəlki yerində doğulardı: sürəti 420 px/s olduğuna görə bu, 42 piksel,
-## yəni mikrobun radiusundan (28 px) BÖYÜK bir məsafədir. Şəbəkə gecikməsi
-## də üstünə gəlir.
+## yəni mikrobun radiusundan (28 px) BÖYÜK bir məsafədir.
 ##
-## Nəticə gözlə belə görünürdü: top mikrobun ARXASINDA peyda olur, gövdənin
-## içindən keçir və qabaqdan çıxır — sanki kənardan atılıb. Halbuki oyunun
-## qaydası budur ki, mikrob ÖZ İÇİNDƏKİ topu atır (bax README, "Oyunun
-## qaydası"), və [method Sim._fire] onu düz mərkəzdə doğurur.
-##
-## Ona görə öz topun serverin sözünü GÖZLƏMİR: atəş açılan andakı doğuş
-## nöqtəsindən uçur (bax [method _remember_muzzle]) — pinq nə olursa olsun
-## mərkəzdən başlayır və membranı yararaq çıxır. Sıçrayan kimi serverin
-## xəttinə qaytarılır: sıçrayışı proqnoz bilmir, onu yalnız server deyir.
+## Ona görə öz topunu serverin topu ÇƏKMİR — onu [ShotPrediction] çəkir:
+## atəş anında mikrobun mərkəzindən çıxır, divardan özü sıçrayır və ekranda
+## gördüyün rəqibə dəyən kimi zərbə elə o kadrda göstərilir (bax
+## [method _step_own_shots]). Serverin öz topu gələndə proqnozla birləşir və
+## gizli qalır; yalnız proqnozun heç tanımadığı top (bir-birinə uyğun gəlməyən
+## atəş) köhnə yolla çəkilir.
 ##
 ## Qalan hər şey (rəqib topları, qida) gecikməli xəttdə qalır — onların
 ## sahibi də oradadır.
@@ -1767,90 +2399,824 @@ static func _index_germs(snap: Array) -> Dictionary:
 ## Sahib RƏNGDƏN tanınır: bir dünyada iki eyni rəngli mikrob olmur
 ## ([method World._free_color]), ona görə snapshot-a sahib sahəsi əlavə
 ## etməyə ehtiyac yoxdur — eyni üsul [method _explode]-da da işlənir.
+## ── Zaman xətti ─────────────────────────────────────────────────────────
+## Topun mövqeyi snapshot-un GƏLDİYİ ana bağlanır, mikroblar kimi
+## ([method _bracket]). Əvvəl `t` hər kadr `_clock` yazılırdı: top iki snapshot
+## arasında yerində durur, 30 Hz-lə pillə-pillə gedirdi və mikrobdan 0–33 ms
+## (jitter-lə daha çox) GERİDƏ çəkilirdi. Ölçülüb — rəqib artıq parlayırdı,
+## top isə ona hələ 15–30 ms sonra çatırdı: gözə "içindən keçdi" görünürdü.
 func _render_shots(render_time: float) -> void:
-	if _last_snap.is_empty():
-		return
-	for e in _last_snap[Const.Snap.SHOTS]:
-		var sid := int(e[Const.SF.ID])
-		var view: Dictionary = _shot_views.get(sid, {})
-		if view.is_empty():
-			var spr := _take(_shot_pool, _shot_layer)
-			spr.texture = _tex["shot"]
-			spr.modulate = Palette.germ_color(int(e[Const.SF.COLOR]))
-			var mine := int(e[Const.SF.COLOR]) == my_color
-			view = {"node": spr, "mine": mine}
-			if mine:
-				var muzzle := _claim_muzzle(
-					Vector2(float(e[Const.SF.DX]), float(e[Const.SF.DY])))
-				if not muzzle.is_empty():
-					view["muzzle"] = muzzle
-			_shot_views[sid] = view
-		view["base"] = Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
-		view["dir"] = Vector2(float(e[Const.SF.DX]), float(e[Const.SF.DY]))
-		view["t"] = _clock
-		view["seen"] = _clock
+	if not _last_snap.is_empty() and _last_snap_t > _shots_synced_t:
+		_shots_synced_t = _last_snap_t
+		for e in _last_snap[Const.Snap.SHOTS]:
+			var sid := int(e[Const.SF.ID])
+			var color := int(e[Const.SF.COLOR])
+			var dir := Vector2(float(e[Const.SF.DX]), float(e[Const.SF.DY]))
+			var view: Dictionary = _shot_views.get(sid, {})
+			if view.is_empty():
+				var ghost: ShotPrediction.Ghost = null
+				if color == my_color and not _own_sids.has(sid):
+					ghost = _own_shots.claim(sid, dir, _clock,
+						Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y])))
+					if ghost != null:
+						_own_sids[sid] = _clock
+						# Proqnozun xətti serverinkindən nə qədər YANA sürüşüb (test ölçüsü).
+						if ghost.first_dir.dot(dir) > 0.99:
+							var srv := Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
+							var off := absf((ghost.pos - srv).cross(dir.normalized()))
+							hit_stats["lines"] += 1
+							hit_stats["line_off_sum"] += off
+							hit_stats["line_off_max"] = maxf(float(hit_stats["line_off_max"]), off)
+				if ghost != null or _own_sids.has(sid):
+					# Görüntünü proqnoz daşıyır. Sprite-sız görüntü yenə saxlanılır:
+					# yoxsa növbəti snapshot eyni topu yenidən "yeni" sayıb çəkərdi.
+					view = {"node": null, "ghost": ghost}
+				else:
+					var spr := _take(_shot_pool, _shot_layer)
+					spr.texture = _tex["shot"]
+					spr.modulate = Palette.germ_color(color)
+					view = {"node": spr, "mine": color == my_color, "color": color}
+				_shot_views[sid] = view
+			view["seen"] = _clock
+			view["base"] = Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
+			view["dir"] = dir
+			# Mikroblarla eyni tick saatı (bax [member _tick_base]).
+			view["t"] = _last_snap_tt
+			# Server topu `life`-ın sıfıra çatdığı tick-də HƏRƏKƏTSİZ silir: qalan uçuş
+			# `life − 1 tick`-dir (bax [method ShotPrediction._sim_tick]).
+			view["dies"] = _last_snap_tt + maxf(float(e[Const.SF.LIFE]) - Const.TICK_DELTA, 0.0)
+			view["rewind"] = float(e[Const.SF.REWIND])
 
 	for sid in _shot_views:
 		var view: Dictionary = _shot_views[sid]
 		var spr: Sprite2D = view["node"]
-		var dir: Vector2 = view["dir"]
-
-		var muzzle: Dictionary = view.get("muzzle", {})
-		if not muzzle.is_empty():
-			if Vector2(muzzle["dir"]).dot(dir) > 0.995:
-				spr.position = Vector2(muzzle["pos"]) \
-					+ dir * Const.SHOT_SPEED * (_clock - float(muzzle["t"]))
-				continue
-			# İstiqamət dəyişdi — top divardan sıçradı. Proqnozun sözü bitdi.
-			view.erase("muzzle")
-
+		if spr == null:
+			continue
+		if bool(view.get("absorbed", false)):
+			continue
+		if not view.get("mine", false):
+			spr.position = _remote_shot_pos(sid, view, spr, render_time)
+			continue
 		var at: float = _clock if view.get("mine", false) else render_time
-		spr.position = Vector2(view["base"]) + dir * Const.SHOT_SPEED * (at - float(view["t"]))
+		spr.position = Vector2(view["base"]) \
+			+ Vector2(view["dir"]) * Const.SHOT_SPEED * (at - float(view["t"]))
 
-	# İzlər mövqelər oturandan SONRA yığılır. Yuxarıdakı dövrədə iki ayrı yol
-	# var — öz topun proqnozdan, rəqibinki gecikməli xəttdən — və hər ikisi
-	# eyni izə düşməlidir.
+	# İzlər mövqelər oturandan SONRA yığılır. İki ayrı yol var — öz topun
+	# proqnozdan, rəqibinki gecikməli xəttdən — və hər ikisi eyni izə düşür.
 	for tid in _shot_views:
 		var node: Sprite2D = _shot_views[tid]["node"]
-		_trails.push(tid, node.position, node.modulate)
+		if node != null and not bool(_shot_views[tid].get("absorbed", false)):
+			_trails.push(tid, node.position, node.modulate)
+	_render_ghosts()
 	_trails.queue_redraw()
 
 
-## Öz atəşinin doğuş nöqtəsini yadda saxlayır — top serverdən gələnə qədər.
+## Yad topun ekrandakı yeri — sənə yaxınlaşdıqca SƏNİN zaman xəttinə keçir.
+##
+## ── Niyə ─────────────────────────────────────────────────────────────────
+## Rəqibin topu interpolyasiya ilə keçmişdə (100 ms + RTT) çəkilir, öz mikrobun
+## isə proqnozla İNDİ. Top ekranda sənə çatanda server səni artıq başqa yerdə
+## görür: ölçülüb — rəqib toplarının ~18%-i gövdənin içindən zərbəsiz keçirdi.
+##
+## Botun topu düz xətlə sabit sürətlə uçur, yəni onu İNDİYƏ çəkmək dəqiqdir:
+## serverdə top `t` anında haradadırsa, sənin mikrobun həmin `t`-də ekrandakı
+## yerindədir (girişin serverə RTT/2 sonra çatır). Uzaqda top keçmişdə qalır —
+## atanın yanından çıxmalıdır; sənə [constant SELF_NEAR] px qalanda tam indidədir.
+## Keçid bir istiqamətlidir: qaçanda top geri sürüşmür.
+##
+## Yalnız SƏNƏ tərəf uçan top köçürülür ([method _aimed_at_me]). Yanından
+## keçən top başqasına gedir və o başqası keçmişdə çəkilir: köçürülsəydi,
+## hədəfindən irəli qaçıb onun içindən keçərdi. Ölçülüb — köçürülən toplar
+## üçüncü mikrobların içindən zərbəsiz keçirdi.
+##
+## Sənə dəyəndə top DAYANIR və zərbə dərhal göstərilir. Server eyni anı yoxlayır
+## — botun geri sarması yoxdur ([member Sim.lag_comp] yalnız insana aiddir).
+## İnsanın topu keçmişdə qalır: server onu atıcının gördüyü keçmişə qarşı
+## yoxlayır və burada proqnoz yanılardı.
+##
+## ── İnsanın topu ────────────────────────────────────────────────────────
+## Server insanın topunu qurbanın `rewind` saniyə ƏVVƏLKİ yerinə qarşı yoxlayır
+## (atanın gördüyü an — bax [member Sim.lag_comp]). Ona görə top hər yerdə
+## hədəflərindən `rewind` qədər QABAQDA çəkilir: keçmişdə çəkilən mikrobların
+## yanında da, sənin indiki mikrobunun yanında da. Onda ekrandakı toxunuş
+## serverin qərarı ilə eyni anda olur. Əvvəl insanın topu bot kimi sayılırdı
+## (id-dən), sonra isə keçmişdə qalırdı — hər iki halda səndən zərbəsiz keçirdi.
+## Botun topunda `rewind` 0-dır.
+func _remote_shot_pos(sid: int, view: Dictionary, spr: Sprite2D, render_time: float) -> Vector2:
+	var base: Vector2 = view["base"]
+	var dir: Vector2 = view["dir"]
+	var t := float(view["t"])
+	var lead := float(view.get("rewind", 0.0))
+	var ahead := minf(render_time + lead, float(view.get("dies", INF))) - t
+	var past := base + dir * Const.SHOT_SPEED * ahead
+	# Son snapshot-dan İRƏLİ çəkilən top divardan keçməməlidir; geridəki yolu isə
+	# top özü keçib gəlib, yoxlamağa ehtiyac yoxdur (26 maneə, hər kadr, hər top).
+	if ahead > 0.0:
+		past = _clip_to_walls(base, past)
+	# Top server ömrü bitəndə silinir. İndiyə çəkilən top ondan o yana getməməlidir:
+	# ölçülüb — bir neçə yalançı "sənə dəydi" topun ömrünün son anına düşürdü.
+	var dies := float(view.get("dies", INF))
+	if render_time + lead >= dies:
+		# Keçmişdə də ömrü bitib: serverdə top həmin tick-də qidaya çevrilir, qida
+		# da snapshot ilə elə o yerdə görünür. Top ölü yerində donub qalmamalıdır —
+		# qalanda yanından keçən mikrob onun "içindən keçirdi" (probe belə tutub).
+		spr.visible = false
+		return past
+	var present := base + dir * Const.SHOT_SPEED * (minf(_clock + _rtt + lead, dies) - t)
+	# Öz trixosistin topu məhz bu yerdə yoxlayır (bax [method _pop_remote_shots]).
+	var present_prev: Vector2 = view.get("present", present)
+	view["present"] = present
+	var me_at := _shown_pos()
+	var near := Const.germ_radius(me.capacity) + SELF_NEAR
+	var col := int(view.get("color", -1))
+	var drawn: Vector2 = view.get("shown", past)
+	var k := 0.0
+	# Top sənin zaman xəttinə İSTƏNİLƏN xəttdə sənə tərəf gedəndə keçir: indiki
+	# yeri sənə yaxınlaşanda (sənə dəyəcək), və ya ekrandakı surəti hələ sənə
+	# çatmayanda. İkincisi nöqtə-nöqtə atəşdir: sən topla eyni tərəfə gedirsən,
+	# sənin xəttində top artıq yanından keçib (serverdə dəymir), keçmişdə çəkilən
+	# surəti isə hələ arxandadır — orada qalsa gövdəndən keçib gedərdi. Ölçülüb:
+	# yalnız indiki yerə baxanda belə top ekranda səndən keçirdi.
+	#
+	# Aradakı mikrob topu SƏNDƏN əvvəl tuta bilər — o keçmişdə çəkilir və
+	# irəli çəkilən top onun içindən keçərdi.
+	if (_aimed_at_me(present, dir, me_at) or _aimed_at_me(drawn, dir, me_at)) \
+			and not _shot_blocked_before(present, me_at, col) \
+			and not _shot_blocked_before(drawn, me_at, col):
+		k = 1.0 - smoothstep(near, near + SELF_BLEND,
+			minf(present.distance_to(me_at), drawn.distance_to(me_at)))
+	# İlk kadrda top elə doğulduğu yerdə görünür; sonra yalnız hamar irəliləyir.
+	if view.has("k"):
+		var was := float(view["k"])
+		var dt := clampf(_clock - float(view["k_at"]), 0.0, 0.1)
+		var room := _release_room(drawn, dir, col) if k < was else -1.0
+		if room >= 0.0:
+			# Səndən yayınan top qabaqdakı mikrobun zaman xəttinə qayıdır (bax [method _release_room]).
+			k = maxf(k, was - dt * release_rate(was, past.distance_to(present), room))
+		else:
+			k = maxf(was, minf(k, was + dt * SELF_CATCH_RATE))
+	# İrəli çəkilən hissə divardan keçməməlidir: sıçrayışı server hələ deməyib.
+	var pos := _clip_to_walls(past, past.lerp(present, k))
+	var prev: Vector2 = view.get("shown", pos)
+	# Keçid yarımçıq ikən top gövdənə çatır (sən onun yoluna gec girdin): keçmişdə
+	# çəkilən top səndən keçərdi, halbuki sənin xəttində — serverin sənə qarşı
+	# yoxladığı xəttdə — o başqa yerdədir. Top elə indi sənin xəttinə köçür, və
+	# dəyib-dəymədiyi O XƏTTİN öz yolu ilə yoxlanılır, köçmə sıçrayışı ilə yox.
+	if k < 0.99 and not view.has("no_claim") and not _finished \
+			and Sim.seg_ellipse_hit_t(prev, pos, me_at,
+				Sim.hit_shape(int(me.species), me.capacity, me.vel)) >= 0.0:
+		k = 1.0
+		pos = _clip_to_walls(past, present)
+		prev = present_prev
+		# İz köçmə sıçrayışını çəkməsin — yenidən başlayır.
+		_trails.drop(sid)
+	view["k"] = k
+	view["k_at"] = _clock
+	view["shown"] = pos
+	if _clock + _rtt + lead >= dies and k > 0.5:
+		# Sənin zaman xəttində top artıq YOXDUR — ömrü bitib.
+		spr.visible = false
+		return pos
+	if k < 0.99 or _finished or me.safe_t > 0.0 or me.in_cyst() or view.has("no_claim"):
+		return pos
+	var shape := Sim.hit_shape(int(me.species), me.capacity, me.vel)
+	var hit_t := Sim.seg_ellipse_hit_t(prev, pos, me_at, shape)
+	if hit_t < 0.0:
+		return pos
+	var at := prev.lerp(pos, hit_t)
+	# Yolda başqa mikrob varsa proqnoz edilmir: serverdə top ona dəyə bilər,
+	# ekranda isə o mikrob keçmişdə çəkildiyi üçün top yanından keçir. Belə
+	# "sənə dəydi" yalan olardı — qərar serverindir.
+	#
+	# İki hal var. ƏMİN dəymədə (xətt gövdənin dərinliyindən keçir, yolda başqa
+	# mikrob yoxdur) zərbə elə bu kadrda göstərilir. SƏRHƏDDƏKİ dəymədə top yenə
+	# gizlənir — içindən keçməsin — amma zərbə serverin sözünü gözləyir
+	# ([method _queue_events]). Server dəyməni saymasa və topu göndərməyə davam
+	# etsə, top geri qaytarılır ([method _undo_self_claims]).
+	#
+	# Yaxında superi hazır kirpikli varsa top ona çatmadan dağıla bilər — bot
+	# bunu elə topu görən an edir, sən isə onun superini keçmişdə, gec görürsən.
+	var sure := _line_depth(at, dir, me_at, shape) <= SELF_SURE_DEPTH \
+		and not _shot_blocked_before(past, at, col, SELF_SURE_GAP) \
+		and not _proxy_blocks(at - dir * PROXY_LOOKBACK, at, col) \
+		and not _rival_tricho_near(at, col)
+	view["absorbed"] = true
+	spr.visible = false
+	_trails.drop(sid)
+	var claim := {"pos": at, "t": _clock, "color": col, "sid": sid, "soft": not sure,
+		"dir": dir, "lead": lead}
+	_self_claims.append(claim)
+	if not sure:
+		hit_stats["self_soft"] += 1
+		return at
+	hit_stats["self_pred"] += 1
+	# Öz trixosistin hazırdırsa zərbə NÖVBƏTİ tick-də oynanır: server həmin tick-də
+	# superi topdan ƏVVƏL emal edir və topu dağıdır (bax [method _resolve_self_claims]).
+	if me.species == Const.Species.CILIATE and me.super_ready():
+		claim["defer"] = true
+		return at
+	_self_hit_feel(at, col, dir)
+	return at
+
+
+## Sənin zaman xəttinə keçmiş top artıq sənə təhlükə deyil (yanından ötüb və
+## ya sən çəkilmisən), qabağında isə başqa mikrob var. O mikrob KEÇMİŞDƏ
+## çəkilir: top indidə qalsa, onun gövdəsindən keçərdi, halbuki serverdə top
+## ora çatanda mikrob artıq başqa yerdədir. Ölçülüb (RTT 120, 90 s): 46
+## toxunuşdan biri belə idi, ekranın ortasında — top səndən yayınıb qonşunun
+## içindən keçdi, serverdə isə ömrü bitənə qədər heç kimə dəymədi.
+##
+## Belə top keçmişə qayıdır: yavaşıyır, geri getmir, və o mikrobla EYNİ zaman
+## xəttinə düşür — dəyirsə zərbə vaxtında görünür, dəymirsə yanından keçir.
+## Qabaqda mikrob yoxdursa, top indidə qalır: boş yerə yavaşımır.
+##
+## Qaytarır: qabaqdakı ilk mikroba qədər məsafə (px), yoxdursa -1.
+func _release_room(drawn: Vector2, dir: Vector2, shooter_color: int) -> float:
+	var best := -1.0
+	for gid in _visuals:
+		if gid == my_id:
+			continue
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.visible or v.burst or v.safe or v.color_index == shooter_color:
+			continue
+		var shape := Sim.hit_shape(int(v.species), v.capacity, v.net_vel) \
+			+ Vector3(SELF_SURE_GAP, SELF_SURE_GAP, 0.0)
+		var t := Sim.seg_ellipse_hit_t(drawn, drawn + dir * SELF_RELEASE_LOOK, v.position, shape)
+		if t >= 0.0 and (best < 0.0 or t * SELF_RELEASE_LOOK < best):
+			best = t * SELF_RELEASE_LOOK
+	return best
+
+
+## Keçmişə qayıdışın sürəti (1/s): [param k] — topun indiki payı, [param gap] —
+## iki zaman xətti arasındakı məsafə, [param room] — qabaqdakı mikroba qədər yol.
+##
+## Adi halda top [constant SELF_RELEASE_SPEED] qədər yavaşıyır. Mikrob yola
+## qəfil girəndə bu çatmır — ölçülüb: bot topla sənin aranıza 27 px qalmış girdi,
+## top 0.82 payla onun gövdəsindən keçdi. Onda sürət elə seçilir ki, pay mikroba
+## çatmamış sıfıra ensin: `k·v / (room + k·gap)`. Top geri getmir — ən pis halda
+## qısa an dayanıb keçmişin ona çatmasını gözləyir.
+static func release_rate(k: float, gap: float, room: float) -> float:
+	var g := maxf(gap, 1.0)
+	var need := k * Const.SHOT_SPEED / (maxf(room, 0.0) + k * g)
+	return minf(maxf(SELF_RELEASE_SPEED / g, need), 0.95 * Const.SHOT_SPEED / g)
+
+
+## Kontakt nöqtəsinin yaxınlığında superi HAZIR kirpikli (atan yox) varmı.
+##
+## Bot trixosisti yaxınındakı topu görən an açır və top dağılır. Sən isə onun
+## superini keçmişdə — RTT + interpolyasiya qədər gec — görürsən, topu isə öz
+## zaman xəttində, yəni botun qərarından QABAQ. Belə dəymə əmin sayılmır.
+## Ehtiyat məsafəsi botun o müddətdə gedə biləcəyi yoldur.
+##
+## Doluluq da ehtiyatla götürülür: snapshot yarım RTT köhnədir, bir dəymə isə
+## doluluğa [constant Const.SUPER_ON_HIT] əlavə edir — o qədər əskik olan super
+## artıq dolmuş ola bilər. Yer də ən təzə snapshot-dandır, ekrandakı keçmişdən yox.
+func _rival_tricho_near(at: Vector2, shooter_color: int) -> bool:
+	if _last_snap.is_empty():
+		return false
+	for row in _last_snap[Const.Snap.GERMS]:
+		var gid := int(row[Const.GF.ID])
+		if gid == my_id:
+			continue
+		var flags := int(row[Const.GF.FLAGS])
+		var kind := (flags & Const.GFlag.SPECIES_MASK) >> Const.GFlag.SPECIES_SHIFT
+		if kind != int(Const.Species.CILIATE) or (flags & Const.GFlag.SUPER) != 0:
+			continue
+		var charge := (flags & Const.GFlag.CHARGE_MASK) >> Const.GFlag.CHARGE_SHIFT
+		if charge < Const.SUPER_MAX - Const.SUPER_ON_HIT \
+				or int(row[Const.GF.BALLS]) < Const.super_min_balls(kind):
+			continue
+		if int((_roster.get(gid, ["", -1]) as Array)[1]) == shooter_color:
+			continue
+		var reach := Const.germ_radius(int(row[Const.GF.CAP])) * Const.TRICHO_RADIUS + TRICHO_SLACK
+		if Vector2(float(row[Const.GF.X]), float(row[Const.GF.Y])).distance_squared_to(at) \
+				<= reach * reach:
+			return true
+	return false
+
+
+## Kirpiklinin RTT + interpolyasiya müddətində gedə biləcəyi yol (px).
+const TRICHO_SLACK := 60.0
+
+## "Sənə dəydi"dən əvvəlki bu qədər yol (px) yaxın rəqiblərin KÖLGƏSİNƏ qarşı
+## yoxlanılır (bax [method _proxy_blocks]) — təxminən iki tick-in yolu.
+const PROXY_LOOKBACK := 30.0
+
+
+## Topun sənə çatmazdan əvvəlki yolunda yaxın rəqibin KÖLGƏSİ varmı.
+##
+## Yanındakı rəqib ekranda keçmişdə çəkilir — sıxlaşmış döyüşdə 30–40 px geridə.
+## Serverdə isə o, indiki yerindədir və top sənə çatmazdan ƏVVƏL ona dəyə bilər.
+## Kölgə ([method _sync_proxies]) onun indiki yerinin təxminidir; top onun
+## ellipsinə girirsə "sənə dəydi" əmin sayılmır və serveri gözləyir.
+func _proxy_blocks(from: Vector2, to: Vector2, shooter_color: int) -> bool:
+	for gid in pred.germs:
+		if gid == my_id:
+			continue
+		if int((_roster.get(gid, ["", -1]) as Array)[1]) == shooter_color:
+			continue
+		var g: Sim.GermState = pred.germs[gid]
+		var shape := Sim.hit_shape(int(g.species), g.capacity, g.vel) \
+			+ Vector3(SELF_SURE_GAP, SELF_SURE_GAP, 0.0)
+		if Sim.seg_ellipse_hit_t(from, to, g.pos, shape) >= 0.0:
+			return true
+	return false
+
+
+## Öz trixosistini gözləyən "sənə dəydi"-ləri həll edir — hər tick, proqnozdan sonra.
+##
+## Server tick-də əvvəl mikrobları (superi də), sonra topları addımlayır. Top
+## sənə iki tick-in arasında dəyib, super isə növbəti tick-in girişindədirsə,
+## serverdə super QABAQDADIR və top dağılır. Ona görə hazır trixosistlə gələn
+## dəymə bir tick gözləyir (ən çox 33 ms): super açıldısa top dağılır, yoxsa
+## zərbə oynanır.
+func _resolve_self_claims(tricho_reach: float) -> void:
+	for i in range(_self_claims.size() - 1, -1, -1):
+		var c := _self_claims[i]
+		if not bool(c.get("defer", false)):
+			continue
+		c.erase("defer")
+		if tricho_reach > 0.0:
+			# Dəymə olmayacaq — top serverdə də superdən dağılır.
+			_spawn_fx("spark", c["pos"], 0.4, Palette.germ_color(int(c["color"])))
+			_self_claims.remove_at(i)
+			hit_stats["self_pred"] -= 1
+			continue
+		_self_hit_feel(c["pos"], int(c["color"]), c["dir"])
+
+
+## Öz trixosistin açıldı (proqnozda) — radiusdakı yad topları ekranda da dağıdır.
+##
+## Server eyni tick-də botların topunu dərhal, insanınkını isə `rewind` sonra
+## dağıdır ([member Sim._blasts]) — sənin ekranında insanın topu elə o qədər
+## qabaqda çəkilir, yəni hər iki halda top İNDİ olduğu yerdə yoxlanılır.
+func _pop_remote_shots(reach: float) -> void:
+	for sid in _shot_views:
+		var view: Dictionary = _shot_views[sid]
+		var spr: Sprite2D = view["node"]
+		if spr == null or bool(view.get("absorbed", false)) or bool(view.get("mine", false)):
+			continue
+		var at: Vector2 = view.get("present", view.get("shown", spr.position))
+		if at.distance_to(me.pos) > reach:
+			continue
+		view["absorbed"] = true
+		view["no_claim"] = true
+		spr.visible = false
+		_trails.drop(sid)
+		_spawn_fx("spark", spr.position, 0.4, Palette.germ_color(int(view.get("color", 0))))
+
+
+## Botun topu sənə dəydi — qığılcım, səs, gövdənin zərbəsi.
+func _self_hit_feel(at: Vector2, shooter_color: int, dir: Vector2) -> void:
+	_spawn_fx("spark", at, 0.55, Palette.germ_color(shooter_color))
+	Sfx.play("hit", 0.05)
+	var mine_v := _germ_by_color(my_color)
+	if mine_v != null:
+		_impact_on(mine_v, at, shooter_color, dir)
+
+
+## Topun XƏTTİ ellipsin mərkəzindən nə qədər uzaqdan keçir: 0 = düz mərkəzdən,
+## 1 = sərhədə toxunur (bax [constant SELF_SURE_DEPTH], [method Sim.line_depth]).
+static func _line_depth(at: Vector2, dir: Vector2, center: Vector2, shape: Vector3) -> float:
+	return Sim.line_depth(at, dir, center, shape)
+
+
+## Top sənə tərəf uçurmu: sən onun qarşısındasan və xətti gövdənin
+## [constant SELF_AIM_SLACK] px yaxınından keçir. Gövdə ən uzun oxu ilə
+## götürülür — amöb hərəkətdə 1.4 dəfə uzanır (bax [method Sim.hit_shape]).
+func _aimed_at_me(at: Vector2, dir: Vector2, me_at: Vector2) -> bool:
+	var rel := me_at - at
+	var reach := Const.germ_radius(me.capacity) * 1.4 + Const.SHOT_RADIUS + SELF_AIM_SLACK
+	return rel.dot(dir) > -reach and absf(rel.cross(dir)) <= reach
+
+
+## Topun [param from] → [param to] yolunda (atandan və özündən başqa) mikrob varmı.
+## [param pad] mikrobların ellipsini böyüdür — "az qala dəyəcək" halı da sayılsın.
+func _shot_blocked_before(from: Vector2, to: Vector2, shooter_color: int, pad := 0.0) -> bool:
+	for gid in _visuals:
+		if gid == my_id:
+			continue
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.visible or v.burst or v.safe or v.color_index == shooter_color:
+			continue
+		var shape := Sim.hit_shape(int(v.species), v.capacity, v.net_vel) + Vector3(pad, pad, 0.0)
+		if Sim.seg_ellipse_hit_t(from, to, v.position, shape) >= 0.0:
+			return true
+	return false
+
+
+## Parçanın ilk bərk maneəyə və ya qabın kənarına qədər olan hissəsi.
+func _clip_to_walls(from: Vector2, to: Vector2) -> Vector2:
+	var best := 1.0
+	var list := pred.obstacles
+	for i in list.size():
+		var o := list[i]
+		var t := Sim._seg_circle_t(from, to, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS)
+		if t < 0.0 or t >= best:
+			continue
+		if i < _broken.size() and DishMap.wall_gone(_broken[i]):
+			continue
+		if not DishMap.blocks_shot(int(o.w)):
+			continue
+		best = t
+	var at := from.lerp(to, best)
+	var limit := Const.WORLD_RADIUS - Const.SHOT_RADIUS
+	if at.length() > limit:
+		at = at.normalized() * limit
+	return at
+
+
+## Proqnozun toplarını çəkir və ölənlərin sprite-ını hovuza qaytarır.
+##
+## İzin açarı MƏNFİDİR: serverin top id-ləri müsbətdir və [ShotTrails] onları
+## bir lüğətdə saxlayır — eyni ədəd iki topu bir izə birləşdirərdi.
+func _render_ghosts() -> void:
+	var live := {}
+	var color := Palette.germ_color(my_color)
+	for g in _own_shots.ghosts:
+		if not g.alive:
+			continue
+		live[g.id] = true
+		var spr: Sprite2D = _ghost_nodes.get(g.id)
+		if spr == null:
+			spr = _take(_shot_pool, _shot_layer)
+			spr.texture = _tex["shot"]
+			_ghost_nodes[g.id] = spr
+		spr.modulate = color
+		spr.position = g.pos
+		_trails.push(-g.id, g.pos, color)
+	for gid in _ghost_nodes.keys():
+		if live.has(gid):
+			continue
+		_give(_shot_pool, _ghost_nodes[gid])
+		_ghost_nodes.erase(gid)
+		_trails.drop(-int(gid))
+
+
+## Öz atəşin: proqnoz topu mikrobun MƏRKƏZİNDƏN doğulur.
 ##
 ## [param membrane] atəş hadisəsindəki nöqtədir: membranın deşildiyi yer,
 ## yəni mərkəzdən düz bir radius aralıda. [method Sim._fire] həm onu, həm
 ## topun özünü eyni `g.pos`-dan qurur, ona görə mərkəzi geri hesablamaq olur.
-func _remember_muzzle(membrane: Vector2, aim: float) -> void:
-	_prune_muzzles()
-	var dir := Vector2.from_angle(aim)
-	_muzzles.append({
-		"pos": membrane - dir * Const.germ_radius(me.capacity),
-		"dir": dir,
-		"t": _clock,
-	})
-
-
-## Serverin təsdiqləmədiyi köhnə doğuş nöqtələrini atır.
-func _prune_muzzles() -> void:
-	while not _muzzles.is_empty() and _clock - float(_muzzles[0]["t"]) > MUZZLE_GRACE:
-		_muzzles.pop_front()
-
-
-## Yeni gələn öz topunu gözləyən doğuş nöqtəsi ilə uyğunlaşdırır.
 ##
-## Atəşlər növbə ilə açıldığına görə sıra kifayətdir; istiqamət isə yoxlama
-## rolunu oynayır. Server atəşi qəbul etməyibsə (məsələn, düzəlişdən sonra
-## soyuma fərqi) nöqtə [constant MUZZLE_GRACE] sonra özü düşür — belə olanda
-## bir buraxılmış atəş bütün ardıcıllığı sürüşdürmür.
-func _claim_muzzle(dir: Vector2) -> Dictionary:
-	while not _muzzles.is_empty():
-		var m: Dictionary = _muzzles.pop_front()
-		if _clock - float(m["t"]) > MUZZLE_GRACE:
+## [param age] — atəş nə qədər ƏVVƏL olub. Proqnozun özü atanda sıfırdır; atəşi
+## yalnız serverin FIRE hadisəsindən öyrənəndə isə top artıq yoldadır və
+## indiyə çatdırılır (bax [method _queue_events]).
+##
+## [param view] — atəşin görünən tick-i ([member Sim.PlayerInput.view_tick]):
+## proqnoz topu rəqibləri serverin yoxladığı tick-də görür (bax [ShotPrediction]).
+func _spawn_own_shot(membrane: Vector2, aim: float, age := 0.0, view := -1.0) -> void:
+	var dir := Vector2.from_angle(aim)
+	var g := _own_shots.spawn(membrane - dir * Const.germ_radius(me.capacity), dir,
+		_clock - age, view)
+	if age > 0.0:
+		_own_shots.catch_up(g, age, _clock, pred.obstacles, _broken)
+
+
+## Öz toplarını bir kadr irəli aparır və təmaslarını dərhal göstərir.
+##
+## Top serverin tick addımı ilə uçur və hər tick-in parçası rəqiblərin MƏHZ
+## serverin yoxladığı tick-dəki halına qarşı yoxlanılır ([method _ghost_targets],
+## [member Sim.lag_comp]) — ona görə burada gördüyün dəymə orada da sayılır.
+##
+## Qaydalar [method Sim._step_shots]-dakı kimidir: doğuş qalxanlı və yoldaş
+## mikrob keçilir, amöbün qabığı topu sıçradır.
+func _step_own_shots(delta: float) -> void:
+	_prune_claims()
+	# Top ömründən uzun yaşayan id artıq heç bir snapshot-a düşə bilməz.
+	for sid in _own_sids.keys():
+		if _clock - float(_own_sids[sid]) > Const.SHOT_LIFETIME + 1.0:
+			_own_sids.erase(sid)
+	if _own_shots.ghosts.is_empty():
+		return
+	_screen_targets.clear()
+	_tick_targets.clear()
+	for gid in _visuals:
+		if gid == my_id:
 			continue
-		if Vector2(m["dir"]).dot(dir) > 0.995:
-			return m
-	return {}
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.visible or v.burst or v.safe or v.is_ally or v.color_index == my_color:
+			continue
+		_screen_targets.append({
+			"pos": v.position,
+			"radius": Const.germ_radius(v.capacity),
+			# Serverlə EYNİ toqquşma ellipsi (bax [method Sim.hit_shape]).
+			"shape": Sim.hit_shape(int(v.species), v.capacity, v.net_vel),
+			"key": gid,
+			"cyst": v.super_on and v.species == Const.Species.AMOEBA,
+		})
+	for c in _own_shots.step(delta, _clock, pred.obstacles, _broken, _ghost_targets):
+		_on_own_contact(c)
+
+
+## Bu kadrın ekrandakı hədəfləri və tick-lərə görə hədəflər (kadr boyu keş).
+var _screen_targets := []
+var _tick_targets := {}
+
+
+## Proqnoz topunun hədəfləri server tick-i [param t]-də (kəsrli).
+##
+## Rəqiblər snapshot buferindən, TICK-ə görə interpolyasiya olunur — gəliş
+## vaxtına görə yox. Ekrandakı rəqib gəliş vaxtı ilə çəkilir və snapshot-lar
+## jitter-lə gələndə tick-in yarısı qədər qabaqda və ya geridə olur; server isə
+## qurbanı dəqiq `tick − rewind`-də yoxlayır. Bayraqlar (qalxan, kist, komanda)
+## YENİ snapshot-dandır — ekranda da belədir, serverin tarixçəsi də onu belə
+## oxuyur ([method Sim._rewound_bits]).
+##
+## Tick bilinmirsə (mənfi) və ya bufer boşdursa — ekrandakı yerlər.
+func _ghost_targets(t: float) -> Array:
+	if t < 0.0 or _snaps.size() < 2:
+		return _screen_targets
+	var key := snappedf(t, 0.001)
+	if _tick_targets.has(key):
+		return _tick_targets[key]
+	var a: Array = _snaps[0]["d"]
+	var b: Array = a
+	for i in range(_snaps.size() - 1, -1, -1):
+		var d: Array = _snaps[i]["d"]
+		if float(d[Const.Snap.TICK]) <= t:
+			a = d
+			b = _snaps[i + 1]["d"] if i + 1 < _snaps.size() else d
+			break
+	var ta := float(a[Const.Snap.TICK])
+	var tb := float(b[Const.Snap.TICK])
+	var alpha := clampf((t - ta) / (tb - ta), 0.0, 1.0) if tb > ta else 1.0
+	var older := _index_germs(a)
+	var out := []
+	for n in b[Const.Snap.GERMS]:
+		var gid := int(n[Const.GF.ID])
+		if gid == my_id:
+			continue
+		var flags := int(n[Const.GF.FLAGS])
+		if flags & Const.GFlag.SAFE:
+			continue
+		var team := ((flags & Const.GFlag.TEAM_MASK) >> Const.GFlag.TEAM_SHIFT) - 1
+		if _my_team >= 0 and team == _my_team:
+			continue
+		var o: Array = older.get(gid, n)
+		var kind := Const.species_from(
+			(flags & Const.GFlag.SPECIES_MASK) >> Const.GFlag.SPECIES_SHIFT)
+		var cap := int(n[Const.GF.CAP])
+		var vel := Vector2(float(o[Const.GF.VX]), float(o[Const.GF.VY])).lerp(
+			Vector2(float(n[Const.GF.VX]), float(n[Const.GF.VY])), alpha)
+		out.append({
+			"pos": Vector2(float(o[Const.GF.X]), float(o[Const.GF.Y])).lerp(
+				Vector2(float(n[Const.GF.X]), float(n[Const.GF.Y])), alpha),
+			"radius": Const.germ_radius(cap),
+			"shape": Sim.hit_shape(int(kind), cap, vel),
+			"key": gid,
+			"cyst": (flags & Const.GFlag.SUPER) != 0 and kind == Const.Species.AMOEBA,
+		})
+	_tick_targets[key] = out
+	return out
+
+
+## Proqnoz topu bir şeyə toxundu — görüntü serveri GÖZLƏMƏDƏN oynanır.
+##
+## Hər təmas [member _claims]-ə yazılır: serverin eyni hadisəsi sonra gələndə
+## tanınır və ikinci dəfə göstərilmir (bax [method _queue_events]).
+func _on_own_contact(c: Dictionary) -> void:
+	var at: Vector2 = c["pos"]
+	var col := Palette.germ_color(my_color)
+	match int(c["kind"]):
+		ShotPrediction.Contact.HIT:
+			var entry: Dictionary = _visuals.get(int(c["key"]), {})
+			if entry.is_empty():
+				return
+			var victim: GermVisual = entry["node"]
+			if _take_early_hit(at, victim.color_index):
+				# Server bu dəyməni artıq deyib və zərbə göstərilib — ikinci dəfə yox.
+				hit_stats["predicted"] += 1
+				hit_stats["confirmed"] += 1
+				return
+			var claim := {"pos": at, "t": _clock, "hit": true, "victim": int(c["key"]),
+				"vcol": victim.color_index, "dir": c["dir"], "ghost": c["ghost"]}
+			_claims.append(claim)
+			if float(c.get("depth", 0.0)) > OWN_SURE_DEPTH or _burst_pending(victim.color_index):
+				# Sərhəddəki dəymə: top gövdənin kənarında dayanır, zərbə isə serverin
+				# sözünü gözləyir (bax [method _match_claim], [method _undo_own_soft]).
+				claim["soft"] = true
+				hit_stats["own_soft"] += 1
+				return
+			_own_hit_flash(victim, at, Vector2(c["dir"]))
+			hit_stats["predicted"] += 1
+		ShotPrediction.Contact.BOUNCE, ShotPrediction.Contact.CRACK:
+			_spawn_fx("spark", at, 0.55, col)
+			Sfx.play("hit", 0.05)
+			if int(c["kind"]) == ShotPrediction.Contact.CRACK:
+				var o: Vector4 = DishMap.obstacles()[int(c["key"])]
+				_juice.crust(at, (at - Vector2(o.x, o.y)).normalized(), o.z * 0.46, false)
+			_claims.append({"pos": at, "t": _clock, "hit": false})
+		_:
+			# Ömrü bitdi: serverdə qidaya çevrilir və snapshot ilə görünəcək.
+			pass
+
+
+## Qurbanın partlaması artıq gəlib, amma hələ göstərilməyib (interpolyasiyanı gözləyir).
+##
+## Onu başqasının topu doldurub: serverdə öz topun ora çatanda qurban artıq
+## yoxdur və dəymə sayılmır — ekranda isə hələ sağdır. Ölçülüb (RTT 120 ms):
+## təsdiqlənməyən öz dəymələrinin sonuncusu belə idi — topun qurbanı 0.56
+## dərinliklə vurdu, qurban 100 ms sonra başqa botun topundan partladı. Belə
+## dəymə də serverin sözünü gözləyir.
+func _burst_pending(color: int) -> bool:
+	for e in _fx_queue:
+		if int(e["kind"]) == Const.EvKind.BURST and int(e["ci"]) == color:
+			return true
+	return false
+
+
+## Öz topunun rəqibə dəyməsi: qığılcım, səs və qurbanın zərbəsi.
+##
+## Öz zərbənin qığılcımı başqalarınkından iridir (0.55): gözün izlədiyi yer
+## məhz budur.
+func _own_hit_flash(victim: GermVisual, at: Vector2, dir: Vector2) -> void:
+	_spawn_fx("spark", at, 0.7, Palette.germ_color(my_color))
+	Sfx.play("hit", 0.05)
+	_impact_on(victim, at, my_color, dir, true)
+
+
+## Proqnozun təmasını serverin hadisəsi ilə uyğunlaşdırır.
+##
+## Uyğun gəlirsə hadisə ARTIQ göstərilib və təsdiq sayılır — qeyd silinir ki,
+## növbəti topun hadisəsi onu yenidən "tapmasın". Növ də uyğun gəlməlidir:
+## divar sıçrayışı rəqibə dəyməni təsdiqləyə bilməz.
+##
+## Hədd daxilindəki İLK proqnoz yox, ƏN YAXINI götürülür, qurban bilinirsə
+## (bax [method Const.hit_victim]) yalnız onunku. Eyni rəqibə yarım saniyə
+## arayla iki top atılanda server ikincinin dəyməsini deyirdi, təsdiq isə 40–70 px
+## aralıdakı BİRİNCİYƏ yazılırdı — ölçülüb.
+func _match_claim(at: Vector2, hit: bool, victim_color := -1) -> bool:
+	var reach := CLAIM_REACH_HIT if hit else CLAIM_REACH_WALL
+	var best := -1
+	var best_d := INF
+	for i in _claims.size():
+		var c := _claims[i]
+		if bool(c["hit"]) != hit:
+			continue
+		if victim_color >= 0 and int(c.get("vcol", victim_color)) != victim_color:
+			continue
+		var d := Vector2(c["pos"]).distance_to(at)
+		if d <= reach and d < best_d:
+			best = i
+			best_d = d
+	if best < 0:
+		return false
+	var found := _claims[best]
+	_claims.remove_at(best)
+	if hit and bool(found.get("soft", false)):
+		# Sərhəddəki dəymə — zərbə təsdiq GƏLƏN an, topun dayandığı yerdə oynanır.
+		hit_stats["own_soft_conf"] += 1
+		var entry: Dictionary = _visuals.get(int(found.get("victim", -1)), {})
+		if not entry.is_empty():
+			_own_hit_flash(entry["node"], Vector2(found["pos"]), Vector2(found.get("dir", Vector2.RIGHT)))
+		return true
+	if hit:
+		hit_stats["confirmed"] += 1
+		hit_stats["confirm_s"] += _clock - float(found["t"])
+	return true
+
+
+## Botun sənə proqnozlaşdırılmış dəyməsini serverin hadisəsi ilə tutuşdurur.
+##
+## HIT hadisəsi qurbanı demir, yalnız ATANIN rəngini. Əvvəl yalnız məsafə
+## yoxlanırdı: yanındakı mikroba 110 px daxilində dəyən BAŞQA topun zərbəsi
+## "sənin təsdiqin" sayılırdı və ekranda göstərilmirdi.
+##
+## Sərhəddəki proqnozun zərbəsi burada, təsdiq GƏLƏN an oynanır: top onsuz da
+## gövdənin qarşısında gizlənib, interpolyasiyanı gözləmək zərbəni yalnız
+## gecikdirərdi.
+func _match_self_claim(at: Vector2, shooter: int) -> bool:
+	# Ən yaxın proqnoz — eyni bot bir-birinin ardınca atanda ilki yox (bax [method _match_claim]).
+	var best := -1
+	var best_d := INF
+	for i in _self_claims.size():
+		var c := _self_claims[i]
+		var d := Vector2(c["pos"]).distance_to(at)
+		if int(c["color"]) == shooter and d <= CLAIM_REACH_HIT and d < best_d:
+			best = i
+			best_d = d
+	if best < 0:
+		return false
+	var found := _self_claims[best]
+	_self_claims.remove_at(best)
+	if bool(found.get("soft", false)):
+		hit_stats["self_soft_conf"] += 1
+		_self_hit_feel(at, shooter, Vector2(found.get("dir", Vector2.RIGHT)))
+	else:
+		hit_stats["self_conf"] += 1
+	return true
+
+
+## Server təsdiqləmədi, top isə hələ uçur — gizlədilmiş top GERİ qaytarılır.
+##
+## Dəymə proqnozlaşdırılan anda olsaydı, top növbəti snapshot-lardan itərdi:
+## sən topu RTT/2 qabaqda görürsən, xəbər isə RTT/2 sonra gəlir.
+## [constant SELF_UNDO_WAIT] jitter üçün ehtiyatdır. Top bir də sənə
+## "dəyə" bilməz (`no_claim`): serverin öz qərarı artıq bəllidir.
+func _undo_self_claims() -> void:
+	var i := 0
+	while i < _self_claims.size():
+		var c := _self_claims[i]
+		var view: Dictionary = _shot_views.get(int(c.get("sid", -1)), {})
+		# İnsanın topunda server qərarı `rewind` qədər gec verir (bax [method _remote_shot_pos]).
+		if not view.is_empty() \
+				and _last_snap_t - float(c["t"]) > _rtt + float(c.get("lead", 0.0)) + SELF_UNDO_WAIT \
+				and float(view.get("seen", 0.0)) >= _last_snap_t:
+			view["absorbed"] = false
+			view["no_claim"] = true
+			var spr: Sprite2D = view["node"]
+			if spr != null:
+				spr.visible = true
+			hit_stats["self_undo"] += 1
+			hit_stats["self_soft_miss" if bool(c.get("soft", false)) else "self_false"] += 1
+			_self_claims.remove_at(i)
+			continue
+		i += 1
+
+
+## Öz topunun proqnozdan ƏVVƏL gələn server dəymələri (bax [method _queue_events]).
+func _take_early_hit(at: Vector2, victim_color: int) -> bool:
+	for i in _early_hits.size():
+		var h := _early_hits[i]
+		if (int(h["victim"]) < 0 or int(h["victim"]) == victim_color) \
+				and Vector2(h["pos"]).distance_to(at) <= CLAIM_REACH_HIT:
+			_early_hits.remove_at(i)
+			return true
+	return false
+
+
+## Sərhəddəki öz dəyməsini server saymadı, topu isə hələ göndərir — top GERİ
+## qaytarılır və serverin yeri ilə uçmağa davam edir.
+##
+## Dəymə olsaydı, top RTT-dən sonra snapshot-lardan itərdi (bax
+## [method _undo_self_claims] — eyni qayda botun sənə dəyməsində).
+func _undo_own_soft() -> void:
+	var i := 0
+	while i < _claims.size():
+		var c := _claims[i]
+		var g: ShotPrediction.Ghost = c.get("ghost")
+		var view: Dictionary = _shot_views.get(g.sid, {}) \
+			if bool(c.get("soft", false)) and g != null and g.sid >= 0 else {}
+		if view.is_empty() or _last_snap_t - float(c["t"]) <= _rtt + SELF_UNDO_WAIT \
+				or float(view.get("seen", 0.0)) < _last_snap_t:
+			i += 1
+			continue
+		if view["node"] == null:
+			var spr := _take(_shot_pool, _shot_layer)
+			spr.texture = _tex["shot"]
+			spr.modulate = Palette.germ_color(my_color)
+			view["node"] = spr
+			view["mine"] = true
+			view["color"] = my_color
+		hit_stats["own_soft_miss"] += 1
+		hit_stats["own_soft_undo"] += 1
+		_claims.remove_at(i)
+
+
+func _prune_claims() -> void:
+	while not _early_hits.is_empty() and _clock - float(_early_hits[0]["t"]) > EARLY_HIT_KEEP:
+		_early_hits.pop_front()
+	_undo_self_claims()
+	while not _self_claims.is_empty() and _clock - float(_self_claims[0]["t"]) > CLAIM_KEEP:
+		# Server topu da artıq göndərmir (başqasına dəyib, vaxtı bitib) — geri
+		# qaytarılacaq bir şey yoxdur.
+		hit_stats["self_soft_miss" if bool(_self_claims[0].get("soft", false)) else "self_false"] += 1
+		_self_claims.pop_front()
+	_undo_own_soft()
+	while not _claims.is_empty() and _clock - float(_claims[0]["t"]) > CLAIM_KEEP:
+		if bool(_claims[0].get("soft", false)):
+			# Sərhəddəki dəymə: zərbə göstərilməyib, server də saymadı.
+			hit_stats["own_soft_miss"] += 1
+		# Ekranda göstərilən, serverin isə heç vaxt saymadığı dəymə.
+		elif bool(_claims[0]["hit"]):
+			hit_stats["ghost"] += 1
+			# Qurban artıq yoxdursa, onu başqası partladıb və ya görüşdən çıxıb.
+			var entry: Dictionary = _visuals.get(int(_claims[0].get("victim", -1)), {})
+			if entry.is_empty() or (entry["node"] as GermVisual).burst:
+				hit_stats["ghost_gone"] += 1
+		_claims.pop_front()
+
+
+## Super halqasının vədi: öz zərbənin +3-ü dərhal görünür.
+##
+## Vəd serverin rəqəmi ona çatanda, super işlədilib doluluq SIFIRLANANDA (baza
+## düşür) və ya [constant PROMISE_HOLD] bitəndə sönür. "Hazır" bayrağı isə vəddən
+## ASILI DEYİL — düymə yalnız serverin doluluğu tam olanda işləyir.
+func _promise_charge(amount: int) -> void:
+	var from := _shown_charge()
+	_charge_base = me.charge
+	_charge_promise = mini(from + amount, Const.SUPER_MAX)
+	_charge_until = _clock + PROMISE_HOLD
+
+
+func _shown_charge() -> int:
+	if _charge_promise < 0:
+		return me.charge
+	if me.charge >= _charge_promise or me.charge < _charge_base or _clock > _charge_until:
+		_charge_promise = -1
+		return me.charge
+	return _charge_promise
 
 
 # ---------------------------------------------------------------- qida
@@ -1969,22 +3335,80 @@ func _queue_events(list: Array, at: float) -> void:
 			# ona görə proqnoz öz atəşini heç görmür — qığılcım da, səs də,
 			# topun doğuş nöqtəsi də itir.
 			#
-			# Gözləyən doğuş nöqtəsi elə bu sualın cavabıdır: varsa, atəş
-			# proqnozda oynadılıb; yoxdursa, yalnız server bilir və burada
-			# oynadılmalıdır.
-			_prune_muzzles()
-			if kind == Const.EvKind.FIRE and _muzzles.is_empty():
+			# Təsdiq gözləyən proqnoz topu elə bu sualın cavabıdır: varsa,
+			# atəş proqnozda oynadılıb; yoxdursa, yalnız server bilir və top
+			# da, effekt də burada doğulmalıdır.
+			if kind == Const.EvKind.FIRE \
+					and not _own_shots.take_unseen_fire(_clock, MUZZLE_GRACE):
 				var at_pos := Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y]))
-				_remember_muzzle(at_pos, float(e[Const.EF.ARG]))
+				# Top indi DOĞULMUR — atəşi açan giriş göndəriləndə doğulub. Server onu
+				# həmin tick-də təsdiqlədi ([member _last_ack]); proqnozun zaman xətti də
+				# elə budur. Gəliş anında doğulsaydı, top serverinkindən ~RTT geri
+				# qalardı: server dəyməni ƏVVƏL sayardı, gec top isə sonra ikinci, boş
+				# zərbə göstərərdi. Ölçülüb — bu, təsdiqlənməyən dəymələrin əsas səbəbi idi.
+				var age := clampf(_clock - float(_input_time.get(_last_ack, _clock)), 0.0, 0.5)
+				_spawn_own_shot(at_pos, float(e[Const.EF.ARG]), age)
+				_own_shots.take_unseen_fire(_clock, MUZZLE_GRACE)
 				_spawn_fx("spark", at_pos, 0.5, Palette.germ_color(my_color))
 				_juice.muzzle(at_pos, float(e[Const.EF.ARG]), Palette.germ_color(my_color))
 				Sfx.play("eject", 0.06)
 				_eject_from(my_color, float(e[Const.EF.ARG]))
 			continue
+		var pos := Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y]))
+		var when := at
+		if int(e[Const.EF.COLOR]) == my_color:
+			# Məşqdə yerli dünya superi proqnozdan ƏVVƏL emal edir və proqnoz onu
+			# görmür (bax [method _reconcile]) — trixosistin dağıtdığı toplar burada
+			# ekrandan da götürülür. Onlayn oyunda bunu proqnoz elə o tick edir.
+			if kind == Const.EvKind.SUPER and float(e[Const.EF.ARG]) > 0.0 \
+					and _local_world != null:
+				_pop_remote_shots(float(e[Const.EF.ARG]))
+			# ÖZ topunun təması proqnozda artıq göstərilib — ikinci dəfə yox.
+			if kind == Const.EvKind.HIT and _match_claim(pos, float(e[Const.EF.ARG]) > 0.5,
+					Const.hit_victim(float(e[Const.EF.ARG]))):
+				continue
+			# Proqnozun GÖRMƏDİYİ təmas (rəqib kolda idi, geri sarma həddi
+			# aşılmışdı). Öz topun indidə uçur və bu nöqtəni artıq keçib —
+			# interpolyasiyanı gözləmək zərbəni yalnız daha da gecikdirərdi.
+			if kind == Const.EvKind.HIT or kind == Const.EvKind.BREAK:
+				when = -INF
+			# Rəqibə dəyən top serverdə bitib, ekranda isə hələ uçur — dayandırılır.
+			# Top bu nöqtəni RTT + interpolyasiya qədər qabaqlayıb (~100 px);
+			# növbəti öz topun isə ən azı bir saniyəlik yol, 420 px aralıdadır.
+			# Divar sıçrayışında (arg 0) top yaşayır, ona görə toxunulmur.
+			if kind == Const.EvKind.HIT and float(e[Const.EF.ARG]) > 0.5:
+				_own_shots.stop_nearest(pos, 220.0, _clock)
+				hit_stats["server_only"] += 1
+				# Proqnoz topu bu dəyməyə hələ ÇATMAYA bilər (gec tapılan atəş, eyni
+				# paketdə gələn atəş və dəymə). Çatanda bu qeyd onu təsdiqləyir —
+				# yoxsa zərbə iki dəfə göstərilir, proqnoz isə "boş" sayılırdı.
+				_early_hits.append({"pos": pos, "t": _clock,
+					"victim": Const.hit_victim(float(e[Const.EF.ARG]))})
+				# Test ölçüsü: ən yaxın proqnoz nə qədər uzaqda və nə qədər köhnə idi.
+				var near := [INF, -1.0]
+				for c in _claims:
+					if bool(c["hit"]) and Vector2(c["pos"]).distance_to(pos) < float(near[0]):
+						near = [Vector2(c["pos"]).distance_to(pos), _clock - float(c["t"])]
+				if (hit_stats["miss"] as Array).size() < 20:
+					(hit_stats["miss"] as Array).append("%.0fpx/%.0fms"
+						% [float(near[0]), float(near[1]) * 1000.0])
+		elif kind == Const.EvKind.HIT and Const.hit_victim(float(e[Const.EF.ARG])) == my_color \
+				and _match_self_claim(pos, int(e[Const.EF.COLOR])):
+			# Proqnoz bu dəyməni artıq ya göstərib, ya da [method _match_self_claim]
+			# sərhəddəki proqnozun zərbəsini elə indi oynadıb.
+			continue
+		elif kind == Const.EvKind.BURST \
+				and _clock - float(_my_victims.get(int(e[Const.EF.COLOR]), -INF)) <= KILL_LINK:
+			# Sənin topunla dolan rəqib partladı — öldürmə anı gecikməməlidir.
+			#
+			# Zərbəni proqnoz dərhal göstərib, "+5 TUTUM" da snapshot gələn kimi
+			# çıxır ([method _watch_capacity]); partlayış isə növbədə 100 ms
+			# interpolyasiya gözləyirdi və mükafat öldürmədən ƏVVƏL görünürdü.
+			when = -INF
 		_fx_queue.append({
-			"at": at,
+			"at": when,
 			"kind": kind,
-			"pos": Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y])),
+			"pos": pos,
 			"arg": float(e[Const.EF.ARG]),
 			# Xam indeks də saxlanılır: partlayışda mikrobun görüntüsünü
 			# tapmaq üçün lazımdır (bax [method _explode]).
@@ -2025,6 +3449,12 @@ func _flush_fx(render_time: float) -> void:
 				var who := _germ_by_color(ci)
 				var kind := Const.Species.CILIATE
 				var body := Const.BASE_RADIUS
+				# Rəqibin trixosisti öz uçan toplarını elə İNDİ dağıdır — partlayış
+				# ekranda görünən anda. Server də bu anı yoxlayır (bax [member Sim._blasts]):
+				# partlayışdan əvvəl rəqibə çatan top dəyir, sonra çatan dağılır.
+				if reach > 0.0 and ci != my_color:
+					for gh in _own_shots.blast(pos, reach, _clock):
+						_spawn_fx("spark", gh.pos, 0.45, Palette.germ_color(my_color))
 				if who != null:
 					body = Const.germ_radius(who.capacity)
 					if reach <= 0.0:
@@ -2038,7 +3468,7 @@ func _flush_fx(render_time: float) -> void:
 						reach = body + GermVisual.SHIELD_GAP * 0.5
 				var sfx := SuperFx.new()
 				sfx.position = pos
-				sfx.setup(kind, col, body, reach, Net.quality == Const.Quality.LOW)
+				sfx.setup(kind, col, body, reach, Const.is_light(int(Net.quality)))
 				if kind != Const.Species.CILIATE and who != null:
 					sfx.follow(who)
 				_fx.add_child(sfx)
@@ -2078,7 +3508,7 @@ func _flush_fx(render_time: float) -> void:
 				# içinə keçdi. Zərbə yalnız ikincisidir — sıçrayışda
 				# parıldayacaq mikrob yoxdur.
 				if float(e["arg"]) > 0.5:
-					_on_impact(pos, int(e["ci"]))
+					_on_impact(pos, int(e["ci"]), Const.hit_victim(float(e["arg"])))
 				else:
 					# Qabıq zərbəsi adi divar sıçrayışından mövqeyə görə ayrılır;
 					# şəbəkə hadisəsinə yeni sahə əlavə etmək yalnız görüntü üçün olmazdı.

@@ -27,6 +27,9 @@ Net="*res://scripts/shared/net.gd"
 ; şinlərə bağlayır — sonra gəlsəydi, kanallar mövcud olmayan şinə yazardı.
 Settings="*res://scripts/shared/settings.gd"
 Sfx="*res://scripts/client/sfx.gd"
+; Dostlar və komanda — menyu ilə arena arasında yaşamalıdır (bax friends.gd).
+; Net-dən SONRA: qoşulma siqnalına Net-in öz _ready-sindən sonra bağlanır.
+Friends="*res://scripts/client/friends.gd"
 
 [display]
 

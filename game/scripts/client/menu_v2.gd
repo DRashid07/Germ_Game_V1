@@ -145,6 +145,20 @@ const _SUPER_ICONS := {
 	Const.Species.HELIOZOAN: "res://assets/menu/super_net.png",
 	Const.Species.AMOEBA: "res://assets/menu/super_cyst.png",
 }
+## DOSTLAR — Brawl Stars-ın sağ lentindəki "Friends" düyməsi və komanda dili.
+const ICON_FRIENDS := "res://assets/menu/icon_friends.png"
+const ICON_CROWN := "res://assets/menu/icon_crown.png"
+const ICON_INVITE := "res://assets/menu/icon_invite.png"
+## Yoldaşın qəhrəmanı — öz qəhrəmanının yarısı. Brawl Stars-da da yoldaşlar
+## kiçik və bir az arxada durur: ekranın sahibi yenə SƏNİN fiqurundur.
+## 0.62 sınandı: amöb (ən enli növ) yanındakı amöbə dəyirdi, sağdakı isə
+## DOSTLAR düyməsinə çatırdı.
+const MATE_SCALE := 0.50
+## Yoldaşla qəhrəman arasındakı boşluq (piksel, 1280×720 bazasında).
+const MATE_GAP := 14.0
+## «+» yuvasının kvadratı.
+const SLOT := 96.0
+
 const _MODE_ICONS := {
 	Const.Mode.ENDLESS: "res://assets/menu/mode_endless.png",
 	Const.Mode.SOLO: "res://assets/menu/mode_solo.png",
@@ -271,6 +285,23 @@ var _sheet_title: Label
 var _sheet_species: Control
 var _sheet_modes: Control
 
+## ── DOSTLAR və KOMANDA (bax [Friends], [FriendsView]) ──
+var _friends_btn: Button
+var _friends_badge: Label
+var _friends_view: FriendsView
+## Qəhrəmanın iki yanındakı «+» yuvaları — Brawl Stars-ın komanda yuvaları.
+var _slots: Array[Button] = []
+## Yuvada yoldaş varsa: onun qəhrəmanı, ad lövhəsi və lider tacı.
+var _mates: Array[Sprite2D] = []
+var _mate_plates: Array[PanelContainer] = []
+var _mate_crowns: Array[TextureRect] = []
+## Öz ad lövhəmin üstündəki tac — komandanın lideriyəmsə.
+var _my_crown: TextureRect
+## Gələn dəvətin kartı (ekranın yuxarısında) və onun kimdən olduğu.
+var _invite_card: PanelContainer
+var _invite_tag := ""
+var _invite_bar: Panel
+
 ## Qoşulma gedirmi. OYNA düyməsi bu vəziyyəti ÖZÜ göstərir — ayrıca status
 ## sətri və "LƏĞV ET" düyməsi yoxdur (köhnə menyuda hər ikisi vardı və menyunu
 ## bir düymə boyu uzadırdı).
@@ -314,8 +345,22 @@ func _ready() -> void:
 	Net.world_joined.connect(_on_world_joined)
 	Net.join_rejected.connect(_on_join_rejected)
 
+	_build_social()
+	Friends.changed.connect(_refresh_party)
+	Friends.notice.connect(_on_friends_notice)
+	Friends.invite_arrived.connect(_show_invite)
+	_refresh_party()
+
 	_probe_server()
 	_play_intro()
+
+	# Matçdan qayıdanda cavabsız dəvət varsa, kart yenidən göstərilir.
+	if not Friends.invites.is_empty():
+		_show_invite(Friends.invites.keys()[-1])
+	# Veb versiya dost linki ilə açılıb — DOSTLAR ekranı o kodla açılır.
+	var link := Friends.take_friend_link()
+	if not link.is_empty():
+		_open_friends.call_deferred(false, link)
 
 
 func _process(delta: float) -> void:
@@ -344,6 +389,9 @@ func _process(delta: float) -> void:
 		# sığmaq üçün minimumdan böyüyə bilir və mərkəz sürüşərdi.
 		var top := foot.y - _hero_size().y * 0.97 - plate.size.y - 6.0
 		plate.position = Vector2(foot.x - plate.size.x * 0.5, maxf(top, 22.0))
+
+	_pose_mates()
+	_tick_invite()
 
 	if _motes != null:
 		# Zərrəciklər podiumun ətrafında toplanır: fon şəklindəki su hərəkətsizdir,
@@ -420,7 +468,10 @@ func _draw() -> void:
 		draw_texture_rect(_bg, _bg_rect(), false)
 	# Vərəq açıqdırsa podium çəkilmir: vərəqin tündləşdirməsi fonu göstərir,
 	# amma boş podium kartların arxasında "kimsə getdi" kimi oxunurdu.
-	if _podium == null or _sheet == null or _sheet.visible:
+	# Vərəq tənbəl qurulur (bax [method _ensure_sheet]) — `null` "bağlıdır"
+	# deməkdir. Əvvəl şərt `_sheet == null`-da da çıxırdı və podium ilə
+	# qəhrəmanın kölgəsi menyunun ilk açılışında ümumiyyətlə çəkilmirdi.
+	if _podium == null or (_sheet != null and _sheet.visible):
 		return
 
 	var foot := _foot()
@@ -434,6 +485,15 @@ func _draw() -> void:
 	# bundan oxunur, çünki fiqurun özünün qalxması cəmi bir neçə pikseldir.
 	if _hero == null or _hero.texture == null:
 		return
+	# Yoldaşların kölgəsi — qəhrəmanınkı ilə eyni iki qat, kiçik.
+	for i in _mates.size():
+		if _mates[i].visible:
+			var mr := _mate_size(i).x * 0.28
+			draw_set_transform(_mate_foot(i) - Palette.LIGHT_DIR * mr * 0.12, 0.0, Vector2(1.0, 0.30))
+			draw_circle(Vector2.ZERO, mr * 1.2, Color(Palette.OUTLINE, 0.18))
+			draw_circle(Vector2.ZERO, mr * 0.8, Color(Palette.OUTLINE, 0.38))
+			draw_set_transform(Vector2.ZERO)
+
 	var lift := _lift() / maxf(HOVER, 0.001)
 	var r := _hero_size().x * 0.30 * (1.0 - 0.16 * lift) * _hero_in
 	var a := (1.0 - 0.35 * lift) * clampf(_hero_in, 0.0, 1.0)
@@ -576,6 +636,8 @@ func _notification(what: int) -> void:
 		return
 	if _settings != null and is_instance_valid(_settings):
 		_settings.close()
+	elif _friends_view != null and is_instance_valid(_friends_view):
+		_friends_view.close()
 	elif _sheet != null and _sheet.visible:
 		_sheet_back()
 	else:
@@ -648,6 +710,13 @@ func _build_top_bar() -> void:
 	# Fokus alanda alt xətt qalır — yazıla biləcəyi elə oradan bilinir.
 	_nick.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	_nick.add_theme_stylebox_override("focus", _underline_style())
+	# Ad yazılıb bitəndə yadda saxlanılır — dostlar və komanda yoldaşları yeni
+	# adı dərhal görsün (OYNA-nı gözləmədən).
+	_nick.text_submitted.connect(func(_t: String) -> void:
+		_nick.release_focus())
+	_nick.focus_exited.connect(func() -> void:
+		if _clean_nick() != Net.nickname:
+			_save_settings())
 	row.add_child(_nick)
 
 	# Alt yazı ("adı dəyişmək üçün toxun") yoxdur: Brawl Stars-ın yuxarı
@@ -810,6 +879,10 @@ func _build_home() -> void:
 	_mode_card.offset_bottom = -PAD
 	_mode_card.pressed.connect(func() -> void:
 		Sfx.play("ui_click")
+		# Brawl Stars-da da komandada hadisəni yalnız lider dəyişir.
+		if Friends.party_size() >= 2 and not Friends.is_leader():
+			_notify("REJİMİ LİDER SEÇİR", "Komandanın lideri tacla işarələnib.", Palette.MENU_PLAY)
+			return
 		_open_sheet("modes"))
 	add_child(_mode_card)
 	_squash(_mode_card, Vector2(MODE_W, PLAY_H))
@@ -1039,6 +1112,9 @@ func _notify(title: String, sub: String, color: Color) -> void:
 		line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		ChunkyBox.stroke(line, 5)
 		_toast.add_child(line)
+	# Bildiriş HƏMİŞƏ ən üstdədir: DOSTLAR ekranı ondan sonra açıla bilər və
+	# "SORĞU GÖNDƏRİLDİ" onun arxasında qalardı.
+	move_child(_toast, -1)
 	if _toast_tween != null and _toast_tween.is_valid():
 		_toast_tween.kill()
 	var head_lbl := _toast.get_child(0) as Label
@@ -1058,6 +1134,366 @@ func _notify(title: String, sub: String, color: Color) -> void:
 	t.tween_interval(1.1 if sub.is_empty() else 2.6)
 	t.tween_property(_toast, "modulate:a", 0.0, 0.3)
 	t.tween_callback(func() -> void: _toast.visible = false)
+
+
+# ---------------------------------------------------------------- dostlar
+
+## DOSTLAR düyməsi, «+» yuvaları, yoldaşlar və dəvət kartı.
+##
+## Brawl Stars-ın ana ekranında qəhrəmanın iki yanında iki «+» kvadratı
+## durur: toxunanda dost siyahısı açılır, dəvət qəbul olunanda yuvada
+## yoldaşın brawler-i peyda olur. Bizdə də eynidir — yuva yoldaşın NÖVÜNÜN
+## qəhrəman şəkli ilə dolur, üstündə adı, hazırdırsa yaşıl işarə, liderdirsə tac.
+##
+## DOSTLAR düyməsi SAĞ lentdədir — Brawl Stars-da "Friends" və "Club"
+## sağ sütundadır, sol lent isə mağaza və brawler-lərindir.
+func _build_social() -> void:
+	var rail_top := -(RAIL.y * 1.5 + RAIL_GAP) - 46.0
+	_friends_btn = _icon_button("DOSTLAR", ICON_FRIENDS, 16, func() -> void:
+		_open_friends(false))
+	_friends_btn.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
+	_friends_btn.offset_right = -PAD
+	_friends_btn.offset_left = -(PAD + RAIL.x)
+	_friends_btn.offset_top = rail_top
+	_friends_btn.offset_bottom = rail_top + RAIL.y
+
+	# Qırmızı nişan — cavab gözləyən sorğu və dəvətlərin sayı (Brawl Stars-ın
+	# "1" nişanı kimi düymənin yuxarı-sağ küncündən çıxır).
+	_friends_badge = Label.new()
+	_friends_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_friends_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_friends_badge.position = Vector2(RAIL.x - 26.0, -12.0)
+	_friends_badge.size = Vector2(36, 36)
+	_friends_badge.add_theme_font_size_override("font_size", 19)
+	_friends_badge.add_theme_color_override("font_color", Palette.TEXT)
+	var bsb := ChunkyBox.make(Palette.DANGER, false, 18.0, 3.0)
+	bsb.outline_w = 3.0
+	bsb.set_content_margin_all(0.0)
+	_friends_badge.add_theme_stylebox_override("normal", bsb)
+	_friends_badge.add_theme_font_override("font", ChunkyBox.heavy_font())
+	ChunkyBox.stroke(_friends_badge, 4, true)
+	_friends_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_friends_btn.add_child(_friends_badge)
+
+	for i in 2:
+		# ── boş yuva: «+» ──
+		var slot := Button.new()
+		slot.text = "+"
+		slot.size = Vector2(SLOT, SLOT)
+		slot.add_theme_font_size_override("font_size", 64)
+		for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+			slot.add_theme_color_override(state, Palette.TEXT)
+		ChunkyBox.stroke(slot, 8, true)
+		for state in ["normal", "hover", "pressed"]:
+			var sb := StyleBoxFlat.new()
+			# Yarı-şəffaf ağ kvadrat — Brawl Stars-ın komanda yuvasının dili:
+			# "burada kimsə ola bilər", amma düymə kimi qışqırmır.
+			sb.bg_color = Color(1, 1, 1, 0.26 if state == "hover" else 0.18)
+			sb.border_color = Color(1, 1, 1, 0.55)
+			sb.set_border_width_all(3)
+			sb.set_corner_radius_all(16)
+			slot.add_theme_stylebox_override(state, sb)
+		slot.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		slot.pressed.connect(func() -> void:
+			Sfx.play("ui_click")
+			_open_friends(true))
+		add_child(slot)
+		_squash(slot, Vector2(SLOT, SLOT))
+		_slots.append(slot)
+
+		# ── dolu yuva: yoldaşın qəhrəmanı ──
+		var mate := Sprite2D.new()
+		mate.centered = false
+		mate.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		mate.visible = false
+		add_child(mate)
+		# Qəhrəmandan ƏVVƏL çəkilir: yoldaş arxadadır.
+		move_child(mate, _hero.get_index())
+		_mates.append(mate)
+
+		var plate := PanelContainer.new()
+		plate.add_theme_stylebox_override("panel", _info_style(12.0))
+		plate.mouse_filter = Control.MOUSE_FILTER_STOP
+		plate.gui_input.connect(func(e: InputEvent) -> void:
+			var mb := e as InputEventMouseButton
+			if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+				Sfx.play("ui_click")
+				_open_friends(false))
+		add_child(plate)
+		var pv := VBoxContainer.new()
+		pv.add_theme_constant_override("separation", -4)
+		pv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		plate.add_child(pv)
+		var nm := Hud._make_label(20, Palette.TEXT)
+		nm.theme_type_variation = "Heading"
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ChunkyBox.stroke(nm, 5, true)
+		pv.add_child(nm)
+		var st := Hud._make_label(14, Palette.TEXT_MUTED)
+		st.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		pv.add_child(st)
+		_mate_plates.append(plate)
+
+		var crown := _crown_rect()
+		add_child(crown)
+		_mate_crowns.append(crown)
+
+	_my_crown = _crown_rect()
+	add_child(_my_crown)
+	_build_invite_card()
+
+
+func _crown_rect() -> TextureRect:
+	var c := TextureRect.new()
+	c.texture = load(ICON_CROWN)
+	c.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	c.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	c.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	c.size = Vector2(46, 38)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.visible = false
+	return c
+
+
+## Komanda dəyişdi (və ya menyu açıldı) — yuvalar, OYNA, rejim kartı, nişan.
+func _refresh_party() -> void:
+	if _friends_btn == null:
+		return
+	var n := Friends.badge_count()
+	_friends_badge.text = str(n) if n < 10 else "9+"
+	_friends_badge.visible = n > 0
+
+	var mates := Friends.mates()
+	var home := _sheet == null or not _sheet.visible
+	var leader := str(Friends.party.get("leader", ""))
+	for i in 2:
+		var has := i < mates.size()
+		_slots[i].visible = home and not has
+		_mates[i].visible = home and has
+		_mate_plates[i].visible = home and has
+		_mate_crowns[i].visible = home and has and str(mates[i][0]) == leader
+		if not has:
+			continue
+		var m: Array = mates[i]
+		var tex := load(_HEROES.get(Const.species_from(int(m[2])), _HEROES[Const.Species.CILIATE])) as Texture2D
+		if _mates[i].texture != tex:
+			_mates[i].texture = tex
+			_mates[i].offset = Vector2(-tex.get_width() * 0.5, -tex.get_height() * 0.97)
+		var gone := int(m[4]) == Social.Presence.OFFLINE
+		# Qopmuş yoldaş SOLUQ görünür: yeri 30 s saxlanılır (bax
+		# [constant Social.PARTY_GRACE]), amma indi oynaya bilmir.
+		_mates[i].modulate = Color(1, 1, 1, 0.45 if gone else 1.0)
+		var pv := _mate_plates[i].get_child(0)
+		(pv.get_child(0) as Label).text = str(m[1])
+		var st := pv.get_child(1) as Label
+		if bool(m[3]):
+			st.text = "HAZIR ✓"
+			st.add_theme_color_override("font_color", Palette.SAFE)
+		else:
+			st.text = "qopdu…" if gone else ("oyunda" if int(m[4]) == Social.Presence.GAME else "gözləyir")
+			st.add_theme_color_override("font_color", Palette.TEXT_MUTED)
+		_mate_plates[i].reset_size()
+	_my_crown.visible = home and Friends.party_size() >= 2 and Friends.is_leader()
+	_refresh_play()
+	_refresh_mode()
+
+
+## OYNA-nın yazısı. Komandada o, HAZIR düyməsidir və neçə nəfərin hazır
+## olduğunu deyir — Brawl Stars-da da yoldaşı gözləyəndə düymə bunu göstərir.
+func _refresh_play() -> void:
+	if _joining or _play == null:
+		return
+	if Friends.party_size() < 2:
+		_play.text = "OYNA"
+		_play.add_theme_font_size_override("font_size", 50)
+		ChunkyBox.apply(_play, Palette.MENU_PLAY, 20.0, 10.0)
+		return
+	var ready := Friends.am_ready()
+	_play.text = ("HAZIR %d/%d  ✕" if ready else "OYNA  %d/%d") % [Friends.ready_count(), Friends.party_size()]
+	_play.add_theme_font_size_override("font_size", 34 if ready else 42)
+	# Hazır olanda düymə YAŞILA keçir — "gözləyirəm" vəziyyəti rəngdən oxunur,
+	# sarı isə yenə "bas" deməkdir.
+	ChunkyBox.apply(_play, Palette.SAFE.darkened(0.12) if ready else Palette.MENU_PLAY, 20.0, 10.0)
+
+
+## Yoldaşın ayaq nöqtəsi.
+##
+## Məsafə QƏHRƏMANIN ENİNDƏN çıxır, sabit deyil: amöb kirpiklidən 1.6 dəfə
+## enlidir və sabit məsafədə ona dəyirdi. Yan lentlərə isə girmir — dar
+## (16:9) ekranda bir az qəhrəmanın arxasına keçir, çünki yoldaş ARXADADIR.
+func _mate_foot(i: int) -> Vector2:
+	var side := -1.0 if i == 0 else 1.0
+	var mw := maxf(_mate_size(i).x, SLOT) * 0.5
+	var d := _hero_size().x * 0.5 + mw + MATE_GAP
+	var room := size.x * 0.5 - (PAD + RAIL.x + MATE_GAP) - mw
+	# Bir az YUXARIDA (arxada) dururlar — ön planda sənin qəhrəmanındır.
+	return _foot() + Vector2(side * minf(d, room), -size.y * 0.025)
+
+
+func _mate_size(i: int) -> Vector2:
+	var tex := _mates[i].texture
+	if tex == null:
+		return Vector2.ZERO
+	return tex.get_size() * _mate_scale(tex)
+
+
+func _mate_scale(tex: Texture2D) -> float:
+	var ts := tex.get_size()
+	return minf(size.y * HERO_BOX.x * MATE_SCALE / ts.x, size.y * HERO_BOX.y * MATE_SCALE / ts.y)
+
+
+## Yoldaşlar da nəfəs alır (öz qəhrəmanınla FƏRQLİ fazada — yoxsa üçü
+## əsgər kimi eyni anda şişərdi), yuvalar və lövhələr onların yerinə düzülür.
+func _pose_mates() -> void:
+	if _mates.is_empty():
+		return
+	for i in 2:
+		var foot := _mate_foot(i)
+		var slot := _slots[i]
+		slot.position = foot - Vector2(SLOT * 0.5, size.y * HERO_BOX.y * MATE_SCALE * 0.72)
+		var mate := _mates[i]
+		if mate.texture == null:
+			continue
+		var k := _mate_scale(mate.texture)
+		var squash := sin(_clock * TAU / BREATH_T + 1.7 + float(i) * 2.1) * BREATH
+		mate.scale = Vector2(1.0 + squash, 1.0 - squash) * k * _hero_in
+		mate.position = foot
+		var ms := _mate_size(i)
+		var plate := _mate_plates[i]
+		plate.position = Vector2(foot.x - plate.size.x * 0.5, foot.y - ms.y * 0.97 - plate.size.y - 4.0)
+		var crown := _mate_crowns[i]
+		crown.position = plate.position + Vector2(plate.size.x * 0.5 - crown.size.x * 0.5, -crown.size.y + 8.0)
+	var mine := get_node_or_null("Plate") as Control
+	if mine != null:
+		_my_crown.position = mine.position + Vector2(mine.size.x * 0.5 - _my_crown.size.x * 0.5, -_my_crown.size.y + 8.0)
+
+
+## DOSTLAR ekranı. [param inviting] — «+» yuvasından açılıb (başlıq dəvət deyir);
+## [param tag] — linkdən gələn dost kodu, sahəyə yazılır.
+func _open_friends(inviting: bool, tag := "") -> void:
+	if _friends_view != null and is_instance_valid(_friends_view):
+		return
+	var view := FriendsView.new()
+	view.invite_mode = inviting
+	view.prefill = tag
+	add_child(view)
+	_friends_view = view
+	view.closed.connect(func() -> void: _friends_view = null)
+
+
+func _on_friends_notice(title: String, sub: String, kind: String) -> void:
+	_notify(title, sub, Palette.WARNING if kind == "warn" else Palette.MENU_PLAY)
+
+
+## Dəvət kartı — ekranın yuxarısında, Brawl Stars-ın komanda dəvəti kimi:
+## kim çağırır, hansı rejim, QƏBUL / ✕ və sönən vaxt zolağı.
+func _build_invite_card() -> void:
+	_invite_card = PanelContainer.new()
+	_invite_card.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_invite_card.offset_left = -300.0
+	_invite_card.offset_right = 300.0
+	_invite_card.offset_top = 100.0
+	_invite_card.offset_bottom = 196.0
+	_invite_card.pivot_offset = Vector2(300.0, 0.0)
+	var sb := ChunkyBox.make(Palette.MENU_PANEL.lightened(0.05), false, 16.0, 6.0)
+	sb.set_content_margin_all(10.0)
+	sb.content_margin_bottom = 14.0
+	_invite_card.add_theme_stylebox_override("panel", sb)
+	_invite_card.visible = false
+	add_child(_invite_card)
+
+	# Kart konteynerdir və uşaqlarını özü düzür — zolaq sətrin ALTINDA olsun
+	# deyə ikisi bir şaquli qutudadır (birbaşa uşaq olsaydı, zolaq bütün kartı örtərdi).
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 6)
+	_invite_card.add_child(stack)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	stack.add_child(row)
+	var icon := TextureRect.new()
+	icon.texture = load(ICON_INVITE)
+	icon.custom_minimum_size = Vector2(70, 60)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	row.add_child(icon)
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", -2)
+	row.add_child(col)
+	var who := Hud._make_label(24, Palette.MENU_PLAY)
+	who.theme_type_variation = "Heading"
+	who.clip_text = true
+	ChunkyBox.stroke(who, 6, true)
+	col.add_child(who)
+	var what := Hud._make_label(15, Palette.TEXT)
+	what.clip_text = true
+	col.add_child(what)
+
+	for spec in [["QƏBUL", Palette.SAFE.darkened(0.2), true], ["✕", Palette.DANGER.darkened(0.3), false]]:
+		var b := Button.new()
+		b.text = spec[0]
+		b.custom_minimum_size = Vector2(118 if spec[2] else 60, 58)
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		b.add_theme_font_size_override("font_size", 22)
+		for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+			b.add_theme_color_override(state, Palette.TEXT)
+		ChunkyBox.stroke(b, 6, true)
+		ChunkyBox.apply(b, spec[1], 14.0, 6.0)
+		var accept: bool = spec[2]
+		b.pressed.connect(func() -> void:
+			Sfx.play("ui_click")
+			Friends.answer_invite(_invite_tag, accept)
+			_hide_invite())
+		row.add_child(b)
+
+	# Vaxt zolağı kartın alt kənarında — dəvətin nə qədər qaldığı.
+	_invite_bar = Panel.new()
+	var bar_sb := StyleBoxFlat.new()
+	bar_sb.bg_color = Palette.MENU_PLAY
+	bar_sb.set_corner_radius_all(3)
+	_invite_bar.add_theme_stylebox_override("panel", bar_sb)
+	_invite_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_invite_bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_invite_bar.custom_minimum_size = Vector2(0, 5)
+	stack.add_child(_invite_bar)
+
+
+func _show_invite(tag: String) -> void:
+	var inv: Dictionary = Friends.invites.get(tag, {})
+	if inv.is_empty() or _invite_card == null:
+		return
+	_invite_tag = tag
+	var col := _invite_card.get_child(0).get_child(0).get_child(1)
+	(col.get_child(0) as Label).text = str(inv["name"]).to_upper()
+	(col.get_child(1) as Label).text = "səni komandasına çağırır · %s · %d/%d" % [
+		Const.mode_name(int(inv["mode"])), int(inv["size"]), Social.PARTY_MAX]
+	_invite_card.visible = true
+	move_child(_invite_card, -1)
+	_invite_card.scale = Vector2(0.7, 0.7)
+	create_tween().tween_property(_invite_card, "scale", Vector2.ONE, 0.22) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	Sfx.play("level_up", 0.1)
+	Settings.vibrate(40)
+
+
+func _hide_invite() -> void:
+	_invite_tag = ""
+	_invite_card.visible = false
+	# Başqa cavabsız dəvət qalıbsa, növbəti o olur.
+	if not Friends.invites.is_empty():
+		_show_invite(Friends.invites.keys()[-1])
+
+
+func _tick_invite() -> void:
+	if _invite_card == null or not _invite_card.visible:
+		return
+	var inv: Dictionary = Friends.invites.get(_invite_tag, {})
+	if inv.is_empty():
+		_hide_invite()
+		return
+	var left := clampf((float(inv["until"]) - Friends._clock) / Social.INVITE_TTL, 0.0, 1.0)
+	_invite_bar.custom_minimum_size.x = (_invite_card.size.x - 20.0) * left
 
 
 # ---------------------------------------------------------------- vərəq
@@ -1518,6 +1954,15 @@ func _build_mode_list() -> void:
 		row.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 		row.pressed.connect(func() -> void:
 			Sfx.play("ui_click")
+			# Komandada rejimi lider seçir və rejim komandaya SIĞMALIDIR. Tək
+			# üzvlü komanda da (kod yaradılıb, hələ kimsə gəlməyib) serverə
+			# deyilir — yoxsa kodla gələn yoldaş köhnə rejimə düşərdi.
+			if Friends.in_party():
+				if Friends.party_size() > Social.party_limit(int(mode)):
+					var t := Friends.notice_text("mode_small", str(int(mode)))
+					_notify(t[0], t[1], Palette.WARNING)
+					return
+				Friends.set_mode(int(mode))
 			Net.mode = mode
 			_save_settings()
 			_refresh_mode()
@@ -1567,6 +2012,8 @@ func _build_mode_list() -> void:
 func _open_sheet(which: String) -> void:
 	_ensure_sheet()
 	_hero.visible = false
+	for m in _mates:
+		m.visible = false
 	for c in _home_ui():
 		c.visible = false
 	_sheet_title.text = "MİKROBLAR" if which == "species" else "REJİMLƏR"
@@ -1604,6 +2051,9 @@ func _close_sheet() -> void:
 	_hero.visible = true
 	for c in _home_ui():
 		c.visible = true
+	# Yuvaların görünməsi komandadan asılıdır — hamısını açmaq boş yuvanın
+	# yerində gizli yoldaşın lövhəsini də göstərərdi.
+	_refresh_party()
 
 
 ## Ana ekranın öz Control-ları — vərəq, ayarlar ekranı və bildiriş xaric.
@@ -1613,7 +2063,8 @@ func _home_ui() -> Array[Control]:
 	var out: Array[Control] = []
 	for child in get_children():
 		var c := child as Control
-		if c != null and c != _sheet and c != _settings and c != _toast:
+		if c != null and c != _sheet and c != _settings and c != _toast \
+				and c != _invite_card and c != _friends_view:
 			out.append(c)
 	return out
 
@@ -1880,6 +2331,14 @@ func _probe_server() -> void:
 
 
 func _on_play() -> void:
+	# Komandada OYNA "HAZIRAM" deməkdir: hamı hazır olanda server komandanı
+	# BİRLİKDƏ oyuna salır (bax [method SocialHub._try_start]). İkinci basış
+	# hazırlığı geri alır — Brawl Stars-da da belədir.
+	if Friends.party_size() >= 2:
+		Net.nickname = _clean_nick()
+		_save_settings()
+		Friends.set_ready(not Friends.am_ready())
+		return
 	# Basılan düymə qoşulmanı həm başladır, həm ləğv edir — vəziyyəti O
 	# göstərdiyinə görə ləğv də ONUN üstündədir.
 	if _joining:
@@ -1931,6 +2390,11 @@ func _online_failed(hint := "Botlarla MƏŞQ oynaya bilərsən.") -> void:
 
 
 func _practice() -> void:
+	# MƏŞQ oflayndır — bağlantı bağlanır və üzv 30 s sonra komandadan düşərdi.
+	# Brawl Stars-da da komandada məşq meydançasına girmək olmur.
+	if Friends.party_size() >= 2:
+		_notify("MƏŞQ TƏK OYNANIR", "Əvvəl komandadan çıx — DOSTLAR ekranında.", Palette.WARNING)
+		return
 	Net.nickname = _clean_nick()
 	_save_settings()
 	# Yoxlama üçün açılmış bağlantı məşqdə lazım deyil — açıq qalsa server
@@ -1988,6 +2452,8 @@ func _set_joining(busy: bool) -> void:
 	_joining = busy
 	_play.text = "QOŞULUR…  ✕" if busy else "OYNA"
 	_play.add_theme_font_size_override("font_size", 30 if busy else 50)
+	if not busy:
+		_refresh_play()
 
 
 ## Bağlantının daxili vəziyyəti — ekrana çıxmır (bax [method _probe_server]).
@@ -2011,6 +2477,8 @@ func _clean_nick() -> String:
 func _save_settings() -> void:
 	Net.nickname = _clean_nick()
 	Settings.save()
+	# Ad, növ və rejim komanda yoldaşlarının podiumunda da görünür.
+	Friends.profile_changed()
 
 
 # ---------------------------------------------------------------- parçalar

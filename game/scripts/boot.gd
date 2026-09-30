@@ -28,6 +28,12 @@ func _ready() -> void:
 		_start_map(args)
 	elif args.has("--agent"):
 		_start_agent(args)
+	elif args.has("--social-demo"):
+		# Dostlar/komanda ekranlarının stendi (bax `tools/social_demo.gd`).
+		var demo = _tool("social_demo").new()
+		demo.view = _arg_value(args, "--social-demo", "home")
+		get_tree().root.add_child.call_deferred(demo)
+		_setup_screenshot(args)
 	else:
 		# `_ready` icra olunarkən ağac hələ məşğuldur — səhnə dəyişimi
 		# növbəti kadra təxirə salınmalıdır.
@@ -235,6 +241,11 @@ func _start_auto_client(args: PackedStringArray) -> void:
 	client.species = int(_arg_value(args, "--species", "0"))
 	# Vuruş probe-unun kadrları (bax [HitProbe]) — yalnız pəncərəli client-də.
 	client.probe_shots = _arg_value(args, "--probe-shots", "")
+	# Dostlar və komanda: `--secret` kimlik, `--befriend-secret` kimə sorğu,
+	# `--party N` neçə nəfərlik komanda ilə girmək (bax [AutoClient]).
+	client.secret = _arg_value(args, "--secret", "")
+	client.befriend_secret = _arg_value(args, "--befriend-secret", "")
+	client.party = int(_arg_value(args, "--party", "0"))
 	get_tree().root.add_child.call_deferred(client)
 
 	# `--shot` burada da işləməlidir: onsuz ONLAYN oyunun görüntüsünü çəkmək

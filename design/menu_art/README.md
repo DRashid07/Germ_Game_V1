@@ -45,6 +45,22 @@ görünüş itmir — növün səhifəsindəki «OYUNDA» pəncərəsi canlı `G
 | `game/assets/menu/super_net.png` | `raw/icons/super_net.png` | Super: AKSOPODİYA TORU |
 | `game/assets/menu/super_cyst.png` | `raw/icons/super_cyst.png` | Super: SİSTLƏŞMƏ |
 
+**DOSTLAR və KOMANDA** (bax kök `README.md`, «Dostlar və komanda»):
+
+| Fayl (oyunda) | Xam mənbə | Nə |
+|---|---|---|
+| `game/assets/menu/icon_friends.png` | `raw/icons/icon_friends.png` | Sağ lent: DOSTLAR — iki mikrob psevdopodla "əl sıxır" |
+| `game/assets/menu/icon_add_friend.png` | `raw/icons/icon_add_friend.png` | DOST ƏLAVƏ ET — laym mikrob və yaşıl «+» nişanı |
+| `game/assets/menu/icon_crown.png` | `raw/icons/icon_crown.png` | Komanda LİDERİ — qızılı tac, daşları qida topu |
+| `game/assets/menu/icon_invite.png` | `raw/icons/icon_invite.png` | KOMANDA DƏVƏTİ — məktub, mikrob möhürü ilə |
+| `game/assets/menu/icon_link.png` | `raw/icons/icon_link.png` | PAYLAŞ / LİNK — iki firuzəyi zəncir halqası |
+
+Bu beşi `gpt-6-astra` modeli ilə, reasoning effort **`max`** çəkilib (Codex CLI
+0.159.2; 0.148 bu modeli tanımırdı). Brif: `brief/BRIEF_SOCIAL.md`, Codex-in
+hesabatı və faktiki promptlar: `brief/PROMPTS_SOCIAL.md`. Stil istinadı kimi
+dörd təsdiqlənmiş ikon `-i` ilə verildi (`mode_duo`, `icon_quests`,
+`icon_settings`, `class_guard`) — ayrıca istinad vərəqinə ehtiyac qalmadı.
+
 Portretlər Brawl Stars brawler kartı kimidir: qəhrəman yaxından, qəhrəmanlıq
 pozasında, sinfin rəngində şüalı fonda; kartın alt 25%-i sakitdir — ad orada
 yazılır. Qəhrəman şəkilləri (`raw/hero_*.png`) istinad kimi verilib ki, dizayn

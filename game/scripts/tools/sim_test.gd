@@ -36,6 +36,8 @@ static func run() -> int:
 	_test_team_bits_roundtrip()
 	_test_duo_teams()
 	_test_duo_revive()
+	_test_duo_revive_disconnect()
+	_test_duo_revive_cancel_result()
 	_test_super_survives_packet_pileup()
 	_test_spawn_inside_wet_zone()
 	_test_trio_rounds()
@@ -143,6 +145,8 @@ static func run() -> int:
 	_test_heliozoan_gait()
 	_test_amoeba_crawl()
 	_test_eject_strain()
+	# Dostluq və komanda — ayrıca faylda, amma eyni sayğacla (bax [SocialTest]).
+	SocialTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 
@@ -3580,6 +3584,88 @@ static func _test_duo_revive() -> void:
 			"dirilən mikrobun tutumu SIFIRLANIR (%d)" % world.sim.germs[mate].capacity)
 		_check(world.sim.germs[mate].team == my_team,
 			"dirilən mikrob ÖZ komandasına qayıdır")
+
+
+## CÜT-ü geriyə sayımdan keçirib PLAYING-ə çatdırır; A və B bir komandadadır.
+static func _duo_pair(seed_id: int) -> World:
+	var world := World.new(seed_id, Const.Mode.DUO)
+	world.add_party([[A_ID, "A", 0], [B_ID, "B", 1]])
+	world.tick(Const.TICK_DELTA)
+	for i in int(Const.COUNTDOWN_TIME / Const.TICK_DELTA) + 2:
+		world.tick(Const.TICK_DELTA)
+	return world
+
+
+## CÜT: dirilməni gözləyən oyunçunun bağlantısı kəsilir.
+##
+## Ölü mikrob `sim.germs`-də yoxdur, oyunçu isə hələ dünyadadır (yoldaşı onu
+## diriltməlidir). Əvvəl [method World.suspend_peer] belə oyunçunu tanımırdı:
+## "dayandırılmış" sayılmırdı və server 20 saniyə boyu qopmuş peer-ə 30 Hz-lə
+## snapshot göndərməyə çalışırdı ("unknown peer ID" xətası). Qayıtmaq da
+## alınmırdı — server ölü mikrobu "gözləmədə partladı" sayırdı. Tərk edən
+## oyunçunun növbəsi isə qalırdı və 15 s sonra sahibsiz mikrob dirilirdi.
+static func _test_duo_revive_disconnect() -> void:
+	var world := _duo_pair(48)
+	var team: int = world.sim.germs[A_ID].team
+	world.sim.germs[A_ID].balls = 0
+	world.tick(Const.TICK_DELTA)
+	_check(world._revive.has(A_ID), "qopma testi: A dirilmə növbəsindədir")
+	var color := int(world._revive[A_ID]["color"])
+
+	world.suspend_peer(A_ID)
+	_check(world.is_suspended(A_ID),
+		"dirilmə gözləyən oyunçu qopanda 'dayandırılmış' sayılır — ona snapshot getmir")
+	_check(world.holds(A_ID), "dirilmə gözləyənin matçda yeri var — qayıda bilər")
+
+	world.resume_peer(A_ID, 303)
+	_check(world._revive.has(303) and not world._revive.has(A_ID) and not world.is_suspended(303),
+		"qayıdanda dirilmə növbəsi yeni peer-ə keçir")
+	var info := world.join_info_for(303)
+	_check(int(info["species"]) == 0 and str(info["name"]) == "A" and int(info["color"]) == color,
+		"ölü ikən qayıdana öz adı, növü və rəngi gedir (%s)" % str(info))
+
+	for i in int(Const.REVIVE_TIME / Const.TICK_DELTA) + 4:
+		if world.sim.germs.has(B_ID):
+			world.sim.germs[B_ID].balls = Const.START_BALLS
+		world.tick(Const.TICK_DELTA)
+	_check(world.sim.germs.has(303) and world.sim.germs[303].team == team,
+		"qayıdan oyunçu yeni id ilə öz komandasında dirilir")
+
+	# Tərk etmə dirilməni gözləyərkən (ayrı dünya — yuxarıdakının nəticəsindən
+	# asılı olmasın): növbə də silinməlidir.
+	var left := _duo_pair(50)
+	left.sim.germs[B_ID].balls = 0
+	left.tick(Const.TICK_DELTA)
+	_check(left._revive.has(B_ID), "B dirilmə növbəsindədir")
+	left.drop_peer(B_ID)
+	for i in int(Const.REVIVE_TIME / Const.TICK_DELTA) + 4:
+		if left.sim.germs.has(A_ID):
+			left.sim.germs[A_ID].balls = Const.START_BALLS
+		left.tick(Const.TICK_DELTA)
+	_check(left.sim.germs.has(A_ID), "yoldaş (A) sağ qalıb — dirilmə şərti ödənir")
+	_check(not left.sim.germs.has(B_ID) and not left._revive.has(B_ID),
+		"tərk edən oyunçu dirilmir — dünyada sahibsiz mikrob qalmır")
+
+
+## CÜT: yoldaşı da ölüb dirilmə LƏĞV olunanda gözləyən insan NƏTİCƏ alır.
+##
+## Əvvəl ona yer yazılırdı, amma nəticə göndərilmirdi: cüt matçdan çıxmışdı,
+## oyunçu isə matç bitənə qədər nəticəsiz izləyici qalırdı.
+static func _test_duo_revive_cancel_result() -> void:
+	var world := _duo_pair(49)
+	world.sim.germs[A_ID].balls = 0
+	var out: Array = world.tick(Const.TICK_DELTA)
+	_check(world._revive.has(A_ID) and out.is_empty(), "ləğv testi: A dirilmə növbəsindədir, nəticə yoxdur")
+	world.sim.germs[B_ID].balls = 0
+	var ids := []
+	for i in 3:
+		for entry in world.tick(Const.TICK_DELTA):
+			ids.append(int(entry["id"]))
+	_check(ids.has(B_ID), "yoldaşı olmayan B adi ölümlə nəticə alır")
+	_check(ids.has(A_ID) and not world._revive.has(A_ID),
+		"dirilməsi ləğv olunan A da nəticə alır (%s)" % str(ids))
+	_check(world.places.has(A_ID) and world.places.has(B_ID) and world.places[A_ID] != world.places[B_ID],
+		"ikisinin də ayrı yeri var")
 
 
 ## ÜÇLÜK: 3v3, raundlar, üç raundun ikisini udan qalib.

@@ -82,6 +82,9 @@ var round_no := 1
 ## Ölən mikrob dünyadan çıxır, amma yeri komandaya SAXLANILIR. Yoldaşı da
 ## ölsə, növbə təmizlənir və cüt matçdan çıxır.
 var _revive := {}
+## Dirilməsi LƏĞV olunan insanların ölüm qeydləri — [method tick] onları
+## partlayanların siyahısına qatır ki, [Lobby] nəticəni göndərsin.
+var _revive_lost: Array = []
 
 var _frame_germs: Array = []    ## [Vector2 pos, Array row]
 var _frame_shots: Array = []
@@ -124,9 +127,56 @@ func has_room() -> bool:
 	return peers.size() < Const.mode_capacity(int(mode))
 
 
+## [param n] nəfərlik komanda bu dünyaya BİRLİKDƏ sığırmı.
+##
+## Komandalı rejimdə boş yuva azdır: yoldaşlar EYNİ komandada olmalıdır, yəni
+## insanları ən azı n yeri boş olan bir komanda lazımdır. Botlar sayılmır —
+## onlar insana yer verir (bax [method add_player]).
+func has_room_for(n: int) -> bool:
+	if peers.size() + n > Const.mode_capacity(int(mode)):
+		return false
+	return not Const.is_team_mode(int(mode)) or party_team(n) >= 0
+
+
+## Komandanın oturacağı komanda: [param n] insan sığan və insanı ən az olan.
+## Komandasız rejimdə və ya yer yoxdursa -1.
+func party_team(n: int) -> int:
+	if not Const.is_team_mode(int(mode)):
+		return -1
+	var size := Const.team_size(int(mode))
+	var humans := PackedInt32Array()
+	humans.resize(Const.mode_capacity(int(mode)) / size)
+	for peer in peers:
+		var t := int(teams.get(peer, -1))
+		if t >= 0 and t < humans.size():
+			humans[t] += 1
+	var best := -1
+	for i in humans.size():
+		if humans[i] + n <= size and (best < 0 or humans[i] < humans[best]):
+			best = i
+	return best
+
+
+## Dostlar komandası: hamısı EYNİ komandaya oturur (CÜT/ÜÇLÜK), sonsuz arenada
+## isə sadəcə eyni dünyaya düşür. [param members] — `[[peer, ad, növ], ...]`.
+## Çağıran əvvəlcə [method has_room_for] ilə yoxlamalıdır.
+func add_party(members: Array) -> void:
+	var team := party_team(members.size())
+	for m in members:
+		add_player(int(m[0]), str(m[1]), Const.species_from(int(m[2])), team)
+
+
 ## Oyunçunu dünyaya salır və mikrobunu doğurur.
+##
+## [param team] -2 = komandanı dünya özü seçir (tək oyunçu). Başqa dəyər
+## komandanı MƏCBURİ edir — dostlar komandası üçündür (bax [method add_party]):
+## o komandada bot varsa, yer məhz onun botundan açılır.
 func add_player(peer: int, player_name: String,
-		species := Const.Species.CILIATE) -> Sim.GermState:
+		species := Const.Species.CILIATE, team := -2) -> Sim.GermState:
+	if team >= 0:
+		while _team_count(team) >= Const.team_size(int(mode)):
+			if not _remove_one_bot(team):
+				break
 	# İnsan gələndə bot yerini ona verir — dünya heç vaxt hədddən çox olmur.
 	if sim.germs.size() >= Const.mode_capacity(int(mode)):
 		_remove_one_bot()
@@ -134,7 +184,7 @@ func add_player(peer: int, player_name: String,
 	_last_seq[peer] = 0
 	tokens[peer] = _new_token()
 	var g := sim.add_germ(peer, player_name, _free_color(), false, species)
-	g.team = _free_team()
+	g.team = _free_team() if team == -2 else team
 	teams[peer] = g.team
 	return g
 
@@ -142,14 +192,18 @@ func add_player(peer: int, player_name: String,
 ## Dünyaya girəndə oyunçuya göndərilən məlumat.
 func join_info_for(peer: int) -> Dictionary:
 	var g: Sim.GermState = sim.germs.get(peer)
+	# CÜT-də dirilməni gözləyən oyunçunun mikrobu yoxdur, amma qeydi var —
+	# qopub qayıdanda rəngi, növü və adı oradan gəlir. Onsuz qayıdan oyunçu
+	# HUD-da başqa rəngdə, super düyməsində başqa növlə görünərdi.
+	var r: Dictionary = _revive.get(peer, {})
 	return {
 		"world": id,
 		"you": peer,
-		"color": g.color if g != null else 0,
+		"color": g.color if g != null else int(r.get("color", 0)),
 		# Növ serverdən geri qaytarılır: yenidən qoşulanda oyunçu köhnə mikrobuna
 		# qayıdır və onun növü serverdəki qeyddir, menyudakı seçim deyil.
-		"species": int(g.species) if g != null else int(Const.Species.CILIATE),
-		"name": g.name if g != null else "",
+		"species": int(g.species) if g != null else int(r.get("species", Const.Species.CILIATE)),
+		"name": g.name if g != null else str(r.get("name", "")),
 		"mode": int(mode),
 		"tick_rate": Const.TICK_RATE,
 		"token": str(tokens.get(peer, "")),
@@ -288,9 +342,16 @@ func _step_revive(dt: float) -> void:
 	for gid in _revive.keys():
 		var r: Dictionary = _revive[gid]
 		# Yoldaşı da ölübsə dirilmə ləğv olunur — cüt matçdan çıxır.
+		#
+		# İnsan isə NƏTİCƏ almalıdır. Əvvəl ona yalnız yer yazılırdı: cüt
+		# matçdan çıxmışdı, oyunçu isə matç bitənə qədər nəticəsiz izləyici
+		# qalırdı. Ölüm qeydi onun öz partlamasındandır — partladan da, tutum da
+		# o anın rəqəmləridir, ləğv anının yox.
 		if _team_alive(int(r["team"])) <= 0:
 			_revive.erase(gid)
 			places[gid] = _teams_standing() + 1
+			if not bool(r["bot"]):
+				_revive_lost.append(r["entry"])
 			continue
 		r["left"] = float(r["left"]) - dt
 		if float(r["left"]) > 0.0:
@@ -471,12 +532,24 @@ func _add_bot() -> void:
 	teams[bid] = g.team
 
 
-func _remove_one_bot() -> void:
+## Bir botu çıxarır; [param team] verilibsə, yalnız o komandanın botunu.
+func _remove_one_bot(team := -1) -> bool:
 	for bid in _bots:
+		if team >= 0 and (not sim.germs.has(bid) or sim.germs[bid].team != team):
+			continue
 		_bots.erase(bid)
 		sim.remove_germ(bid)
 		_inputs.erase(bid)
-		return
+		return true
+	return false
+
+
+func _team_count(team: int) -> int:
+	var n := 0
+	for gid in sim.germs:
+		if sim.germs[gid].team == team:
+			n += 1
+	return n
 
 
 ## Əhalini [constant Const.MIN_POPULATION] səviyyəsində saxlayır.
@@ -656,6 +729,7 @@ func tick(dt: float) -> Array:
 				"name": String(entry.get("name", "Mikrob")),
 				"color": int(entry.get("color", 0)),
 				"species": int(entry.get("species", 0)),
+				"entry": entry,
 			}
 			if _bots.has(gid):
 				_bots.erase(gid)
@@ -668,6 +742,9 @@ func tick(dt: float) -> Array:
 			_bots.erase(gid)
 			continue
 		out.append(entry)
+
+	out.append_array(_revive_lost)
+	_revive_lost.clear()
 
 	if phase == Const.Phase.PLAYING and _match_over():
 		# ÜÇLÜK-də bir komandanın qırılması RAUNDU bitirir, matçı yox.
@@ -1045,8 +1122,13 @@ func token_of(peer: int) -> String:
 ##
 ## Mikrob hərəkət etmir və atəş açmır, amma vurula bilir və metabolizmi
 ## işləyir. Bu qəsdəndir: bağlantını kəsmək qorunma üsuluna çevrilməməlidir.
+##
+## Şərt MİKROB yox, OYUNÇUDUR: CÜT-də dirilməni gözləyənin mikrobu
+## `sim.germs`-də yoxdur. Əvvəl belə oyunçu "dayandırılmış" sayılmırdı və
+## [Lobby] 20 saniyə boyu qopmuş peer-ə 30 Hz-lə snapshot göndərməyə
+## çalışırdı — hər dəfə "unknown peer ID" xətası ilə.
 func suspend_peer(peer: int) -> void:
-	if not sim.germs.has(peer):
+	if not peers.has(peer):
 		return
 	suspended[peer] = true
 	# Saxlanan giriş silinir, yoxsa mikrob son əmrlə hərəkət etməyə davam edərdi.
@@ -1065,7 +1147,11 @@ func resume_peer(old_peer: int, new_peer: int) -> void:
 	if idx >= 0:
 		peers[idx] = new_peer
 
-	for src in [tokens, _last_seq]:
+	# `teams` və `places` da peer-ə bağlıdır: köçürülməsəydi, qayıdan oyunçunun
+	# snapshot-unda komandası -1 olardı və HUD yoldaşını düşmən kimi göstərərdi.
+	# `_revive` də: dirilməni gözləyərkən qayıdan oyunçu YENİ id ilə dirilməlidir,
+	# köhnə id ilə dirilən mikrob heç kimin olmazdı.
+	for src in [tokens, _last_seq, teams, places, _revive]:
 		if src.has(old_peer):
 			src[new_peer] = src[old_peer]
 			src.erase(old_peer)
@@ -1079,6 +1165,13 @@ func is_suspended(peer: int) -> bool:
 	return suspended.has(peer)
 
 
+## Oyunçunun matçda hələ YERİ varmı: mikrobu sağdır, və ya CÜT-də dirilməni
+## gözləyir. İkinci hal üçün `sim.germs.has` KİFAYƏT DEYİL — ölü mikrob oradan
+## çıxır, oyunçu isə matçdadır və yoldaşı onu diriltməlidir.
+func holds(peer: int) -> bool:
+	return sim.germs.has(peer) or _revive.has(peer)
+
+
 ## Oyunçu dünyanı tərk edir (partladı, çıxdı və ya qayıtmadı).
 func drop_peer(peer: int) -> void:
 	peers.erase(peer)
@@ -1087,6 +1180,9 @@ func drop_peer(peer: int) -> void:
 	tokens.erase(peer)
 	suspended.erase(peer)
 	sim.remove_germ(peer)
+	# Dirilmə növbəsi də: yoxsa matçı tərk edən (və ya qayıtmayan) oyunçunun
+	# mikrobu 15 s sonra dirilir və sahibsiz dünyada qalırdı.
+	_revive.erase(peer)
 
 
 func is_empty() -> bool:

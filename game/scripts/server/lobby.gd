@@ -31,6 +31,10 @@ var _orphans := {}
 ## Hər dünyaya son göndərilmiş reyestrin versiyası (bax [member World.roster_rev]).
 var _roster_sent := {}
 
+## Dostluq və komandalar (bax [SocialHub]). Lobby-nin içindədir, çünki
+## komanda oyuna MƏHZ buradan girir və "oyundadır" vəziyyəti buradan bilinir.
+var social := SocialHub.new()
+
 ## `--verbose` ilə açılır: hər 5 saniyədən bir dünyaların vəziyyətini yazır.
 var verbose := false
 var _inputs_seen := 0
@@ -49,6 +53,14 @@ var _dropped_ticks := 0
 
 func _ready() -> void:
 	Net.lobby = self
+	social.send = func(peer: int, method: String, args: Array) -> void:
+		# Dostluq RPC-ləri `/root/Friends`-dədir, Net-də yox (səbəb friends.gd-nin başında).
+		Friends.callv("rpc_id", [peer, method] + args)
+	social.start = join_party
+	# Dünyanın ÖZÜ yoxlanılır, `peer_world` qeydi yox: matçı bitmiş dünya
+	# bağlanır, qeyd isə oyunçu menyuya qayıdana qədər qalır — o arada oyunçu
+	# dostlarına əbədi "oyunda" görünərdi.
+	social.in_game = func(peer: int) -> bool: return _world_of(peer) != null
 	print("[lobby] hazırdır — dünya tutumu %d, minimum əhali %d" % [
 		Const.WORLD_CAPACITY, Const.MIN_POPULATION])
 
@@ -91,8 +103,35 @@ func join(peer: int, player_name: String, species := 0, mode := 0) -> void:
 	world.add_player(peer, names[peer], Const.species_from(species))
 	peer_world[peer] = world.id
 	Net.on_world_join.rpc_id(peer, world.join_info_for(peer))
+	social.set_in_game(peer, true)
 	print("[lobby] %s dünya #%d-ə girdi (%d insan)" % [
 		names[peer], world.id, world.human_count()])
+
+
+## Dostlar komandası hazırdır — hamısı BİR dünyaya, komandalı rejimdə BİR
+## komandaya ([method World.add_party]). [SocialHub] çağırır.
+##
+## Ad və növ komandanın qeydindən gəlir: üzv onları menyuda dəyişəndə
+## [method SocialHub.profile] qeydi yeniləyir.
+func join_party(peers: Array, mode: int) -> void:
+	var list := []
+	for peer in peers:
+		if peer_world.has(peer):
+			continue
+		var rec: Dictionary = social.online.get(social.tag_of_peer(int(peer)), {})
+		names[peer] = _sanitize(str(rec.get("name", "")))
+		list.append([int(peer), names[peer], int(rec.get("species", 0))])
+	if list.is_empty():
+		return
+	var world := _open_world(Const.mode_from(mode), list.size())
+	world.add_party(list)
+	for m in list:
+		var peer := int(m[0])
+		peer_world[peer] = world.id
+		Net.on_world_join.rpc_id(peer, world.join_info_for(peer))
+		social.set_in_game(peer, true)
+	print("[lobby] komanda (%d nəfər) dünya #%d-ə girdi: %s" % [
+		list.size(), world.id, ", ".join(list.map(func(m): return str(m[1])))])
 
 
 ## Həmin REJİMDƏ yeri olan ilk dünyanı qaytarır; yoxdursa yenisini açır.
@@ -100,12 +139,14 @@ func join(peer: int, player_name: String, species := 0, mode := 0) -> void:
 ## Matçlı rejimdə "yer var" şərti ikiqatdır: dünyada boş yuva olmalıdır VƏ
 ## matç hələ başlamamalıdır. Yarımçıq matça düşmək pisdir — gec gələn
 ## oyunçu yeni dünyaya düşür və orada sıfırdan başlayır.
-func _open_world(mode: Const.Mode) -> World:
+##
+## [param party] — neçə nəfər BİRLİKDƏ girir (bax [method World.has_room_for]).
+func _open_world(mode: Const.Mode, party := 1) -> World:
 	for wid in worlds:
 		var w: World = worlds[wid]
 		if w.mode != mode:
 			continue
-		if not w.has_room():
+		if not w.has_room_for(party):
 			continue
 		if mode != Const.Mode.ENDLESS and w.phase != Const.Phase.WAITING \
 				and w.phase != Const.Phase.COUNTDOWN:
@@ -123,6 +164,7 @@ func leave(peer: int) -> void:
 	var world := _world_of(peer)
 	peer_world.erase(peer)
 	names.erase(peer)
+	social.set_in_game(peer, false)
 	if world == null:
 		return
 	world.drop_peer(peer)
@@ -153,6 +195,7 @@ func route_input(peer: int, packed: Array) -> void:
 
 func _tick_worlds(dt: float) -> void:
 	_expire_orphans()
+	social.tick(dt)
 
 	var empty: Array[int] = []
 	for wid in worlds:
@@ -186,6 +229,10 @@ func _tick_worlds(dt: float) -> void:
 		var table := world.roster() if send_roster else {}
 		if send_roster:
 			_roster_sent[wid] = world.roster_rev
+			# Dünyada birlikdə olan insanlar bir-birinin "son oyunçular"
+			# siyahısına düşür — Brawl Stars-da döyüş jurnalından dost əlavə
+			# etmək kimi. Reyestr dəyişəndə çağırılır, yəni tick-də yox.
+			social.note_met(world.peers)
 
 		for peer in world.peers:
 			# Bağlantısı kəsilmiş oyunçuya snapshot göndərmək mənasızdır.
@@ -255,6 +302,7 @@ func _on_player_burst(world: World, entry: Dictionary) -> void:
 	world.drop_peer(peer)
 	peer_world.erase(peer)
 	names.erase(peer)
+	social.set_in_game(peer, false)
 
 
 func _report() -> void:
@@ -288,6 +336,9 @@ func _report() -> void:
 ## Oyunçu dərhal atılmır — mikrobu [constant REJOIN_GRACE] saniyə dünyada
 ## saxlanılır ki, qayıda bilsin.
 func remove_peer(peer: int) -> void:
+	# Dostluq kanalı dərhal bağlanır; komandadakı yer isə bir müddət saxlanılır
+	# (bax [method SocialHub.drop]).
+	social.drop(peer)
 	var world := _world_of(peer)
 	if world == null:
 		names.erase(peer)
@@ -319,7 +370,9 @@ func rejoin(peer: int, token: String) -> void:
 		return
 
 	var old_peer := int(orphan["peer"])
-	if not world.sim.germs.has(old_peer):
+	# `holds`, `sim.germs.has` yox: CÜT-də dirilməni gözləyənin mikrobu yoxdur,
+	# amma matçda yeri var — o da qayıda bilməlidir.
+	if not world.holds(old_peer):
 		# Gözləmə müddətində partladı.
 		_orphans.erase(token)
 		Net.on_rejoin_failed.rpc_id(peer)
@@ -333,6 +386,7 @@ func rejoin(peer: int, token: String) -> void:
 	names.erase(old_peer)
 
 	Net.on_world_join.rpc_id(peer, world.join_info_for(peer))
+	social.set_in_game(peer, true)
 	print("[lobby] %s dünya #%d-ə qayıtdı" % [names[peer], world.id])
 
 

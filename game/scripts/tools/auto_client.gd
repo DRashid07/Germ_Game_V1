@@ -28,9 +28,36 @@ var _arena: Arena = null
 var probe_shots := ""
 var _probe: HitProbe = null
 
+## ── Dostluq və komanda testi (bax README, «Dostlar və komanda») ──
+## Boş deyilsə, client bu gizli açarla tanınır (diskə yazılmır).
+var secret := ""
+## Bu açarın (vergüllə — açarların) sahibinə dostluq sorğusu göndərilir (kod açardan hesablanır —
+## test skripti kodu əvvəlcədən bilməli olmasın).
+var befriend_secret := ""
+## > 0 olanda client TƏK girmir: bu qədər nəfərlik komanda yığılır, hamı
+## HAZIR olur və server komandanı birlikdə oyuna salır.
+var party := 0
+var _asked := false
+var _invited := {}
+## HAZIR hansı komanda tərkibinə göndərilib — serverin cavabı gələnə qədər
+## hər [signal Friends.changed]-də təkrar göndərilməsin.
+var _ready_for := ""
+
 
 func _ready() -> void:
 	Net.nickname = label
+	Net.mode = Const.mode_from(mode)
+	Net.species = Const.species_from(species)
+	if not secret.is_empty():
+		Friends.use_secret(secret)
+		_log("oyunçu kodu #%s" % Friends.my_tag)
+	if party > 0:
+		Friends.changed.connect(_social_step)
+		Friends.invite_arrived.connect(func(tag: String) -> void:
+			_log("dəvət gəldi: %s" % tag)
+			Friends.answer_invite(tag, true))
+		Friends.notice.connect(func(title: String, sub: String, _k: String) -> void:
+			_log("bildiriş: %s — %s" % [title, sub]))
 	Net.connected_to_server.connect(_on_connected)
 	Net.connection_failed.connect(func(): _log("qoşulma alınmadı"))
 	Net.world_joined.connect(_on_world_joined)
@@ -55,6 +82,9 @@ func _on_connected() -> void:
 		# nişanla mikroba qayıtmağı [Arena] özü edir.
 		_log("yenidən qoşuldu (id=%d), nişanla qayıdır" % Net.local_id)
 		return
+	if party > 0:
+		_log("qoşuldu (id=%d), komanda yığılır" % Net.local_id)
+		return
 	_log("qoşuldu (id=%d), dünyaya girir" % Net.local_id)
 	# Rejim də ötürülür — onsuz TƏK QALAN-ın ONLAYN yolu bu alətlə heç vaxt
 	# sınana bilmirdi: server tərəf hazır idi, alət isə həmişə sonsuz arenaya
@@ -66,7 +96,8 @@ func _on_world_joined(info: Dictionary) -> void:
 	if _joined:
 		return
 	_joined = true
-	_log("DÜNYAYA GİRDİ — id=%d, rəng=%d" % [info["you"], info["color"]])
+	_log("DÜNYAYA GİRDİ — id=%d, rəng=%d, dünya #%d, rejim %s" % [
+		info["you"], info["color"], info["world"], Const.mode_name(int(info["mode"]))])
 
 	var arena: Arena = load("res://scenes/game/arena.tscn").instantiate()
 	arena.configure_online(info)
@@ -134,6 +165,38 @@ func _log_hits() -> void:
 		int(st["own_soft"]), int(st["own_soft_conf"]), int(st["own_soft_miss"]), int(st["own_soft_undo"])])
 	if not (st["miss"] as Array).is_empty():
 		_log("XƏTT: yalnız serverin saydığı dəymələrə ən yaxın proqnoz: %s" % ", ".join(st["miss"]))
+
+
+## Komanda testinin addımı — hər [signal Friends.changed]-də çağırılır.
+##
+## Sorğunu yalnız bir tərəf göndərir, o biri avtomatik qəbul edir. Dost
+## olandan sonra sorğu göndərən LİDERDİR: menyuda olan dostları dəvət edir.
+## Komanda tam yığılanda hamı HAZIR basır.
+func _social_step() -> void:
+	if not Friends.online or _joined:
+		return
+	if not befriend_secret.is_empty() and not _asked:
+		_asked = true
+		# Vergüllə bir neçə açar — ÜÇLÜK testi üçün iki dost lazımdır.
+		for one in befriend_secret.split(","):
+			var tag := Social.tag_of(one)
+			_log("dostluq sorğusu → #%s" % tag)
+			Friends.request(tag)
+	for t in Friends.requests.keys():
+		_log("sorğu gəldi: %s — qəbul" % t)
+		Friends.answer(t, true)
+	if not befriend_secret.is_empty() and Friends.party_size() < party:
+		for t in Friends.friends:
+			if Friends.status_of(t) == Social.Presence.MENU and not _invited.has(t):
+				_invited[t] = true
+				_log("komandaya dəvət → %s" % Friends.friends[t]["name"])
+				Friends.invite(t)
+	var roster := str(Friends.party.get("members", []).map(func(m): return m[0]))
+	if Friends.party_size() >= party and not Friends.am_ready() and _ready_for != roster:
+		_ready_for = roster
+		_log("komanda tamdır (%d nəfər, %s) — HAZIR" % [
+			Friends.party_size(), Const.mode_name(int(Friends.party.get("mode", 0)))])
+		Friends.set_ready(true)
 
 
 func _log(msg: String) -> void:

@@ -484,6 +484,8 @@ birinin bir işi var (araşdırma: [ART_BIBLE § 6b](design/ART_BIBLE.md)):
 | Mərkəz | podiumda növün qəhrəmanı, adı başının üstündə | Kimlik OBYEKTƏ bağlıdır; toxunmaq titrədir, çəkmək dartır |
 | Aşağı-sağ | [rejim kartı][sarı **OYNA**] | «Nə oynayıram» və «başla» bir qərardır — yan-yana |
 | Sol lent | MAĞAZA\*, MİKROBLAR, MƏŞQ | Brawl Stars-da Shop, Brawlers |
+| Sağ lent | **DOSTLAR** (qırmızı nişan = cavab gözləyən sorğu/dəvət) | Brawl Stars-da Friends — bax [Dostlar və komanda](#dostlar-və-komanda) |
+| Qəhrəmanın iki yanı | iki **«+»** yuvası → komanda yoldaşları | Brawl Stars-ın komanda yuvaları |
 | Yuxarı-sol | profil: növün avatarı + ad | Sabit konvensiya |
 | Yuxarı-sağ | QİDA\*, DNT\* valyutaları + dişli (AYARLAR) | Ayarların YEGANƏ qapısı |
 | Aşağı-sol | MİKRO PASS\*, TAPŞIRIQLAR\* | Brawl Pass və Quests |
@@ -507,9 +509,8 @@ Növ və rejim seçimi ANA EKRANDA deyil, ayrı vərəqlərdədir
 zona və altı cümlə vardı, oyunçu OYNA-ya çatana qədər hamısının arasından
 keçirdi. İndi səkkiz zona və bir sətir qeyd var.
 
-> Sağ lent QƏSDƏN boşdur. Brawl Stars-da orada Battle Log, liderlər və
-> xəbərlər var; bizdə hələ yoxdur və boş düymə qoymaqdansa yeri saxlamaq
-> daha düzgündür.
+> Sağ lentdə hələ yalnız DOSTLAR var. Brawl Stars-da orada xəbərlər və klub
+> da var; bizdə yoxdur və boş düymə qoymaqdansa yeri saxlamaq daha düzgündür.
 
 ### Ayarlar
 
@@ -546,6 +547,70 @@ bir sətir əlavə olunacaq.
 > **Kadr həddi əmr sətrini POZMUR.** `--max-fps` və ya `--fixed-fps` verilibsə
 > ayar `Engine.max_fps`-ə toxunmur — yoxsa oyunçunun 30-luq seçimi `--perf` və
 > `--shot` ölçmələrini səssizcə dəyişərdi.
+
+### Dostlar və komanda
+
+Brawl Stars-ın dostluq və komanda dəvəti axını, eyni ardıcıllıqla:
+
+| Brawl Stars | Bizdə | Harada |
+|---|---|---|
+| Oyunçu kodu `#2PPLQ8GY` | Hər cihazın dəyişməz kodu, məs. `#JL9J9GYPY` | DOSTLAR → SƏNİN KODUN (KOPYALA / PAYLAŞ) |
+| Kodla dost əlavə etmək → sorğu → QƏBUL / RƏDD | Eyni; qarşılıqlı sorğu avtomatik dostluqdur | DOSTLAR → DOST ƏLAVƏ ET, SORĞULAR |
+| Dost linki | `https://…/?friend=KOD` — veb oyun kodu hazır yazılmış DOSTLAR ekranı ilə açılır | PAYLAŞ |
+| Döyüş jurnalından əlavə | Onlayn matçda rastlaşdığın insanlar (botlar yox) | SON OYUNÇULAR → + DOST |
+| Dostun vəziyyəti | Menyuda · Komandada · Oyunda · Oflayn («5 saat əvvəl») | DOSTLAR siyahısı |
+| Qəhrəmanın yanında «+» → dost siyahısı → DƏVƏT ET | Eyni; dəvət 60 s yaşayır, ekranın yuxarısında kart + sönən zolaq | Ana ekran |
+| Qəbul olunan yoldaş podiumda | Yoldaşın NÖVÜNÜN qəhrəmanı, adı, HAZIR ✓, liderdə tac | Ana ekran |
+| Komanda kodu / linki | 6 simvollu kod və `?party=KOD` linki — dost olmaq şərt deyil | DOSTLAR → KOMANDA |
+| Rejimi lider seçir | Eyni; üzv rejim kartına basanda «REJİMİ LİDER SEÇİR» | Rejim kartı |
+| Hamı hazır → birlikdə matç | OYNA komandada HAZIR düyməsidir: `OYNA 1/3` → yaşıl `HAZIR 2/3 ✕` | OYNA |
+| Solo Showdown-a komanda ilə girmək olmur | TƏK QALAN tək oynanır; ikinci üzv gələndə rejim özü CÜT-ə, üçüncüdə ÜÇLÜK-ə keçir | — |
+
+Komanda **CÜT və ÜÇLÜK-də EYNİ KOMANDAYA** oturur (o komandadakı botlar yer
+verir — [`World.add_party`](game/scripts/server/world.gd)), **SONSUZ ARENA-da**
+isə eyni dünyaya düşür (orada komanda yoxdur). Komandada ən çox 3 nəfər olur.
+
+**Dost siyahısı serverdə YOX, cihazdadır** (`user://social.cfg`). Server Render-in
+pulsuz planındadır: 15 dəqiqə boş qalanda yatır və diski müvəqqətidir — siyahı
+orada olsaydı, hər yuxudan sonra hamının dostları silinərdi. Server yalnız
+ötürücüdür ([`SocialHub`](game/scripts/server/social_hub.gd)): kim onlayndır,
+sorğuları və dəvətləri çatdırır, oflayn oyunçunun "qəbul etdi / sildi"
+bildirişini poçtda saxlayır.
+
+Buna görə üç qoruyucu var:
+
+- **Kod gizli açardan hesablanır.** Cihaz bir dəfə 16 baytlıq açar yaradır;
+  kod ondan çıxır ([`Social.tag_of`](game/scripts/shared/social.gd)), server
+  heç nə yadda saxlamır. Başqasının kodunu bilmək onun adından danışmağa imkan vermir.
+- **Vəziyyət və dəvət yalnız QARŞILIQLI dostluqda gedir.** Siyahını client
+  göndərir, yəni istədiyi kodu yaza bilər; amma iki tərəfin siyahısında da
+  bir-biri olmayanda server heç nə ötürmür. Qəbul da yalnız həqiqətən göndərilmiş
+  sorğuya keçərlidir.
+- **Kodun sonuncu simvolu yoxlama simvoludur** (Luhn mod 14). Yuxudan oyanan
+  server oflayn oyunçunu tanımır və "belə oyunçu yoxdur" deyə bilmir — yazma
+  səhvini client özü tutur. Test: bir simvolluq 585 səhvin 585-i tutulur.
+
+Bağlantısı qopan üzv komandada **30 s** qalır (soluq görünür, «qopdu…») —
+yenidən qoşulan eyni kodla yerinə oturur. Sorğu və dəvət spamı saniyədə birə
+məhduddur. Açar cihazdan köçmür: oyunu silən və ya başqa brauzerdə açan oyunçu
+yeni kod alır (Brawl Stars-da bunu Supercell ID həll edir — bizdə hələ yoxdur).
+
+> **RPC-lər `Net`-də deyil, `/root/Friends`-dədir** — bu məcburidir. Godot
+> hər node-un RPC siyahısından checksum hesablayır və fərqli olanda o node-un
+> BÜTÜN RPC-ləri ölür. İlk variantda dostluq RPC-ləri `Net`-ə əlavə olunmuşdu və
+> QA agenti canlı (köhnə) serverə qoşulanda «rpc node checksum failed» aldı —
+> yeniləməmiş APK yeni serverdə `request_join` də edə bilməzdi. Ayrı node-da
+> `Net` dəyişmir: köhnə client yeni serverdə oynayır (sadəcə dostları yoxdur),
+> yeni client köhnə serverdə də oynayır.
+
+İkonlar (DOSTLAR, dost əlavə et, lider tacı, dəvət məktubu, link) Codex ilə
+çəkilib — bax [design/menu_art/](design/menu_art/). Şəbəkəsiz stend (uydurma
+komanda ilə):
+
+```bash
+GODOT --path game --resolution 1280x720 -- --social-demo home --shot C:/yol/kadr.png --shot-delay 200
+# home | solo | invite | friends | requests | recent
+```
 
 ---
 
@@ -629,9 +694,11 @@ game/                    Godot layihəsi
       bot.gd             Bot mikrob — serverdə işləyir, dünyanı canlı saxlayır
       palette.gd         Kod tərəfdən çəkilən rənglər
       settings.gd        Oyunçunun bütün ayarları, `settings.cfg` (autoload: Settings)
+      social.gd          Dostluq qaydaları: oyunçu kodu, yoxlama simvolu, limitlər, linklər
     server/
       lobby.gd           Dünyalar, giriş/çıxış, yenidən qoşulma
       world.gd           Bir petri qabı: Sim + oyunçular + botlar + snapshot
+      social_hub.gd      Dostluq sorğuları, vəziyyət, komandalar, dəvətlər (diskə yazmır)
     client/
       arena.gd           ★ Oyun ekranı: prediction, interpolyasiya, kamera, reconnect
       menu_v2.gd         ★ Baş menyu: fon + podiumda qəhrəman, növ kartları, qoşulma
@@ -649,11 +716,15 @@ game/                    Godot layihəsi
       super_button.gd    Super düyməsi — maye dolumu, hazır nəbzi və işıq zolağı
       sfx.gd             Səs effektləri (autoload: Sfx)
       settings_view.gd   AYARLAR ekranı — yalnız menyuda (matçda ayar yoxdur)
+      friends.gd         Dostlar və komanda: cihazdakı siyahı + RPC-lər (autoload: Friends)
+      friends_view.gd    DOSTLAR ekranı: kodun, dost əlavə et, komanda, sorğular, son oyunçular
       chunky_box.gd      Brawl Stars düymə dili: kontur + dodaq + parıltı, konturlu yazı
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
     tools/
       sim_test.gd        358 headless test
-      auto_client.gd     Şəbəkə testi üçün insansız client
+      auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
+      social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
+      social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
       hit_probe.gd       Vuruşu EKRANDA ölçür: toxunuş → parıltı, topun rəqibdən keçməsi
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
@@ -727,7 +798,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (445 test)
+# Simulyasiya + World + dostluq/komanda testləri (546 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -739,6 +810,15 @@ GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label
 
 # Yenidən qoşulma testi: B 10 saniyə sonra qəsdən düşür və nişanla qayıdır
 GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label B --drop-after 10 --quit-after 30 &
+
+# Dostlar və komanda: Ana Bob-a sorğu göndərir, Bob qəbul edir, Ana onu komandaya
+# dəvət edir, ikisi HAZIR olur və server onları EYNİ CÜT komandasına salır.
+# --secret kimlikdir (diskə yazılmır), oyunçu kodu ondan hesablanır.
+GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label Ana \
+      --secret aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --befriend-secret bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+      --party 2 --mode 2 --quit-after 20 &
+GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label Bob \
+      --secret bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --party 2 --quit-after 20 &
 ```
 
 Testlər oyunun HƏR İKİ ölüm qaydasını ayrıca yoxlayır: tutumu aşıb partlamaq
@@ -1292,6 +1372,17 @@ Mobil şəbəkədə düşmək adi haldır, ona görə mikrob dərhal itmir:
 3. Qayıdanda dünyaya girəndə verilmiş **sessiya nişanı** ilə tanınır — yeni peer id
    alır, amma köhnə mikrobuna (mövqe, toplar, tutum, hesab) qayıdır.
 4. 20 saniyə keçsə və ya mikrob bu müddətdə partlasa, nişan etibarsız olur.
+
+**CÜT-də dirilməni gözləyən oyunçu da qayıda bilir.** Onun mikrobu ölüdür
+(`sim.germs`-də yoxdur), amma matçda yeri var — [`World.holds`](game/scripts/server/world.gd)
+məhz bunu soruşur. Əvvəl üç yer yalnız `sim.germs`-ə baxırdı və üçü də səhv
+edirdi: qopan belə oyunçu "dayandırılmış" sayılmırdı (server 20 s boyu ona
+30 Hz-lə snapshot göndərməyə çalışırdı — "unknown peer ID" xətası), qayıdanda
+"gözləmədə partladı" deyilirdi, matçı tərk edəndə isə dirilmə növbəsi qalırdı
+və 15 s sonra dünyada sahibsiz mikrob dirilirdi. İndi növbə yeni peer id-yə
+köçür, qayıdana öz rəngi/növü/adı gedir, tərk edənin növbəsi silinir.
+Yoldaşı da ölüb dirilməsi ləğv olunan oyunçu isə nəticə ekranını alır — əvvəl
+matç bitənə qədər nəticəsiz izləyici qalırdı.
 
 ### Botlar
 

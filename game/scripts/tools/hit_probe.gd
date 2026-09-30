@@ -245,7 +245,8 @@ func _test_silhouette(tr: Dictionary, from: Vector2, to: Vector2, now: float,
 			"circle": _near(from, to, v.position, reach),
 			"ellipse": _near_ellipse(from, to, v), "depth": _ellipse_depth(from, to, v), "gone": -1.0,
 			"species": int(v.species), "cat": cat, "bot": bool(tr.get("bot", false)),
-			"shifted": bool(tr.get("shifted", false)), "on_screen": v.is_local or v.on_screen}
+			"shifted": bool(tr.get("shifted", false)), "on_screen": v.is_local or v.on_screen,
+			"clock": _arena._clock}
 		if cat == "enemy":
 			touch["cat"] = "me" if v.is_local else "other"
 		# Parıltı toxunuşdan azca əvvəl yanıbsa, o da bu toxunuşun cavabıdır.
@@ -429,8 +430,9 @@ func _silhouette_report(now: float) -> String:
 		if float(t["flash"]) >= 0.0:
 			continue
 		var after := (float(t["gone"]) - float(t["t"])) * 1000.0 if float(t["gone"]) >= 0.0 else -1.0
-		details.append("%s d=%.2f sonra=%.0fms%s%s" % [cat, float(t.get("depth", 9.0)), after,
-			" köç" if bool(t.get("shifted", false)) else "", " ekran" if bool(t.get("on_screen", true)) else ""])
+		details.append("%s d=%.2f sonra=%.0fms%s%s t=%.2f" % [cat, float(t.get("depth", 9.0)), after,
+			" köç" if bool(t.get("shifted", false)) else "", " ekran" if bool(t.get("on_screen", true)) else "",
+			float(t.get("clock", -1.0))])
 	return "KEÇİD (zərbəsiz / gövdəyə girən; sürtünmə = dəymə ellipsinə girmədi): " \
 		+ " · ".join(parts) + "\n" + ("KEÇİD-DETAL: " + " | ".join(details) + "\n" if not details.is_empty() else "") \
 		+ _own_silhouette(now)

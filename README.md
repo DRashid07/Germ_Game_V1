@@ -263,11 +263,30 @@ səbəblər:
 | İnsanın topu geri sarma ilə yoxlanılır — qurbanın ~0.27 s ƏVVƏLKİ yerinə qarşı. Client bunu bilmirdi | Hər top geri sarma miqdarını daşıyır ([`Const.SF`](game/scripts/shared/constants.gd) `REWIND`, 4 bayt; ən pis paket 1316 / 1392 bayt) | `World._build_frame` |
 | Reyestr botu demirdi, client onu id-dən (`>= BOT_ID_BASE`) çıxarırdı. İnsanın peer nömrəsi təsadüfi 32 bitlik ədəddir və adətən daha böyükdür — o biri oyunçu BOT sayılırdı | Reyestr üçüncü sahədə "bot" bayrağını göndərir | [`World.roster`](game/scripts/server/world.gd) |
 
-> **Balansa yan təsir.** Ellips formasında hərəkət edən amöb yanlardan 22%
-> nazikdir, az vurulur və super yükü (vuranda da, vurulanda da dolur) gec
-> yığılır. Yalnız amöblərdən ibarət bot dünyasında super 60 saniyədə orta hesabla
-> 5.4 dəfədən ~2.7 dəfəyə endi (hər tərəf 5 çalışma). Oyunçu hiss edirsə,
-> `Const.SUPER_ON_TAKEN` və ya amöbün `Sim.HIT_SQUEEZE`-i ilə tənzimlənir.
+**Balans: ellips dəymə ehtimalını dəyişmir.** Əvvəl burada "amöb az vurulur,
+superi yarıya endi" yazılmışdı — o, hər tərəfdə 5 çalışmalıq ölçü idi və
+səs-küy imiş. Bot dünyası 300 dəfə × 60 s təkrarlananda şəkil tərsinə çıxdı:
+köhnə ellipsdə amöb ÇOX vurulurdu. Səbəb həndəsədir: top hər tərəfdən gəlir,
+dəymə ehtimalı formanın ORTA enindən (perimetr / π) asılıdır, ellipsə sadəcə
+topun radiusu əlavə olunanda isə orta en böyüyürdü (amöbdə +8%, kirpiklidə +3%).
+İndi topun payı elə seçilir ki, orta en dəqiq dairəninki olsun
+([`Sim._even_margin`](game/scripts/shared/sim.gd), xətası 0.003%); amöbün forması da
+çəkilən gövdəyə yenidən uyğunlaşdırıldı (+24% / −28%). Yoxlama — eyni kod, eyni
+toxumlar, yalnız dəymə forması fərqli, hər dünya 300 × 60 s:
+
+| Bot dünyası | Dəymə / 60 s: dairə → **indi** | Super / 60 s: dairə → **indi** | Supersiz çalışma |
+|---|---:|---:|---:|
+| Qarışıq (3 növ) | 75.6 → **77.1** | 11.53 → **11.68** | 0 → 0 |
+| Yalnız kirpikli | 68.9 → **68.7** | 14.84 → **14.61** | 0 → 0 |
+| Yalnız ayaqlı | 82.7 → **83.6** | 13.45 → **13.41** | 0 → 0 |
+| Yalnız amöb | 78.2 → **79.7** | 4.26 → **4.21** | 7 → 4 (300-dən) |
+
+Bütün fərqlər səpələnmə daxilindədir (ən böyüyü 1.3σ). Dəymələrdə 1–2%-lik artım
+"tick-i gövdənin içində başlayan top da dəyir" düzəlişidir — o, ekranda
+gövdədən keçən topun dəyməsidir, balans yox. Köhnə ellips isə amöb dünyasında
+dəymələri 75.4 → 79.6, ölümü +21% artırmışdı. Amöbün superi təbiətən seyrəkdir
+(dəqiqədə ~0.7), ona görə supersiz çalışmalar dairədə də var — bunu yoxlayan
+test iki sabit toxumlu dünya ilə aparılır ki, təsadüfdən asılı olmasın.
 
 **Client** ([`Arena`](game/scripts/client/arena.gd), [`ShotPrediction`](game/scripts/client/shot_prediction.gd))
 
@@ -323,8 +342,13 @@ taleyi ilə (kimə dəydi, harada öldü, qurbana nə qədər yaxınlaşdı) tut
 | Geri sarma həddi (300 ms) RTT 180-də atəşlərin çoxunu kəsirdi | 400 ms | `Const.REWIND_MAX` |
 | Qabın kənarında sıçrayış nöqtəsi addımın uzunluğundan asılıdır: proqnoz 60 Hz-lə (7 px), server 30 Hz-lə (14 px) addımlayırdı — 500 px sonra top 18 px aralı uçurdu | Proqnoz topu serverin addımı ilə, TICK-lərlə simulyasiya edir; ekranda tick içində hamar çəkilir | [`ShotPrediction._sim_tick`](game/scripts/client/shot_prediction.gd) |
 | Hədəflər ekranda gəliş VAXTINA görə interpolyasiya olunur; snapshot jitter-lə gələndə rəqib tick-in yarısı qədər qabaqda və ya geridə olur. Server isə qurbanı dəqiq `tick − rewind`-də yoxlayır | Topun `k`-cı tick-i rəqiblərin `görünən tick + k`-dakı halına qarşı yoxlanılır — snapshot buferindən, TICK-ə görə. Mikrobların çəkilişi də gəliş anına yox, hamarlanmış tick saatına bağlandı | `Arena._ghost_targets`, `_tick_time_of` |
-| Qalan yalançıların hamısı qurbanın kənarına **sürtünmə** idi: xətt ellipsin 0.99+ dərinliyindən keçirdi, serverdə isə 1.04–1.05 məsafədən (atəş nöqtəsi bir tick fərqli — 6–10 px) | Xətt ellipsin 0.9-dan dayaz hissəsindən keçirsə, top gövdənin kənarında dayanır, zərbə isə serverin təsdiqi GƏLƏNDƏ oynanır. Server topu göndərməyə davam edirsə, top geri qaytarılır | `OWN_SURE_DEPTH`, `_undo_own_soft` |
+| Qalan yalançıların çoxu qurbanın kənarına **sürtünmə** idi: xətt ellipsin 0.88–0.99+ dərinliyindən keçirdi, serverdə isə 1.02–1.05 məsafədən (atəş nöqtəsi bir tick fərqli — 6–10 px) | Xətt ellipsin 0.85-dən dayaz hissəsindən keçirsə, top gövdənin kənarında dayanır, zərbə isə serverin təsdiqi GƏLƏNDƏ oynanır. Server dəymənin tick-indən sonra da topu göndərirsə, top geri qaytarılır | `OWN_SURE_DEPTH`, `_undo_own_soft` |
+| Server atəşi HƏLƏ təsdiqləməmiş (yaxın məsafə, top rəqibə RTT-dən tez çatır) dəymələrin 23-dən 3-ü yalançı idi: jitter-də soyuma server ilə proqnoz arasında bir neçə tick sürüşür və server o atəşi heç açmırdı. Sonrakı 310 dəymədən 3-ü | Atəşi hələ təsdiqlənməmiş topun dəyməsi də təsdiqi gözləyir | `_on_own_contact` |
+| Şəbəkə sıxılanda (RTT 180 → 443 ms) girişlər serverə dəstə ilə çatır və birləşir — proqnozun iki atəşini server açmadı | Sıxılmada heç bir dəymə əmin sayılmır. "Adi" gecikmə son saniyələrin ən aşağı RTT-sidir və yavaş qalxır (0.005 s/s) — 20 saniyəlik sıxılma da "adi" sayılmır | [`_congested`](game/scripts/client/arena.gd) |
+| Çox sıx şəbəkədə (təsdiq 400–720 ms) geri sarma 400 ms həddinə dirənir və server hədəfi atıcının gördüyü tick-dən daha YENİ tick-də yoxlayır — bir seriyanın 6 yalançısından 2-si belə idi | Server geri sarmanı həddə kəsibsə (topun təsdiqində gəlir), onun dəymələri təsdiqi gözləyir | [`ShotPrediction.Ghost.rewind`](game/scripts/client/shot_prediction.gd) |
 | Qurban ekranda sağdır, amma başqasının topundan artıq partlayıb (hadisə gəlib, interpolyasiyanı gözləyir) | Belə dəymə də təsdiqi gözləyir | `_burst_pending` |
+| Top qurbana ömrünün SON tick-ində çatırdı: proqnozun atəş nöqtəsi xətt boyu 9 px qabaqda idi, proqnoz 0.7 tick uzağa uçub "dəydi", serverin topu isə qurbana 1.20 məsafədə öldü | Ömrün son iki tick-indəki dəymə də təsdiqi gözləyir | [`ShotPrediction.LATE_LIFE`](game/scripts/client/shot_prediction.gd) |
+| Qurban superi dolu kirpikli idi: bot trixosisti topu görən an açır, atıcı isə onu `rewind` qədər gec görür — mərkəzdən keçən (0.02) dəymə belə itdi | Yanında superi dolu kirpikli olan dəymə təsdiqi gözləyir | `_rival_tricho_near` |
 
 Proqnoz indi yaxındakı mikrobları da (220 px) öz dünyasına qoyur — son
 snapshot-dan irəli çəkilmiş surətlər kimi — və server kimi ayırır
@@ -337,8 +361,21 @@ mikrob topu səndən əvvəl tuta bilər (o, keçmişdə çəkilir), və superi 
 kirpikli rəqib topu görən an trixosistlə dağıdır — sən isə onun superini gec
 görürsən. İndi yolda mikrob varsa ([`_proxy_blocks`](game/scripts/client/arena.gd))
 və ya yaxında superi dolmaq üzrə olan kirpikli varsa (`_rival_tricho_near`),
-dəymə ƏMİN sayılmır və serveri gözləyir. Öz trixosistin hazırdırsa, zərbə bir tick
-gecikdirilir: server həmin tick-də superi topdan ƏVVƏL emal edir.
+dəymə ƏMİN sayılmır və serveri gözləyir. Öz trixosistin hazırdırsa da belədir:
+superin girişi serverə hansı tick-də çatırsa, top o tick-də dağılır (əvvəl dəymə
+yalnız bir tick gözləyirdi — super iki tick sonra açılanda zərbə göstərilir,
+serverdə isə top dağılırdı). Şəbəkə sıxılanda ([`_congested`](game/scripts/client/arena.gd):
+gediş-gəliş son saniyələrin ən aşağısından xeyli uzundur) heç bir dəymə əmin
+sayılmır — o anda girişlər serverə dəstə ilə çatır və birləşir: ölçülüb, RTT 180
+→ 443 ms-də proqnozun açdığı iki atəşi server heç açmadı, ekranda isə toplar
+rəqibə "dəydi". Sonrakı seriyalarda daha üç səbəb tapıldı:
+
+| Səbəb | Düzəliş |
+|---|---|
+| Sən qayanın arxasındasan: irəli çəkilən top qayanın səthində dayanır və gövdənə məhz o nöqtədə toxunur. Serverdə eyni `t`-də qaya qalib gəlir, top səkir — xətti gövdənin düz mərkəzindən keçən (0.01) dəymə belə yalançı çıxdı | Gövdəyə yalnız qayanın səthində toxunan top dəymə sayılmır |
+| Server sıçrayışı deyəndə top köhnə yoldan yenisinə KÖÇÜR; köçmə xətti gövdəni kəsirdi, halbuki top serverdə sənə heç yaxınlaşmamışdı | İstiqamət dəyişən kadrda yol yenidən başlayır |
+| Topun yoluna DİK qaçanda (140 px/s) yerinin xətası sürətlə böyüyür: server girişləri öz tick-i ilə emal edir, jitter-də bir giriş iki dəfə, növbəti heç işlənmir (girişlərin ~10%-i, bir tick-in yolu ≈ 6 px) — üstəlik RTT xətası. 0.59 dərinlikli "əmin" dəymə belə yalançı çıxdı | Əmin hədd yola dik sürətlə dərinləşir: xəta = 2 px + dik sürət × 0.12 s, ellipsin yola dik yarım-eninə bölünür ([`Arena.self_sure_depth`](game/scripts/client/arena.gd)) |
+| Serverin topu vurduğu, amma client-in onu "vurmadı" sayıb geri qaytardığı hallar: geri qaytarma vaxtla (RTT + ehtiyat) ölçülürdü, şəbəkə sıxılanda isə xəbər RTT-nin hamar təxminindən gec gəlir — bir seriyada 3 əmin və 7 sərhəd dəyməsi belə qaytarıldı. Serverin təsdiqlədiyi girişə bağlamaq da kömək etmədi (daha sıx seriyada 21 hal): sıxılmada proqnozun zaman xətti serverdən bir neçə tick qabağa düşür və top serverdə sənə hələ ÇATMAMIŞ olur | Geri qaytarma snapshot-dakı YERLƏRƏ baxır: serverin topu sənin (serverin onu yoxladığı — insanın topunda `rewind` qədər əvvəlki) yerinin yanından keçib uzaqlaşıbsa, dəymə olmayıb; çatmayıbsa, gözlənilir ([`Arena.shot_gone_past`](game/scripts/client/arena.gd)). Öz topunun sərhəd dəyməsi də eyni qayda ilə |
 
 **Başqasına gedən top.** Sənə tərəf uçub yayınan top sənin zaman xəttində qalırdı
 və qabaqdakı mikrobun (keçmişdə çəkilir) gövdəsindən keçirdi. İndi qabaqda mikrob
@@ -347,19 +384,30 @@ girəndə isə elə sürətlə ki, ona çatmamış qayıtsın ([`Arena.release_r
 Ömrü bitən top da ölü yerində donub qalmır — serverdə o, həmin tick qidaya çevrilir.
 
 **Yekun ölçü** — eyni probe və diaqnostika, RTT 120 və 180 ms (15–20 ms jitter),
-hər seriya 6 sessiya × 2 client × 90 s:
+hər seriya 6 sessiya × 2 client × 90 s. Serverin gerçək cavab vaxtı seriyadan
+seriyaya dəyişdi (bir maşında 9 Godot prosesi və proksi): "adi" seriyada təsdiq
+140–240 ms, "sıx" seriyalarda 150–350 ms (ayrı-ayrı sessiyalarda 720 ms-ə qədər).
+"Sənə dəydi" serverin topun taleyinə görə yoxlanır — client təsdiqi tutmayıbsa,
+amma server səni vurubsa, bu yalançı sayılmır:
 
-| | Bu işin əvvəli | **İndi** |
-|---|---:|---:|
-| Öz topunun dərhal göstərilən dəyməsi, server saymadı | 14 / 138 (10%) | **1 / 143** (0.7%) — son iki seriya |
-| Öz topunun sərhəddəki dəyməsi (təsdiqi gözlədi) | — | 13 / 14 təsdiq; hamısının 5–13%-i |
-| Botun sənə ƏMİN dəyməsi, server saymadı | 22 / 221 (10%) → 2 / 127 | **1 / 190** (0.5%) — son iki seriya |
-| Rəqibin topu → başqası, gövdədən zərbəsiz keçir | 14 / 47 → 2 / 66 | **0 / 49** — son seriya |
-| Rəqibin topu → sən, gövdədən zərbəsiz keçir | — | **0** |
+| | Bu işin əvvəli | **İndi, adi şəbəkə** (1 seriya) | **İndi, sıx şəbəkə** (2 seriya) |
+|---|---:|---:|---:|
+| Öz topunun dərhal göstərilən dəyməsi, server saymadı | 14 / 138 (10%) | **1 / 80** (1.3%) | 4 / 97 (4.1%) |
+| Öz topunun dəyməsi serverin təsdiqini gözlədi | — | 27 / 107 (25%) | 83 / 180 (46%) |
+| Botun sənə ƏMİN dəyməsi, server saymadı | 22 / 221 (10%) | **0 / 122** | **0 / 134** |
+| Server topu vurdu, client isə "dəymədi" sayıb qaytardı | — (ara seriyada 21) | **0** | **0** |
+| Rəqibin topu → başqası, gövdədən zərbəsiz keçir | 14 / 47 | 2 / 44 (ekranda 0) | 3 / 80 (ekranda 2) |
+| Rəqibin topu → sən, gövdədən zərbəsiz keçir | — | **0** | **0** |
 
-Son qalan yalançı öz dəyməsi qurbanın "partlaması hələ gəlməmiş" halıdır (qurban
-serverdə 100 ms əvvəl partlamışdı) — ona qarşı `_burst_pending` bu seriyadan
-SONRA əlavə olundu.
+Şəbəkə sıxılanda client özü daha çox gözləyir (25% → 46%): o anda proqnozun
+xətası böyüyür və "gözləmə" yalançı zərbədən yaxşıdır — gözləyən dəymə yenə
+göstərilir, sadəcə serverin cavabı ilə (~RTT sonra). Qalan yalançı öz dəymələri
+yarış hallarıdır: qurban serverdə başqasının topundan partlayıb və ya öz trixosistini
+açıb, xəbəri isə client-ə hələ çatmayıb — client bunu əvvəlcədən bilə bilməz.
+Serverdə bir dəfə insan qurbanın heç yoxlanmaması da görüldü (top onun 31 px
+yaxınından keçdi, "yaxınlıq" siyahısı boş idi). Serverə hər insan↔insan keçidini
+səbəbləri ilə yazan diaqnostika qoyuldu: sonrakı 8 seriyada 30 px-dən yaxın 24
+keçidin hamısı dəydi — hal təkrarlanmadı.
 
 ### Bioluminessensiya (glow)
 
@@ -679,7 +727,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World testləri (358 test)
+# Simulyasiya + World testləri (445 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -928,14 +976,16 @@ GPU-nun mütləq sürətinə bel bağlamır — kadr vaxtını **həmin telefonu
 
 - Keyfiyyət səviyyəsi birinci addımdır (4-cü bənd). MİNİMUM-da (və ya oyunçu
   səviyyəni özü seçibsə) hər 3 s-lik pəncərədə kadrlar yoxlanır. Kadrın medianı
-  30 kadrın büdcəsini 10% aşırsa, və ya kadrların onda biri 35% uzundursa — və
-  yük GPU-dadırsa — kətanın sıxlığı 15% kiçilir, 0.75-ə qədər.
-- **Yük GPU-dadırmı** — brauzerdə GPU CPU-dan ayrı işləyir, ona görə kadr
-  CPU-nun işindən (oyun məntiqi + fizika + çəkilişin CPU hissəsi, `RenderingServer`-in
-  ölçüsü) xeyli uzundursa, qalan vaxt GPU-nu gözləməkdir. CPU işi kadrın 70%-dən
-  çoxdursa, sıxlıq dəyişmir: piksel azaltmaq kömək etməzdi.
-- Kiçiltmə iki addımda (piksel ~48% az) orta kadrı qısaltmayıbsa, yük pikseldə
-  deyil — sıxlıq geri qaytarılır və bu sessiyada daha kiçilmir.
+  30 kadrın büdcəsini 10% aşırsa, və ya kadrların onda biri 35% uzundursa,
+  kətanın sıxlığı 15% kiçilir, 0.75-ə qədər.
+- **Yük GPU-dadır, yoxsa CPU-da — brauzerdə soruşulmur.** İlk variant bunu kadrın
+  CPU işindən ayırırdı. Real Chrome-da yoxlananda (aşağıda) GPU prosesi 100% dolu
+  ikən oyunun "CPU işi" də kadrın özünə bərabər çıxdı — 80 ms: WebGL əmrləri GPU
+  prosesinə növbə ilə gedir, GPU geri qalanda növbə dolur və kadrın İSTƏNİLƏN GL
+  çağırışı, `_process`-dəki də, gözləyir. Tənzimləyici yükü CPU-da sanıb heç nə
+  etmirdi. İndi sual təcrübə ilə həll olunur: kiçiltmə iki addımda (piksel ~48%
+  az) orta kadrı qısaltmayıbsa, yük pikseldə deyil — sıxlıq geri qaytarılır və bu
+  sessiyada daha kiçilmir.
 - 4 pəncərə ardıcıl rahatdırsa, sıxlıq 12% böyüyür. Böyümə kadrı yavaşladırsa,
   əvvəlki sıxlığa qayıdır və o, sessiyanın tavanı olur — titrəmir.
 - Büdcə kadr həddindən asılı olmayaraq 30 kadrdır: məqsəd zəif GPU-da oyunu
@@ -954,13 +1004,32 @@ GPU işi piksel sayı ilə artır, kadr 60 Hz ekranın vsync-inə yuvarlanır, �
 | 60 ms | 0.86 | 0.90 | 30 FPS |
 | 80 ms | 0.77 | 0.78 | 30 FPS |
 | 110 ms, 150 ms | 0.75 (aşağı hədd) | — | 20, 15 FPS |
-| CPU yüklü (45 ms), GPU yüngül | 1.25 (dəyişmir) | | |
-| Ölçülməyən CPU işi | kiçilir, kömək etmədiyini görüb 1.25-ə qayıdır | | |
+| GPU 80 ms + CPU 30 ms | 0.77 | | 30 FPS |
+| CPU yüklü (45 ms), GPU yüngül | iki dəfə kiçilir, kömək etmədiyini görüb 1.25-ə qayıdır | | |
 | Enerjiyə qənaət (brauzer 30 kadr verir) | 1.25 (dəyişmir) | | |
 
 Yəni SwiftShader-in 6.5 ms-lik MİNİMUM kadrından **12 dəfə** zəif GPU-da da oyun
 30 kadrı tutur. Ondan da zəifində sıxlıq aşağı həddə enir və oyun o GPU-nun
 verə bildiyi ən yaxşı kadrla gedir.
+
+**Real Chrome-da yoxlama.** Eyni veb build (MİNİMUM, telefon emulyasiyası 915×412,
+DPR 2.625), SwiftShader ilə. "GPU"-nun gücü GPU prosesinə verilən nüvə sayı ilə
+dəyişdirildi, CPU-yüklü telefon isə Chrome-un CPU yavaşlatması ilə:
+
+| Model | 1.25-də | Tənzimləyici | Sonra |
+|---|---:|---|---:|
+| GPU sərbəst | 30 FPS | dəyişmir | 30 FPS |
+| GPU 2 nüvə | 15 FPS | 1.25 → 1.06 → 0.90 → **0.77**; 12 s rahat gedəndən sonra 0.86-ya qalxır və orada qalır | **30** → 28–29 FPS |
+| GPU 1 nüvə | 13 FPS | 1.25 → … → 0.75 (aşağı hədd) | 15–17 FPS |
+| GPU 1 nüvə, ekran DPR 1.25 | 10 FPS | 1.25 → … → 0.75 | 19 FPS |
+| CPU 12× yavaş, GPU sərbəst | 7 FPS | 1.25 → 1.06 → 0.90, kadr dəyişmir → **1.25-ə qayıdır** | 7 FPS, şəkil bulanıqlaşmır |
+
+Bir nüvəli GPU-da qazanc azdır, çünki SwiftShader brauzerin kompozitorunu da
+proqramla çəkir: hər kadr bütün ekranı (2.6 milyon piksel), kətanın ölçüsündən
+asılı olmayaraq. Ekranın DPR-i 1.25 olanda eyni GPU-da qazanc iki qatdır (10 → 19
+FPS). Real telefonda bu kompozisiya GPU-nun aparatındadır. Bu yoxlama həm də
+yuxarıdakı "CPU işi" səhvini tapdı: ilk variant 1 nüvəli GPU-da 13 FPS-də heç nə
+etmirdi.
 
 **Real telefonda ölçü necə oxunur.** Telefon qoşulan kimi heç nə qurmadan:
 AYARLAR → «Kadr sayğacı» açılır — brauzerdə yanında kətanın sıxlığı da yazılır

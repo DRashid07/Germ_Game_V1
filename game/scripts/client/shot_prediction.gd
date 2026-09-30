@@ -47,6 +47,14 @@ const CLAIM_GRACE := 1.0
 ## Tick sərhədində üzən nöqtə xətası (tick ilə ölçülür).
 const EPS := 0.000001
 
+## Ömrünün son bu qədər saniyəsindəki dəymə "gec"dir — [Arena] onun zərbəsini
+## serverin təsdiqinə saxlayır. Proqnozun atəş nöqtəsi serverinkindən xətt boyu
+## bir tick-in yoluna qədər fərqlənə bilir, ömrün sonunda isə bu fərq topun
+## hədəfə çatıb-çatmamasını həll edir. Ölçülüb: 64-cü tick-də "dəyən" proqnoz
+## serverinkindən 9 px qabaqda idi — serverin topu qurbana 1.20 məsafədə öldü.
+## Son iki parça (qalan ömür 1 və 2 tick; 2.5 — tam ədəddə üzən nöqtə sərhədi olmasın).
+const LATE_LIFE := 2.5 * Const.TICK_DELTA
+
 
 class Ghost:
 	var id := 0
@@ -66,6 +74,10 @@ class Ghost:
 	var view0 := -1.0
 	## Serverin top id-si; -1 = hələ təsdiqlənməyib.
 	var sid := -1
+	## Serverin bu topa tətbiq etdiyi geri sarma (s) — təsdiq gələndə yazılır.
+	## [constant Const.REWIND_MAX]-a dirənibsə, server hədəfləri proqnozdan daha
+	## YENİ tick-də yoxlayır (bax [method Arena._on_own_contact]).
+	var rewind := 0.0
 	var alive := true
 	## Dayandığı an (dəydi, sıçrama bitdi) — təmizlik üçün.
 	var ended := -1.0
@@ -329,8 +341,10 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 			# Xəttin qurbandan nə qədər dərin keçdiyi — sərhəddəki dəymənin zərbəsini
 			# [Arena] serverin təsdiqinə saxlayır (bax [constant Arena.OWN_SURE_DEPTH]).
 			var reach := float(victim.get("radius", 0.0)) + Const.SHOT_RADIUS
-			g.pending[-1]["contact"]["depth"] = Sim.line_depth(at, g.dir, victim["pos"],
+			var contact: Dictionary = g.pending[-1]["contact"]
+			contact["depth"] = Sim.line_depth(at, g.dir, victim["pos"],
 				victim.get("shape", Vector3(reach, reach, 0.0)))
+			contact["late"] = g.life < LATE_LIFE
 			return
 		if hit_index >= 0:
 			if int(hit_obstacle.w) == DishMap.Kind.BRITTLE:

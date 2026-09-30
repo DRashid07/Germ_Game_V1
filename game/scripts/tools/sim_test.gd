@@ -779,24 +779,62 @@ static func _test_self_claim_undo() -> void:
 		"mərkəzdən keçən xəttin dərinliyi 0-dır")
 	_check(absf(Arena._line_depth(Vector2(-100.0, 38.0), Vector2.RIGHT, Vector2.ZERO, shape) - 0.95) < 0.01,
 		"sərhədə yaxın xətt 0.95-dir — əmin sayılmır")
+	# Topun yoluna dik qaçan mikrobun yeri daha az dəqiqdir — əmin hədd dərinləşir.
+	var round_shape := Vector3(40.0, 40.0, 0.0)
+	var still := Arena.self_sure_depth(Vector2.ZERO, Vector2.RIGHT, round_shape)
+	var along := Arena.self_sure_depth(Vector2(150.0, 0.0), Vector2.RIGHT, round_shape)
+	var across := Arena.self_sure_depth(Vector2(0.0, 150.0), Vector2.RIGHT, round_shape)
+	_check(is_equal_approx(still, Arena.SELF_SURE_DEPTH) and is_equal_approx(along, Arena.SELF_SURE_DEPTH),
+		"dayanan və topa tərəf gedən mikrobda əmin hədd sabitdir (%.2f)" % still)
+	_check(absf(across - (1.0 - (Arena.SELF_POS_ERR + 150.0 * Arena.SELF_TIME_ERR) / 40.0)) < 0.001
+		and across < 0.59,
+		"topun yoluna 150 px/s dik qaçanda 0.59 dərinlik artıq əmin deyil (hədd %.2f)" % across)
+	# Şəbəkə sıxılanda (gediş-gəliş ən aşağısından xeyli uzun) heç bir dəymə əmin deyil.
+	var net := Arena.new()
+	_check(not net._congested(), "ölçü olmayanda şəbəkə sıxılmış sayılmır")
+	net._rtt_floor = 0.18
+	net._rtt = 0.21
+	var calm_net := not net._congested()
+	net._rtt = 0.443
+	_check(calm_net and net._congested(),
+		"RTT 180 ms-lik şəbəkədə 210 ms adi, 443 ms sıxılmadır (ölçülən hal)")
+	net.free()
+	# Geri qaytarma serverin snapshot-undakı YERLƏRƏ baxır: top sənin (serverin onu
+	# yoxladığı) yerinin yanından keçib uzaqlaşırsa, dəymə olmayıb. Vaxtla və ya
+	# təsdiqlənən girişlə ölçü şəbəkə sıxılanda düzgün dəymələri də qaytarırdı.
+	var r := Const.germ_radius(Const.START_CAPACITY)
+	_check(Arena.shot_gone_past(Vector2(200.0, 0.0), Vector2.RIGHT, Vector2.ZERO, r),
+		"top səndən 200 px o yana uçur — dəymə olmayıb")
+	_check(not Arena.shot_gone_past(Vector2(-200.0, 0.0), Vector2.RIGHT, Vector2.ZERO, r),
+		"top sənə hələ çatmayıb — gözlənilir, nə qədər gecikirsə-gecikisin")
+	_check(not Arena.shot_gone_past(Vector2(20.0, 0.0), Vector2.RIGHT, Vector2.ZERO, r),
+		"top gövdənin əhatəsindədir — hələ qərar yoxdur")
 	var a := Arena.new()
-	a._rtt = 0.1
+	a.my_id = 1
 	a._last_snap_t = 1.0
-	var alive := {"node": null, "seen": 1.0, "absorbed": true}
-	a._shot_views[5] = alive
+	var me_row := [1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	me_row[Const.GF.CAP] = Const.START_CAPACITY
+	var snap := []
+	snap.resize(Const.Snap.EVENTS + 1)
+	snap[Const.Snap.TICK] = 100
+	snap[Const.Snap.GERMS] = [me_row]
+	a._snaps.append({"t": 1.0, "d": snap})
+	var gone := {"node": null, "seen": 1.0, "absorbed": true, "base": Vector2(200.0, 0.0),
+		"dir": Vector2.RIGHT}
+	var coming := {"node": null, "seen": 1.0, "absorbed": true, "base": Vector2(-200.0, 0.0),
+		"dir": Vector2.RIGHT}
+	a._shot_views[5] = gone
+	a._shot_views[7] = coming
 	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.5, "color": 1, "sid": 5, "soft": true})
 	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.5, "color": 1, "sid": 6, "soft": false})
+	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.5, "color": 1, "sid": 7, "soft": false})
 	a._undo_self_claims()
-	_check(not bool(alive["absorbed"]) and alive.has("no_claim"),
-		"server topu hələ göndərir — top geri qaytarılır və bir də proqnozlanmır")
-	_check(a._self_claims.size() == 1 and int(a.hit_stats["self_soft_miss"]) == 1,
-		"serverdə itən topun proqnozu gözləyir (qalan %d)" % a._self_claims.size())
-	a._last_snap_t = 0.65
-	var fresh := {"node": null, "seen": 0.65, "absorbed": true}
-	a._shot_views[7] = fresh
-	a._self_claims.append({"pos": Vector2.ZERO, "t": 0.6, "color": 1, "sid": 7, "soft": true})
-	a._undo_self_claims()
-	_check(bool(fresh["absorbed"]), "RTT keçməmiş top qaytarılmır — server hələ deyə bilməz")
+	_check(not bool(gone["absorbed"]) and gone.has("no_claim"),
+		"serverdə top səndən keçib gedir — geri qaytarılır və bir də proqnozlanmır")
+	_check(bool(coming["absorbed"]) and a._self_claims.size() == 2
+		and int(a.hit_stats["self_soft_miss"]) == 1,
+		"serverdə top sənə hələ çatmayıb, serverdə itən top da — ikisi gözləyir (qalan %d)"
+			% a._self_claims.size())
 	a.free()
 
 
@@ -830,13 +868,34 @@ static func _test_own_soft_hit() -> void:
 	var deep := p.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
 	var graze := p.spawn(Vector2(0.0, 38.5), Vector2.RIGHT, 0.0)
 	var depth := {}
+	var near_late := {}
 	var now := 0.0
 	for i in 60:
 		now += Const.TICK_DELTA
 		for c in p.step(Const.TICK_DELTA, now, [] as Array[Vector4], PackedByteArray(), targets):
 			if int(c["kind"]) == ShotPrediction.Contact.HIT:
 				depth[(c["ghost"] as ShotPrediction.Ghost).id] = float(c["depth"])
+				near_late[(c["ghost"] as ShotPrediction.Ghost).id] = bool(c.get("late", false))
 	_check(depth.has(deep.id) and float(depth[deep.id]) < 0.01, "mərkəzdən keçən topun dərinliyi 0-dır")
+	# Ömrünün sonunda dəyən top "gec"dir — atəş nöqtəsinin xətt boyu fərqi həll edir.
+	var far := ShotPrediction.new()
+	# Top 65 parça uçur (910 px); qurbanın kənarı sonuncu parçanın ortasındadır.
+	var reach_end := Const.SHOT_SPEED * Const.TICK_DELTA * 64.5
+	var end_target := [{"pos": Vector2(reach_end + 40.0, 0.0), "radius": 31.0,
+		"shape": Vector3(40.0, 40.0, 0.0), "key": 9}]
+	var ghost_late := far.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
+	# Server təsdiqləyib — yoxsa proqnoz 1 s sonra səssizcə dayanır (CLAIM_GRACE).
+	ghost_late.sid = 1
+	var late := {}
+	var t_far := 0.0
+	for i in 90:
+		t_far += Const.TICK_DELTA
+		for c in far.step(Const.TICK_DELTA, t_far, [] as Array[Vector4], PackedByteArray(), end_target):
+			if int(c["kind"]) == ShotPrediction.Contact.HIT:
+				late[(c["ghost"] as ShotPrediction.Ghost).id] = bool(c.get("late", false))
+	_check(late.has(ghost_late.id) and bool(late[ghost_late.id])
+		and near_late.has(deep.id) and not bool(near_late[deep.id]),
+		"ömrünün son tick-lərində dəyən top gecdir, yaxındakı yox")
 	_check(depth.has(graze.id) and float(depth[graze.id]) > Arena.OWN_SURE_DEPTH,
 		"kənara sürtünən top sərhəddədir (%.2f)" % float(depth.get(graze.id, -1.0)))
 	var a := Arena.new()
@@ -848,6 +907,16 @@ static func _test_own_soft_hit() -> void:
 	_check(a._claims.size() == 1 and bool(a._claims[0].get("soft", false))
 		and int(a.hit_stats["predicted"]) == 0 and int(a.hit_stats["own_soft"]) == 1,
 		"sərhəddəki dəymə göstərilmir, serveri gözləyir")
+	# Server atəşi təsdiqləyib, amma geri sarmanı həddə kəsib: dərin dəymə də gözləyir.
+	var capped := p.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
+	capped.sid = 44
+	capped.rewind = Const.REWIND_MAX
+	a._on_own_contact({"kind": ShotPrediction.Contact.HIT, "pos": Vector2(160.0, 0.0),
+		"dir": Vector2.RIGHT, "key": 7, "ghost": capped, "depth": 0.2})
+	_check(a._claims.size() == 2 and bool(a._claims[1].get("soft", false))
+		and int(a.hit_stats["predicted"]) == 0,
+		"geri sarma həddə dirənib — dərin dəymə də serveri gözləyir")
+	a._claims.pop_back()
 	# Qurbanın görüntüsü yoxdur — zərbənin effekti testdə çəkilmir.
 	a._visuals.erase(7)
 	_check(a._match_claim(Vector2(168.0, 38.0), true, 3) and int(a.hit_stats["own_soft_conf"]) == 1
@@ -1901,9 +1970,11 @@ static func _test_resolution_verdict() -> void:
 		low.append(0.006)
 		high.append(0.045)
 	_check(Arena.resolution_verdict(calm, low, budget) == 1, "sabit 30 kadr — rahatdır, sıxlıq böyüyə bilər")
-	_check(Arena.resolution_verdict(gpu, low, budget) == -1, "50 ms kadr, CPU 6 ms — yük GPU-dadır, kiçilir")
-	_check(Arena.resolution_verdict(cpu_bound, high, budget) == 0,
-		"50 ms kadr, CPU 45 ms — yük CPU-dadır, sıxlıq dəyişmir")
+	_check(Arena.resolution_verdict(gpu, low, budget) == -1, "50 ms kadr — yavaşdır, kiçilir")
+	# Oyun işinin vaxtı hökmə təsir etmir: brauzerdə GPU-nun gözləməsi də oraya
+	# düşür. Kiçiltmənin kömək edib-etmədiyini [method Arena.resolution_step] yoxlayır.
+	_check(Arena.resolution_verdict(cpu_bound, high, budget) == -1,
+		"50 ms kadr, oyun işi 45 ms — hökm yenə 'yavaş'dır (CPU-nu brauzerdə ayırmaq olmur)")
 	_check(Arena.resolution_verdict(judder, low, budget) == -1, "kadrların beşdə biri gecikir — kiçilir")
 	_check(Arena.resolution_verdict(hitch, low, budget) == 1, "tək-tük sıçrayış sayılmır")
 	_check(Arena.resolution_verdict(gpu.slice(0, 10), low, budget) == 0, "az kadrla hökm verilmir")
@@ -1915,8 +1986,7 @@ static func _test_resolution_verdict() -> void:
 
 ## Brauzer kadrlarının modeli: GPU işi piksel sayı ilə (sıxlığın kvadratı) artır,
 ## CPU-dan ayrı gedir; kadr ekranın vsync-inə yuvarlanır, 30 kadr həddi isə
-## [param min_vsyncs]-dan az buraxmır. [param cpu_seen] ≥ 0 — tənzimləyicinin
-## gördüyü CPU işi realdan fərqlidir (ölçülməyən iş).
+## `min_vsyncs`-dan az buraxmır.
 static func _res_window(dpr: float, gpu_at_1: float, cpu: float, rng: RandomNumberGenerator,
 		frames: PackedFloat32Array, cpus: PackedFloat32Array, opts: Dictionary) -> void:
 	frames.clear()
@@ -1933,7 +2003,7 @@ static func _res_window(dpr: float, gpu_at_1: float, cpu: float, rng: RandomNumb
 		if hitches > 0 and i % (90 / hitches) == 0:
 			ft = 0.12
 		frames.append(ft)
-		cpus.append(c if float(opts.get("cpu_seen", -1.0)) < 0.0 else float(opts["cpu_seen"]))
+		cpus.append(c)
 		t += ft
 		i += 1
 
@@ -1993,12 +2063,13 @@ static func _test_resolution_converges() -> void:
 			"çox zəif GPU (1.25-də %.0f ms): aşağı həddə enir (%.2f), %.0f FPS"
 				% [gpu_ms, weak["dpr"], weak["fps"]])
 	var cpu_bound := _res_run(top, top, 0.010, 0.045)
-	_check(is_equal_approx(cpu_bound["dpr"], top) and cpu_bound["changes"] == 0,
-		"yük CPU-dadır (45 ms): sıxlıq dəyişmir (%.2f)" % cpu_bound["dpr"])
-	var hidden := _res_run(top, top, 0.010, 0.045, {"cpu_seen": 0.005})
-	_check(is_equal_approx(hidden["dpr"], top) and hidden["late"] == 0 and hidden["changes"] <= 3,
-		"ölçülməyən CPU işi: kiçiltmə kömək etmir — sıxlıq geri qaytarılır (%.2f, %d dəyişiklik)"
-			% [hidden["dpr"], hidden["changes"]])
+	_check(is_equal_approx(cpu_bound["dpr"], top) and cpu_bound["late"] == 0 and cpu_bound["changes"] <= 3,
+		"yük CPU-dadır (45 ms): kiçiltmə kömək etmir — sıxlıq geri qaytarılır (%.2f, %d dəyişiklik)"
+			% [cpu_bound["dpr"], cpu_bound["changes"]])
+	# CPU da, GPU da yüklüdür: kiçiltmə GPU hissəsini qısaldır, kadr CPU-ya qədər enir.
+	var both := _res_run(top, top, 0.080 / (top * top), 0.030)
+	_check(both["dpr"] < top and both["p90"] <= budget_ms * 1.2 and both["late"] == 0,
+		"GPU 80 ms + CPU 30 ms: sıxlıq %.2f-ə enir, kadr p90 %.1f ms" % [both["dpr"], both["p90"]])
 	var saver := _res_run(top, top, 0.010, 0.006, {"refresh": 30.0, "min_vsyncs": 1})
 	_check(is_equal_approx(saver["dpr"], top) and saver["changes"] == 0,
 		"enerjiyə qənaət (brauzer 30 kadr verir): sıxlıq dəyişmir")

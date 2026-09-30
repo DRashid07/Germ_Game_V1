@@ -1440,7 +1440,9 @@ func bush_of(g: GermState) -> int:
 ## İndi topun "payı" ([method _even_margin]) elə seçilir ki, orta en dəqiq
 ## dairəninki olsun: forma dəyişir, dəymə ehtimalı dəyişmir. Növlər arasında da
 ## fərq yoxdur — [constant Const.SPECIES_BODY] kimi qaydadır: hədəf kimi hamı
-## eyni ölçüdədir.
+## eyni ölçüdədir. Yoxlanıb — eyni kod, eyni toxumlar, 300 × 60 s, dairə → indi:
+## amöb dünyası dəymə 78.2 → 79.7, super 4.26 → 4.21; qarışıq dünya dəymə
+## 75.6 → 77.1, super 11.53 → 11.68 — hamısı səpələnmə daxilində (≤ 1.3σ).
 ##
 ## Server də, client-in proqnozu da EYNİ düsturu işlədir; sürət snapshot-da gəlir.
 const HIT_STRETCH: Array[float] = [0.20, 0.04, 0.24]

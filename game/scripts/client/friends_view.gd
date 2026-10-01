@@ -178,17 +178,22 @@ func _rebuild() -> void:
 ## Sol sütun: kimlik, əlavə etmə, komanda.
 func _build_left(keep_tag: String, keep_code: String) -> void:
 	_head(_left, "SƏNİN KODUN")
-	var my := Hud._make_label(30, Palette.GERM_COLORS[0])
+	# Kod və düymələri BİR sətirdədir, komanda kodu kimi. Ayrı sətirdə olanda
+	# üç nəfərlik komanda ilə sütun 720 px-ə sığmırdı (543 px lazım, 504 var) və
+	# KOMANDADAN ÇIX sürüşdürmədən görünmürdü. En ən geniş koda görə ölçülüb:
+	# "#QQQQQQQQQ" 181 px + KOPYALA + LİNK = 379 px, sütunun içi 388 px-dir.
+	var my_row := HBoxContainer.new()
+	my_row.add_theme_constant_override("separation", 10)
+	_left.add_child(my_row)
+	var my := Hud._make_label(26, Palette.GERM_COLORS[0])
 	my.theme_type_variation = "Heading"
 	my.text = "#" + Friends.my_tag
-	ChunkyBox.stroke(my, 7, true)
-	_left.add_child(my)
-	var share_row := HBoxContainer.new()
-	share_row.add_theme_constant_override("separation", 10)
-	_left.add_child(share_row)
-	share_row.add_child(_btn("KOPYALA", Palette.MENU_BLUE, 17, func() -> void:
+	my.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ChunkyBox.stroke(my, 6, true)
+	my_row.add_child(my)
+	my_row.add_child(_btn("KOPYALA", Palette.MENU_BLUE, 15, func() -> void:
 		_copy("#" + Friends.my_tag, "Oyunçu kodun")))
-	share_row.add_child(_btn("PAYLAŞ", Palette.GERM_COLORS[1].darkened(0.35), 17, func() -> void:
+	my_row.add_child(_btn("LİNK", Palette.GERM_COLORS[1].darkened(0.35), 15, func() -> void:
 		_share("Germ Arena-da məni dost əlavə et!", Friends.share_link_friend()), ICON_LINK))
 
 	_head(_left, "DOST ƏLAVƏ ET")

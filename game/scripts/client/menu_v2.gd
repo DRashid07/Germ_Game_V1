@@ -78,6 +78,8 @@ const MODE_W := 330.0
 const MODE_GAP := 16.0
 ## Qəhrəmanın başının üstündəki ad lövhəsi.
 const PLATE := Vector2(300.0, 64.0)
+## Dəvət kartı açılanda/bağlananda ad lövhəsi bu qədər saniyədə sönür/görünür.
+const PLATE_FADE := 0.15
 ## Sol lentin düyməsi (Brawl Stars-da Shop/Brawlers).
 const RAIL := Vector2(112.0, 112.0)
 const RAIL_GAP := 18.0
@@ -301,6 +303,8 @@ var _my_crown: TextureRect
 var _invite_card: PanelContainer
 var _invite_tag := ""
 var _invite_bar: Panel
+## Ad lövhəsinin görünməsi, 0 → 1 (bax [method _fade_plate]).
+var _plate_shown := 1.0
 
 ## Qoşulma gedirmi. OYNA düyməsi bu vəziyyəti ÖZÜ göstərir — ayrıca status
 ## sətri və "LƏĞV ET" düyməsi yoxdur (köhnə menyuda hər ikisi vardı və menyunu
@@ -392,6 +396,7 @@ func _process(delta: float) -> void:
 
 	_pose_mates()
 	_tick_invite()
+	_fade_plate(delta)
 
 	if _motes != null:
 		# Zərrəciklər podiumun ətrafında toplanır: fon şəklindəki su hərəkətsizdir,
@@ -1494,6 +1499,28 @@ func _tick_invite() -> void:
 		return
 	var left := clampf((float(inv["until"]) - Friends._clock) / Social.INVITE_TTL, 0.0, 1.0)
 	_invite_bar.custom_minimum_size.x = (_invite_card.size.x - 20.0) * left
+
+
+## Dəvət kartı qəhrəmanın ad lövhəsinin YERİNDƏDİR: yuxarı zolaqla qəhrəman
+## arasında 600 px-lik kart üçün başqa yer yoxdur — yuxarıda valyutalara,
+## aşağıda yoldaşların lövhələrinə dəyir. Kart görünəndə lövhə və lider tacı
+## sönür: əvvəl lövhənin alt sətri ("SUPER · …") kartın üst kənarından yarıya
+## kəsilmiş görünürdü.
+##
+## `modulate` yox, `self_modulate` və lövhənin içi dəyişir: girişdə
+## [method _play_intro] ana ekranın node-larının `modulate`-ini tween edir və
+## dəvət elə menyu açılanda göstərilə bilər — ikisi bir-birini əzərdi.
+func _fade_plate(delta: float) -> void:
+	var plate := get_node_or_null("Plate") as PanelContainer
+	if plate == null or _my_crown == null:
+		return
+	var want := 0.0 if _invite_card != null and _invite_card.visible else 1.0
+	if _plate_shown == want:
+		return
+	_plate_shown = move_toward(_plate_shown, want, delta / PLATE_FADE)
+	plate.self_modulate.a = _plate_shown
+	(plate.get_child(0) as CanvasItem).modulate.a = _plate_shown
+	_my_crown.self_modulate.a = _plate_shown
 
 
 # ---------------------------------------------------------------- vərəq

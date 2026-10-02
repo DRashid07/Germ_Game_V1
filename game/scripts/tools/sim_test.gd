@@ -141,6 +141,8 @@ static func run() -> int:
 	_test_world_keeps_population()
 	_test_address_parsing()
 	_test_fire_button()
+	_test_auto_aim()
+	_test_aim_path()
 	_test_germ_species()
 	_test_heliozoan_gait()
 	_test_amoeba_crawl()
@@ -4061,30 +4063,153 @@ static func _test_spore() -> void:
 	_check(g.capacity == cap + Const.SPORE_CAPACITY,
 		"spor tutum verir (%d → %d)" % [cap, g.capacity])
 
-## Atəş düyməsi. Ən təhlükəli hal barmağın qalxmasının itməsidir: düymə
-## "basılı" ilişər və oyunçu dayanmadan atar. Ona görə buraxılma düymənin
-## üstündə yox, qlobal olaraq barmaq indeksinə görə tutulur.
+## Atəş düyməsi — Brawl Stars-ın atəş joystickidir: qısa toxunuş avtomatik
+## nişandır, sürüşdürüb buraxmaq nişanla atəşdir, mərkəzə qaytarıb buraxmaq
+## ləğvdir. Ən təhlükəli hal barmağın qalxmasının itməsidir: düymə "basılı"
+## ilişər. Ona görə buraxılma düymənin üstündə yox, qlobal olaraq barmaq
+## indeksinə görə tutulur.
 static func _test_fire_button() -> void:
 	var btn := FireButton.new()
 	btn.size = Vector2(200.0, 200.0)
-	var shots := [0]
-	btn.fired.connect(func() -> void: shots[0] += 1)
+	var taps := [0]
+	var aims := []
+	btn.tapped.connect(func() -> void: taps[0] += 1)
+	btn.aimed.connect(func(a: float) -> void: aims.append(a))
 
 	btn._gui_input(_touch(0, true))
-	_check(btn.held and shots[0] == 1, "düymə basıldı (atəş siqnalı=%d)" % shots[0])
-
+	_check(btn.held and taps[0] == 0,
+		"basılanda hələ atılmır — toxunuşdurmu, nişandırmı, bilinmir")
 	# Başqa barmağın qalxması bu düyməyə aid deyil.
 	btn._input(_touch(1, false))
 	_check(btn.held, "yad barmaq düyməni buraxmır")
-
+	# Baş barmaq toxunanda da bir neçə piksel titrəyir.
+	btn._input(_drag(0, Vector2(108.0, 104.0)))
+	_check(not btn.aiming, "ölü zonadakı titrəmə nişan sayılmır")
 	btn._input(_touch(0, false))
-	_check(not btn.held, "barmaq qalxanda düymə buraxılır")
+	_check(not btn.held and taps[0] == 1 and aims.is_empty(),
+		"qısa toxunuş avtomatik atəşdir (toxunuş=%d, nişan=%d)" % [taps[0], aims.size()])
 
 	btn._gui_input(_touch(0, true))
+	btn._input(_drag(0, Vector2(100.0, 160.0)))
+	_check(btn.aiming and btn.aim_dir.is_equal_approx(Vector2.DOWN), "sürüşdürmə nişandır")
+	btn._input(_drag(1, Vector2(300.0, 100.0)))
+	_check(btn.aim_dir.is_equal_approx(Vector2.DOWN), "yad barmağın sürüşməsi nişanı dəyişmir")
+	btn._input(_touch(0, false))
+	_check(aims.size() == 1 and taps[0] == 1 and is_equal_approx(float(aims[0]), PI * 0.5),
+		"buraxılanda nişanın bucağı ilə atılır (%s)" % [aims])
+
+	# Fikrini dəyişən oyunçu barmağı mərkəzə qaytarır.
+	btn._gui_input(_touch(0, true))
+	btn._input(_drag(0, Vector2(160.0, 100.0)))
+	btn._input(_drag(0, Vector2(102.0, 101.0)))
+	_check(btn.is_cancelling() and not btn.aiming, "mərkəzə qayıdan nişan ləğv halındadır")
+	btn._input(_touch(0, false))
+	_check(aims.size() == 1 and taps[0] == 1, "ləğv olunan nişan heç nə atmır")
+
+	btn._gui_input(_touch(0, true))
+	btn._input(_drag(0, Vector2(160.0, 100.0)))
 	btn.cancel()
-	_check(not btn.held, "cancel() düyməni buraxır")
+	_check(not btn.held and not btn.aiming, "cancel() düyməni buraxır")
+	btn._input(_touch(0, false))
+	_check(aims.size() == 1 and taps[0] == 1, "cancel()-dən sonrakı qalxma atmır")
 
 	btn.free()
+
+
+## Avtomatik nişan hədəfi seçir: ən yaxın görünən rəqib; maneə arxasındakı
+## və kistdəki ancaq başqası yoxdursa. Xəta atəş başına çəkilir və həddi aşmır.
+static func _test_auto_aim() -> void:
+	var s := Sim.new()
+	s.obstacles.clear()
+	s.broken = PackedByteArray()
+	var near := {"key": 1, "pos": Vector2(200.0, 0.0)}
+	var far := {"key": 2, "pos": Vector2(400.0, 0.0)}
+	_check(int(AutoAim.pick(Vector2.ZERO, [far, near], 600.0, s).get("key", -1)) == 1,
+		"ən yaxın rəqib seçilir")
+	_check(AutoAim.pick(Vector2.ZERO, [{"key": 3, "pos": Vector2(900.0, 0.0)}], 600.0, s).is_empty(),
+		"nişanın çatmadığı rəqib seçilmir — top getdiyin tərəfə gedir")
+
+	var cyst := {"key": 5, "pos": Vector2(0.0, -150.0), "cyst": true}
+	_check(int(AutoAim.pick(Vector2.ZERO, [cyst, near], 600.0, s).get("key", -1)) == 1,
+		"kistdəki amöb (top ondan səkir) açıq hədəfdən sonra gəlir")
+
+	s.obstacles.append(Vector4(100.0, 0.0, 40.0, DishMap.Kind.MUCUS))
+	s.broken = PackedByteArray([0])
+	var open := {"key": 4, "pos": Vector2(0.0, 350.0)}
+	_check(int(AutoAim.pick(Vector2.ZERO, [near, open], 600.0, s).get("key", -1)) == 4,
+		"görünən rəqib maneə arxasındakı yaxından üstündür")
+	_check(int(AutoAim.pick(Vector2.ZERO, [near], 600.0, s).get("key", -1)) == 1,
+		"başqa hədəf yoxdursa, maneə arxasındakına atılır")
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var worst := 0.0
+	var mean := 0.0
+	for i in 4000:
+		var e := AutoAim.roll_error(rng)
+		worst = maxf(worst, absf(e))
+		mean += e / 4000.0
+	_check(worst <= AutoAim.ERROR and worst > AutoAim.ERROR * 0.8 and absf(mean) < 0.01,
+		"avtomatik nişan dəqiq deyil, amma həddi aşmır və bir tərəfə əyilmir (ən çox %.3f, orta %.4f)" \
+			% [worst, mean])
+	_check(AutoAim.reach(Const.START_CAPACITY + 20) > AutoAim.reach(Const.START_CAPACITY),
+		"nişanın məsafəsi kamera ilə böyüyür")
+
+
+## Nişan xətti topun ÖZ yolu olmalıdır: xətt bir yerdə, top başqa yerdə
+## səkərsə, dəqiq nişan aldadır. Ona görə xətt əsl topla müqayisə olunur.
+static func _test_aim_path() -> void:
+	var s := Sim.new()
+	s.obstacles.clear()
+	s.broken = PackedByteArray()
+	var p := s.aim_path(Vector2.ZERO, Vector2.RIGHT, 500.0, 1)
+	_check(p.size() == 2 and p[1].is_equal_approx(Vector2(500.0, 0.0)), "boş yolda xətt düzdür")
+
+	s.obstacles.append(Vector4(300.0, 40.0, 50.0, DishMap.Kind.MUCUS))
+	s.broken = PackedByteArray([0])
+	p = s.aim_path(Vector2.ZERO, Vector2.RIGHT, 500.0, 1)
+	var walked := 0.0
+	for i in p.size() - 1:
+		walked += p[i].distance_to(p[i + 1])
+	_check(p.size() == 3 and p[2].x < p[1].x and absf(walked - 500.0) < 1.0,
+		"selikdən səkir və uzunluq saxlanılır (%d nöqtə, %.1f px)" % [p.size(), walked])
+
+	# Əsl top eyni yerdə səkməli və eyni tərəfə getməlidir.
+	var g := s.add_germ(A_ID, "A", 0)
+	g.pos = Vector2.ZERO
+	g.aim = 0.0
+	s._fire(g)
+	var shot: Sim.ShotState = s.shots[0]
+	var hit := Vector2.INF
+	for i in 30:
+		s._step_shots(Const.TICK_DELTA)
+		for e in s.events:
+			if e.get("t") == "hit" and hit == Vector2.INF:
+				hit = e["pos"]
+	_check(hit.distance_to(p[1]) < 0.6, "top xəttin göstərdiyi yerdə səkir (%s ~ %s)" % [hit, p[1]])
+	# Top da, xətt də səkmə nöqtəsindən 0.5 px aralanıb davam edir — bucaq
+	# fərqi o qədərdir (~0.1°), görünməzdir.
+	var turn := absf(shot.dir.angle_to(p[2] - p[1]))
+	_check(turn < 0.01, "səkmədən sonra top xəttin tərəfinə gedir (fərq %.4f rad)" % turn)
+
+	s.obstacles[0] = Vector4(300.0, 0.0, 50.0, DishMap.Kind.BRITTLE)
+	p = s.aim_path(Vector2.ZERO, Vector2.RIGHT, 500.0, 1)
+	_check(p.size() == 2 and absf(p[1].x - (250.0 - Const.SHOT_RADIUS)) < 0.5,
+		"kövrək qabıqda xətt dayanır — top onu yarır, səkmir")
+	s.broken[0] = DishMap.Wall.GONE
+	p = s.aim_path(Vector2.ZERO, Vector2.RIGHT, 500.0, 1)
+	_check(p.size() == 2 and is_equal_approx(p[1].x, 500.0), "dağılmış qabıqdan xətt keçir")
+	s.obstacles[0] = Vector4(300.0, 0.0, 50.0, DishMap.Kind.BUSH)
+	p = s.aim_path(Vector2.ZERO, Vector2.RIGHT, 500.0, 1)
+	_check(p.size() == 2, "koldan xətt keçir — top da keçir")
+
+	s.obstacles.clear()
+	s.broken = PackedByteArray()
+	var from := Vector2(Const.WORLD_RADIUS - 100.0, 0.0)
+	p = s.aim_path(from, Vector2.RIGHT, 300.0, 1)
+	_check(p.size() == 3 and p[2].x < p[1].x
+		and absf(p[1].length() - (Const.WORLD_RADIUS - Const.SHOT_RADIUS)) < 0.5,
+		"qabın şüşə kənarından səkir")
 
 
 # ---------------------------------------------------------------- köməkçilər
@@ -4747,6 +4872,13 @@ static func _gait_step(g: GermVisual, pos: Vector2, cap: int, dt: float) -> void
 	g.apply(pos, 0.0, 6, cap, false, true)
 	g._track_motion(dt)
 	g._walk(dt)
+
+
+static func _drag(index: int, at: Vector2) -> InputEventScreenDrag:
+	var e := InputEventScreenDrag.new()
+	e.index = index
+	e.position = at
+	return e
 
 
 static func _touch(index: int, pressed: bool) -> InputEventScreenTouch:

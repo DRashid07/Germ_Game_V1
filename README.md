@@ -6,8 +6,10 @@ Onlayn **io tipli** mikrob arenası. Mobil (Android) üçün, **yatay** ekranda.
 - **Format:** matç yoxdur, növbə yoxdur. Düyməni basan kimi dünyadasan.
 - **Hərəkət:** telefonda sol barmaq üzən joystick, sağ aşağıda top atma düyməsi
 - **Super:** hər növün öz gücü — atəş düyməsinin üstündəki halqa dolanda basılır
-- **PC-də:** `WASD` / ox düymələri hərəkət, `BOŞLUQ` top atır
-- **Nişan:** yoxdur — top getdiyin tərəfə gedir, dayanmısansa son baxdığın tərəfə
+- **PC-də:** `WASD` / ox düymələri hərəkət, `BOŞLUQ` top atır (avtomatik nişanla)
+- **Nişan:** Brawl Stars kimi — atəş düyməsinə **toxun**: top ən yaxın rəqibə
+  gedir, amma dəqiq deyil. **Basılı saxla və sürüşdür**: nişan xətti çıxır,
+  buraxanda top məhz o xətlə gedir (bax [«Nişan»](#nişan--toxun-və-ya-sürüşdür))
 - **Ekran:** yatay, 1280×720 baza — telefon kilidlənir, brauzerdə portret
   pəncərədə "telefonu yan çevir" örtüyü çıxır
 - **Motor:** Godot 4.7.2 · **Dil:** GDScript · **Şəbəkə:** server-authoritative
@@ -107,6 +109,49 @@ yəni bir kadrda beş sprite-ın da həqiqi görkəmi yoxlanılır:
 GODOT --path game --resolution 760x760 -- --map --map-layout 0 \
       --shot C:/yol/kadr.png --shot-delay 60
 ```
+
+### Nişan — toxun və ya sürüşdür
+
+Atəş düyməsi Brawl Stars-ın atəş joystickidir
+([`FireButton`](game/scripts/client/fire_button.gd)):
+
+| Hərəkət | Nə olur |
+|---|---|
+| **Qısa toxunuş** | **Avtomatik nişan** — top ən yaxın GÖRÜNƏN rəqibə gedir. Hədəfin üstündə bir anlıq kilid çərçivəsi çıxır |
+| **Basılı saxla + sürüşdür** | Düymə joystickə çevrilir, dünyada **nişan xətti** çəkilir — səkmə ilə birlikdə. Barmağı qaldıranda top o xətlə gedir |
+| **Sürüşdür, mərkəzə qaytar, burax** | **Ləğv** — heç nə atılmır (fikrini dəyişənin yolu) |
+| `BOŞLUQ` / `ENTER` (PC) | Avtomatik nişanla atəş; basılı saxlananda saniyədə bir |
+
+Avtomatik nişan **qəsdən dəqiq deyil** ([`AutoAim`](game/scripts/client/auto_aim.gd)):
+
+- rəqibin **indiki** yerinə atır, getdiyi yeri qabaqlamır — hərəkət edən rəqib
+  topdan çəkilib qaçır, yerində duranı isə vurur;
+- hər atəşə **±10°**-yə qədər təsadüfi xəta düşür (üçbucaq paylanma, çox vaxt
+  kiçik). Yerində duran rəqibə 300 px-də ~91%, 400 px-də ~78%, ekranın kənarında
+  (600 px) ~58% dəyir; hərəkət edənə çox vaxt dəymir;
+- hədəf **ekranda görünən** ən yaxın rəqibdir; maneə arxasındakı və kistdəki amöb
+  (top ondan səkir) yalnız başqası yoxdursa seçilir. Ekranda heç kim yoxdursa,
+  top getdiyin tərəfə gedir.
+
+Dəqiq vurmaq istəyən nişan alır: xətt topun ÖZ yoludur — [`Sim.aim_path`](game/scripts/shared/sim.gd)
+səkmə qaydalarını [`Sim._step_shots`]-dan götürür və test xətti əsl topla müqayisə
+edir. Xətt soyuma və ya sursat çatmayanda bozdur: «buraxsan, atılmayacaq».
+
+Atəş barmaq **qalxanda** açılır, basılanda yox — basılış anında toxunuşmu,
+nişanmı, hələ bilinmir. Əvvəlki "basılı saxla, fasiləsiz at" qaydası ona görə
+getdi (BOŞLUQ-da qalıb). Soyumanın son 0.2 s-ində edilən toxunuş itmir: istək
+gözləyir ([`Arena.FIRE_BUFFER`](game/scripts/client/arena.gd)).
+
+Hamısı client-dədir — nişan bucağı onsuz da girişdə gedirdi
+([`Sim.PlayerInput.aim`]), server və proqnoz onu olduğu kimi götürür. Server
+dəyişmədi: köhnə server yeni client-lə, yeni server köhnə client-lə işləyir.
+Hədəf yalnız ekranda görünən rəqiblərdəndir — kolda gizlənəni server onsuz da
+göndərmir, yəni avtomatik nişan heç kimi ifşa etmir.
+
+Nişan alarkən mikrobun ayaqcığı ([`GermVisual.aim`]) nişanın tərəfinə dönür,
+atəşdən sonra da 0.3 s atdığı tərəfə baxır — rəqib hara atacağını görür.
+Düymənin ikonu, nişan başı, kilid çərçivəsi və xəttin oxu Codex ilə çəkilib, ağ-boz,
+oyunçunun rəngi ilə boyanır (bax [design/menu_art/](design/menu_art/)).
 
 ### Zərbə hissi
 
@@ -626,10 +671,10 @@ düyməsini bas — botlarla dolu dünya dərhal açılır, serverə ehtiyac yox
 | | |
 |---|---|
 | `WASD` və ya ox düymələri | hərəkət |
-| `BOŞLUQ` (və ya `ENTER`) | top atmaq |
+| `BOŞLUQ` (və ya `ENTER`) | top atmaq — avtomatik nişanla |
 | `SHIFT` (və ya `Q`) | **super** — dolubsa |
 | `ESC` | matçdan çıxış təsdiqi · menyuda açıq vərəqi bağlayır |
-| Siçan | ekran joysticki və düymələr |
+| Siçan | ekran joysticki və düymələr; atəş düyməsini sürüşdürmək — nişan |
 
 > **Niyə klaviatura?** Oyun toxunuş üçün qurulub, siçan isə Godot-da BİR toxunuş
 > kimi emulyasiya olunur — yəni siçanla eyni anda həm hərəkət etmək, həm atmaq
@@ -798,7 +843,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (546 test)
+# Simulyasiya + World + dostluq/komanda testləri (568 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

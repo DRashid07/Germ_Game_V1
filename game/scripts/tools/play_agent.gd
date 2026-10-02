@@ -650,8 +650,10 @@ func _drive(delta: float) -> void:
 		if probe:
 			# Toxunuş düyməyə ÇATDIMI, arena onu GÖTÜRDÜMÜ — cavab olmasa səbəbi
 			# bunlardan ayırır: yer yoxlaması, bayraq, yoxsa simulyasiya.
-			_fire_diag = "held=%s flag=%s cd=%.3f balls=%d touch=%d" % [
-				hud.fire_button.held, a._fire_flag, me.cooldown, me.balls,
+			# Atəş barmaq QALXANDA açılır (bax [FireButton]) — basılış anında
+			# istək hələ yoxdur, "held" isə düymənin toxunuşu tutduğunu deyir.
+			_fire_diag = "held=%s pending=%s cd=%.3f balls=%d touch=%d" % [
+				hud.fire_button.held, a._shot_pending(), me.cooldown, me.balls,
 				hud.fire_button._touch_index]
 
 	# ---- super ----

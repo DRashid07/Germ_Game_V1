@@ -1386,6 +1386,53 @@ func has_line_of_sight(a: Vector2, b: Vector2) -> bool:
 	return true
 
 
+## Topun gedəcəyi yol — əl ilə nişan alanda çəkilən xətt üçün ([AimGuide]).
+##
+## Qaydalar [method _step_shots]-dakı kimidir: selikdən və qabın şüşə
+## kənarından səkir, kövrək qabıqda dayanır (onu yarır, sıçramır), kol və
+## cərəyan deşiyindən keçir. Mikroblar nəzərə ALINMIR — onlar hərəkət edir və
+## xətt rəqibin üstündə kəsilsəydi, oyunçu topun ondan o yana getməyəcəyini
+## düşünərdi. [param bounces] xəttin göstərdiyi sıçrayış sayıdır.
+func aim_path(from: Vector2, dir: Vector2, length: float, bounces: int) -> PackedVector2Array:
+	var pts := PackedVector2Array([from])
+	var at := from
+	var d := dir.normalized()
+	var left := length
+	var limit := Const.WORLD_RADIUS - Const.SHOT_RADIUS
+	for _bounce_i in bounces + 1:
+		var to := at + d * left
+		var best := 2.0
+		var normal := Vector2.ZERO
+		var stop := false
+		for i in obstacles.size():
+			var o := obstacles[i]
+			var t := _seg_circle_t(at, to, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS)
+			if not (t >= 0.0 and t < best):
+				continue
+			if DishMap.wall_gone(broken[i]) or not DishMap.blocks_shot(int(o.w)):
+				continue
+			best = t
+			normal = (at.lerp(to, t) - Vector2(o.x, o.y)).normalized()
+			stop = int(o.w) == DishMap.Kind.BRITTLE
+		# Başlanğıc qabın içindədir, ona görə bu, ÇIXIŞ nöqtəsidir.
+		var edge := _seg_circle_t(at, to, Vector2.ZERO, limit)
+		if edge >= 0.0 and edge < best:
+			best = edge
+			normal = -at.lerp(to, edge).normalized()
+			stop = false
+		if best > 1.0:
+			pts.append(to)
+			break
+		var hit := at.lerp(to, best)
+		pts.append(hit)
+		left -= at.distance_to(hit)
+		if stop or left <= 1.0:
+			break
+		at = hit + normal * 0.5
+		d = d.bounce(normal).normalized()
+	return pts
+
+
 ## Mikrob hansı kolun içindədir? Kolun indeksi, yoxdursa -1.
 ##
 ## ── Gizlənmə qaydası ────────────────────────────────────────────────────

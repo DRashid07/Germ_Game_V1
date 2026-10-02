@@ -1,9 +1,19 @@
 class_name FireButton
 extends Control
-## Top atma düyməsi — sağ baş barmaq üçün.
+## Top atma düyməsi — sağ baş barmaq üçün. Brawl Stars-ın atəş joystickidir.
 ##
-## Nişan almaq yoxdur: mikrob getdiyi tərəfə atır ([Arena._sample_input]).
-## Düymə yalnız "indi at" deyir, istiqaməti sol joystick müəyyən edir.
+## İki atəş yolu var:
+##   • QISA TOXUNUŞ — [signal tapped]: avtomatik nişan, top ən yaxın rəqibə
+##     gedir, amma dəqiq deyil (bax [AutoAim]).
+##   • BASILI SAXLA və SÜRÜŞDÜR — düymə joystickə çevrilir, dünyada nişan xətti
+##     çəkilir ([AimGuide]); barmaq qalxanda [signal aimed] həmin bucaqla atır.
+##     Barmaq ölü zonaya QAYIDIB qalxsa, atəş LƏĞV olunur — Brawl Stars-dakı
+##     kimi, fikrini dəyişən oyunçunun çıxış yolu budur.
+##
+## Atəş barmaq QALXANDA açılır, basılanda yox: basılan anda oyunçunun
+## toxunmaq, yoxsa nişan almaq istədiyi hələ bilinmir. Basılı saxlamaq artıq
+## dayanmadan atəş DEYİL — əvvəlki "basılı saxla, saniyədə bir at" qaydası
+## nişanla toqquşurdu (BOŞLUQ düyməsi masaüstündə hələ belə işləyir).
 ##
 ## Düymə İKİ vəziyyəti göstərir və hər ikisi oyunçu üçün həyatidir:
 ##   • halqa — növbəti topun hazır olmasına qalan vaxt
@@ -11,17 +21,39 @@ extends Control
 ##     (əks halda oyunçu öz atəşi ilə özünü acından partladardı)
 ##
 ## Toxunuşun BAŞLANĞICI [method _gui_input] ilə tutulur (yalnız düymənin üstündə),
-## BURAXILMASI isə [method _input] ilə (barmaq düymədən kənara sürüşüb qalxsa belə).
-## Əks halda buraxılma hadisəsi itə bilər və düymə "basılı" ilişib qalar —
-## bu isə dayanmadan atəş deməkdir.
+## SÜRÜŞMƏSİ və BURAXILMASI isə [method _input] ilə (barmaq düymədən kənara
+## çıxsa belə). Əks halda buraxılma hadisəsi itə bilər və düymə "basılı"
+## ilişib qalar.
 
-signal fired    ## Basılan an; qısa toxunuş da bir top verməlidir
+signal tapped                  ## Nişansız buraxıldı — avtomatik nişanla at
+signal aimed(angle: float)     ## Nişanla buraxıldı — bu bucaqla at
+
+## Ölü zona, radiusun payı. Ondan qısa sürüşmə toxunuşdur: baş barmaq
+## toxunanda da bir neçə piksel titrəyir və o, nişan sayılmamalıdır.
+const DEAD := 0.28
+## Düymənin başı mərkəzdən ən çox bu qədər (radiusun payı) uzaqlaşır.
+const TRAVEL := 0.50
+## Nişan başı və atəş ikonu — Codex ilə çəkilib, AĞ-BOZ: oyunçunun rəngi ilə
+## vurularaq boyanır (bax design/menu_art/README.md).
+const ICON := preload("res://assets/ui/hud_fire.png")
+const KNOB := preload("res://assets/ui/hud_aim_knob.png")
 
 @export var radius := 84.0
 
+## Barmaq düymənin üstündədir (toxunuş başlayıb, hələ qalxmayıb).
 var held := false
+## Barmaq indi ölü zonadan KƏNARDADIR — buraxılsa nişanla atılacaq.
+var aiming := false
+## Nişanın istiqaməti (vahid vektor); yalnız [member aiming] ikən mənalıdır.
+var aim_dir := Vector2.RIGHT
 
 var _touch_index := -1
+## Toxunuşun başladığı yer (yerli koordinat). Nişan ondan ölçülür, düymənin
+## mərkəzindən yox: kənara toxunan barmaq dərhal "nişan" saymasın.
+var _origin := Vector2.ZERO
+var _drag := Vector2.ZERO
+## Bu toxunuşda barmaq ölü zonadan ən azı bir dəfə çıxıb.
+var _armed := false
 var _cooldown_ratio := 0.0   ## 1 = təzəcə atıb, 0 = növbətiyə hazır
 var _has_ammo := true
 var _color := Palette.TEXT
@@ -34,6 +66,8 @@ var _ring: Control
 # Halqa `_init`-də yaranır, `_ready`-də yox: testlər düyməni ağaca qoşmadan
 # işlədir və [method cancel] halqanı da yeniləyir.
 func _init() -> void:
+	# Ikonlar 256 px-dir, ekranda ~90 px: mipmap-sız kiçiltmə konturu dişləyir.
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_ring = Control.new()
 	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -74,10 +108,19 @@ func _is_ready() -> bool:
 	return _cooldown_ratio <= 0.001 and _has_ammo
 
 
+## Barmaq nişandan sonra ölü zonaya qayıdıb — buraxılsa heç nə atılmayacaq.
+func is_cancelling() -> bool:
+	return held and _armed and not aiming
+
+
 ## Xarici səbəbdən (mikrob partladı, bağlantı kəsildi) idarəni buraxmaq lazım olanda.
+## Heç nə atılmır.
 func cancel() -> void:
 	_touch_index = -1
 	held = false
+	aiming = false
+	_armed = false
+	_drag = Vector2.ZERO
 	_animate_press(false)
 	queue_redraw()
 	_ring.queue_redraw()
@@ -91,8 +134,9 @@ func _gui_input(event: InputEvent) -> void:
 		if t.pressed and _touch_index == -1:
 			_touch_index = t.index
 			held = true
+			_origin = t.position
+			_drag = Vector2.ZERO
 			_animate_press(true)
-			fired.emit()
 			queue_redraw()
 			accept_event()
 
@@ -100,10 +144,39 @@ func _gui_input(event: InputEvent) -> void:
 func _input(event: InputEvent) -> void:
 	if _touch_index == -1:
 		return
-	if event is InputEventScreenTouch:
+	if event is InputEventScreenDrag:
+		var d := event as InputEventScreenDrag
+		if d.index == _touch_index:
+			# `_input` hadisəsi ekran koordinatındadır; HUD isə miqyaslı qatdadır.
+			# Ağacdan kənarda (testlərdə) hadisə onsuz da yerlidir.
+			if is_inside_tree():
+				d = make_input_local(d) as InputEventScreenDrag
+			_drag_to(d.position)
+	elif event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		if not t.pressed and t.index == _touch_index:
-			cancel()
+			_release()
+
+
+## Barmaq [param at]-dadır (yerli koordinat).
+func _drag_to(at: Vector2) -> void:
+	_drag = at - _origin
+	aiming = _drag.length() > radius * DEAD
+	if aiming:
+		_armed = true
+		aim_dir = _drag.normalized()
+	queue_redraw()
+
+
+func _release() -> void:
+	var shot := aiming
+	var dir := aim_dir
+	var tap := not _armed
+	cancel()
+	if shot:
+		aimed.emit(dir.angle())
+	elif tap:
+		tapped.emit()
 
 
 ## Basış 0.94-ə tez oturur, buraxılış back-out ilə bir az aşırıb yerinə gəlir.
@@ -113,6 +186,9 @@ func _input(event: InputEvent) -> void:
 func _animate_press(down: bool) -> void:
 	if _press_tween != null and _press_tween.is_valid():
 		_press_tween.kill()
+	if not is_inside_tree():
+		_press_scale = 0.94 if down else 1.0
+		return
 	_press_tween = create_tween()
 	var step := _press_tween.tween_method(func(v: float) -> void:
 		_press_scale = v
@@ -135,19 +211,19 @@ func _draw() -> void:
 
 	# Baza: joystick sprite-ı ilə eyni məntiq — tünd disk, canlı halqa.
 	draw_circle(c, r, Color(Palette.BG_OUTER, 0.72))
-	draw_arc(c, r, 0, TAU, 48, Color(accent, 0.95 if held else 0.6), 5.0, true)
+	# Ləğv halında halqa da solur — yalnız baş solanda QA onu gözdən qaçırdı.
+	var rim := Color(Palette.TEXT_MUTED, 0.5) if is_cancelling() \
+		else Color(accent, 0.95 if held else 0.6)
+	draw_arc(c, r, 0, TAU, 48, rim, 5.0, true)
 
 	draw_circle(c, r * 0.72, Color(Palette.PANEL, 0.62 if held else 0.45))
 
-	# Nişan: mərkəzdə bir top və onun uçuş izi.
-	var glyph := Color(accent, 0.95 if ready else 0.4)
-	draw_circle(c, r * 0.20, glyph)
-	var trail := PackedVector2Array()
-	for i in 3:
-		var d := r * (0.34 + 0.16 * float(i))
-		trail.push_back(c + Vector2(d, 0))
-		trail.push_back(c + Vector2(d + r * 0.10, 0))
-	draw_multiline(trail, Color(glyph, glyph.a * 0.7), 6.0)
+	if held:
+		_draw_knob(c, r, accent, ready)
+	else:
+		# Nişan: Codex-in ikonu — uçan top və onun izi. Ağ-boz çəkilib, burada
+		# oyunçunun rəngi ilə boyanır; hazır deyilsə sönür.
+		_draw_fit(ICON, c, r * 1.04, Color(accent, 0.95 if ready else 0.4))
 
 	# Sursat bitibsə üstündən xətt: "hazırda atmaq olmaz".
 	if not _has_ammo:
@@ -155,10 +231,35 @@ func _draw() -> void:
 		draw_line(c - d, c + d, Color(Palette.DANGER, 0.9), 7.0, true)
 
 
+## Basılı düymənin başı — barmağın ardınca gedir.
+##
+## Nişan alanda halqanın o tərəfi parlayır: baş barmağın altında itən başın
+## əvəzinə istiqaməti kənardan da oxumaq olur. Ləğv halında baş solğundur və
+## mərkəzdədir — "buraxsan, heç nə olmayacaq".
+func _draw_knob(c: Vector2, r: float, accent: Color, ready: bool) -> void:
+	var off := Vector2.ZERO
+	var tint := Color(accent, 0.95 if ready else 0.55)
+	if aiming:
+		off = _drag.limit_length(r * TRAVEL)
+		var a := aim_dir.angle()
+		draw_arc(c, r, a - 0.42, a + 0.42, 14, Color(Color.WHITE, 0.85), 7.0, true)
+	elif is_cancelling():
+		tint = Color(Palette.TEXT_MUTED, 0.6)
+	_draw_fit(KNOB, c + off, r * 0.86, tint)
+
+
+## Teksturanı [param at] mərkəzində, uzun tərəfi [param side] olmaqla, nisbətini
+## saxlayaraq çəkir — Codex-in şəkilləri kəsiləndən sonra kvadrat deyil.
+func _draw_fit(tex: Texture2D, at: Vector2, side: float, tint: Color) -> void:
+	var ts := tex.get_size()
+	var sz := ts * (side / maxf(ts.x, ts.y))
+	draw_texture_rect(tex, Rect2(at - sz * 0.5, sz), false, tint)
+
+
 ## Atəş dövrü: halqa boşaldıqca növbəti top hazırlanır.
 ##
 ## Düymənin üstündə ayrı qatda çəkilir, amma heç nəyi örtmür: halqa 0.85–0.91 r
-## aralığındadır, daxili disk 0.72 r-ə, nişanın izi 0.70 r-ə qədərdir.
+## aralığındadır, daxili disk 0.72 r-ə, ikon 0.52 r-ə qədərdir.
 func _draw_ring() -> void:
 	if _cooldown_ratio <= 0.001:
 		return

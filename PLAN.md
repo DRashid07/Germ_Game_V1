@@ -56,7 +56,8 @@ eyni anda işlədir: **rəqibi doldurub partladırsan, özün isə boşalıb öl
 - **Ölüm:** partlayan oyunçu dünyadan çıxır, nəticə ekranını görür və menyuya qayıdır
 - **Bot:** dünya heç vaxt boş qalmır — əhali 6-dan aşağı düşəndə bot mikroblar əlavə olunur
 - **İdarəetmə:** sol üzən joystick = hərəkət, sağ aşağıda top atma düyməsi.
-  Ayrıca nişan almaq yoxdur — top hərəkət istiqamətinə gedir, dayanmısansa son baxdığın tərəfə
+  Nişan Brawl Stars kimidir: toxunuş — dəqiq olmayan avtomatik nişan (ən yaxın rəqib),
+  düyməni basılı saxlayıb sürüşdürmək — nişan xətti ilə dəqiq atəş
 
 ### Anti-snowball
 

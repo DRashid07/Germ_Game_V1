@@ -216,6 +216,8 @@ var _cam: Camera2D
 var _blobs: Node2D
 var _food_layer: Node2D
 var _shot_layer: Node2D
+## Nişan xətti və avtomatik nişanın kilidi (bax [AimGuide]).
+var _aim_guide: AimGuide
 var _entities: Node2D
 var _fx: Node2D
 ## Qısa effektlərin hamısını üç batch çağırışında saxlayan ortaq qat.
@@ -599,6 +601,11 @@ func _build_world() -> void:
 	_shot_layer = Node2D.new()
 	add_child(_shot_layer)
 
+	# Nişan xətti döşəmədə uzanır, mikrobların ALTINDA — Brawl Stars-dakı kimi.
+	# Üstdə olsaydı, nişan alınan rəqibi örtərdi.
+	_aim_guide = AimGuide.new()
+	add_child(_aim_guide)
+
 	_entities = Node2D.new()
 	add_child(_entities)
 
@@ -753,7 +760,8 @@ func _build_hud() -> void:
 	_hud.build(_tex["stick_base"], _tex["stick_knob"])
 	_hud.set_local_color(Palette.germ_color(my_color))
 	_hud.super_button.set_species(Net.species)
-	_hud.fire_button.fired.connect(_on_fire_pressed)
+	_hud.fire_button.tapped.connect(_on_fire_tapped)
+	_hud.fire_button.aimed.connect(_on_fire_aimed)
 	_hud.super_button.used.connect(_on_super_pressed)
 	_hud.super_button.blocked.connect(_on_super_blocked)
 	_hud.leave_confirmed.connect(_leave_match)
@@ -948,6 +956,11 @@ func _do_tick() -> void:
 			Sfx.play("eject", 0.06)
 			_eject_from(my_color, float(e["arg"]))
 			_spawn_own_shot(Vector2(e["pos"]), float(e["arg"]), 0.0, inp.view_tick)
+			# Məşqdə istəyi yerli dünyanın atəşi bitirir (bax [method _queue_events]):
+			# proqnoz orada serverdən bir tick QABAQDADIR və burada bitsəydi,
+			# yerli dünya atəşi heç almazdı.
+			if _local_world == null:
+				_on_own_fire(float(e["arg"]))
 			inp.shot = true
 		elif e.get("t") == "super" and float(e["arg"]) > 0.0:
 			# Öz trixosistin (arg = təsir radiusu, bax [method Sim._use_super]).
@@ -982,11 +995,18 @@ func _sample_input() -> Sim.PlayerInput:
 	if move == Vector2.ZERO:
 		move = _keyboard_move()
 
-	# Nişan almaq yoxdur — getdiyin tərəfə atırsan. Dayanmısansa, son baxdığın
-	# tərəf qalır ki, yerində durub atmaq da mümkün olsun.
+	# Nişan: getdiyin tərəf; dayanmısansa son baxdığın tərəf. Atəş düyməsi
+	# sürüşdürülürkən isə nişanın tərəfi — mikrobun "ayaqcığı" oraya dönür və
+	# rəqib də hara atacağını görür (bax [member GermVisual.aim]). Atəşdən sonra
+	# bir az ([constant AIM_HOLD]) atdığı tərəfə baxır: yoxsa ayaqcıq bir tick
+	# hədəfə, növbəti tick hərəkətə sıçrayardı.
 	var aim := me.aim
 	if move.length() > 0.01:
 		aim = move.angle()
+	if _hud.fire_button.aiming:
+		aim = _hud.fire_button.aim_dir.angle()
+	elif _clock < _face_until:
+		aim = _face_aim
 
 	# Geriyə sayımda mikrob tərpənmir — server də girişi qəbul etmir
 	# ([method World.accept_input]). İkisi eyni qaydanı tətbiq etməlidir,
@@ -1000,10 +1020,17 @@ func _sample_input() -> Sim.PlayerInput:
 		# düyməyə toxunan oyunçu "BAŞLADI" yazısı ilə eyni kadrda superini
 		# istəmədən xərcləyərdi.
 		_super_flag = false
-		_fire_flag = false
+		_shot_t = -INF
 		return Sim.PlayerInput.make(_seq, Vector2.ZERO, me.aim, false, false)
-	return Sim.PlayerInput.make(_seq, move, aim, _fire_requested(), _super_requested(),
-		_view_tick())
+	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_ENTER):
+		_request_shot(NAN)
+	# Atəş istəyi gözləyirsə, bit soyuma bitənə qədər HƏR paketdə durur —
+	# əvvəlki basılı düymə kimi; server atəşi proqnozun açdığı paketdə tanıyır
+	# ([member Sim.PlayerInput.shot]).
+	var fire := _shot_pending()
+	if fire:
+		aim = _shot_angle(aim)
+	return Sim.PlayerInput.make(_seq, move, aim, fire, _super_requested(), _view_tick())
 
 
 ## Ekranda İNDİ görünən server tick-i — rəqiblərin interpolyasiya nöqtəsi.
@@ -1035,26 +1062,134 @@ static func _keyboard_move() -> Vector2:
 	return v.limit_length(1.0)
 
 
-var _fire_flag := false
 var _super_flag := false
 var _super_key_held := false
 
+## Atəş istəyi düymə buraxılandan (və ya BOŞLUQ basılı ikən) proqnoz topu
+## açana qədər ən çoxu bu qədər yaşayır. Soyumanın son anlarında edilən
+## toxunuş itmir, amma yarım saniyə əvvəlki toxunuş da birdən-birə atılmır.
+const FIRE_BUFFER := 0.2
+## Atəşdən sonra mikrob bu qədər atdığı tərəfə baxır (bax [method _sample_input]).
+const AIM_HOLD := 0.3
+## Nişan xəttinin göstərdiyi səkmə sayı. Bir səkmə "divardan vur" üçün
+## kifayətdir; hamısı ([constant Const.SHOT_BOUNCES]) ekranı xətlə doldururdu.
+const AIM_BOUNCES := 1
 
-## Düymə basılı saxlanılanda atəş davam edir; bayraq isə bir kadrdan qısa
-## toxunuşun itməməsi üçündür. İkisi də sürəti təyin etmir — onu serverdəki
-## `FIRE_COOLDOWN` müəyyən edir, ona görə döyəcləmək heç nə qazandırmır.
-## Boşluq düyməsi masaüstü üçündür (bax [method _keyboard_move]).
+## Gözləyən atəş istəyinin vaxtı; -INF = istək yoxdur.
+var _shot_t := -INF
+## Əl ilə alınan nişan (radian); NAN = avtomatik nişan.
+var _shot_aim := NAN
+## Avtomatik nişanın bu atəşlik xətası (bax [method AutoAim.roll_error]).
+var _shot_err := 0.0
+## Avtomatik nişanın seçdiyi rəqib — kilid işarəsi üçün; -1 = yoxdur.
+var _shot_key := -1
+var _face_aim := 0.0
+var _face_until := -INF
+var _aim_rng := RandomNumberGenerator.new()
+
+
+## Atəş düyməsinə QISA toxunuş — avtomatik nişan.
+func _on_fire_tapped() -> void:
+	_request_shot(NAN)
+
+
+## Düymə sürüşdürülüb buraxıldı — top barmağın göstərdiyi xətlə gedir.
+func _on_fire_aimed(angle: float) -> void:
+	_request_shot(angle)
+
+
+## Atəş istəyi. Atəşin özünü [constant Const.FIRE_COOLDOWN] və top sayı
+## müəyyən edir (serverdə də, proqnozda da) — istək yalnız "at" deyir.
+##
+## BOŞLUQ basılı ikən istək HƏR tick təzələnir; gözləyən avtomatik istəyin
+## xətası isə dəyişmir — atəş başına bir dəfə çəkilir.
 ## Siçanın sol düyməsi QƏSDƏN buraya qoşulmayıb: o, ekran joystickini idarə edir,
 ## atəşə də bağlansaydı sürüşdürərək hərəkət edən oyunçu fasiləsiz atardı.
-func _fire_requested() -> bool:
-	var f := _fire_flag
-	_fire_flag = false
-	return f or _hud.fire_button.held \
-		or Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_ENTER)
+func _request_shot(angle: float) -> void:
+	if is_nan(angle) and _shot_pending() and is_nan(_shot_aim):
+		_shot_t = _clock
+		return
+	_shot_t = _clock
+	_shot_aim = angle
+	_shot_err = AutoAim.roll_error(_aim_rng)
 
 
-func _on_fire_pressed() -> void:
-	_fire_flag = true
+func _shot_pending() -> bool:
+	return _clock - _shot_t <= FIRE_BUFFER
+
+
+## Gözləyən atəşin bucağı. Avtomatik nişanda hədəf HƏR tick yenidən seçilir:
+## soyumanı gözləyən istək rəqibin indiki yerinə atır, toxunuş anındakına yox.
+## Hədəf yoxdursa — [param fallback], yəni getdiyin (baxdığın) tərəf.
+func _shot_angle(fallback: float) -> float:
+	if not is_nan(_shot_aim):
+		return _shot_aim
+	var t := AutoAim.pick(me.pos, _aim_targets(), AutoAim.reach(me.capacity), pred)
+	if t.is_empty():
+		_shot_key = -1
+		return fallback
+	_shot_key = int(t["key"])
+	return (Vector2(t["pos"]) - me.pos).angle() + _shot_err
+
+
+## Avtomatik nişanın namizədləri — ekranda GÖRÜNƏN rəqiblər, göründükləri
+## yerdə. Server topu atıcının gördüyü ana qarşı yoxlayır ([member Sim.lag_comp]),
+## yəni ekrandakı yer düzgün hədəfdir. Süzgəc [method _step_own_shots]-dakı
+## kimidir: qalxanlı və yoldaş mikroba top onsuz da dəymir.
+func _aim_targets() -> Array:
+	var out := []
+	for gid in _visuals:
+		if gid == my_id:
+			continue
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.visible or v.burst or v.safe or v.is_ally or v.color_index == my_color:
+			continue
+		# Yalnız EKRANDAKI rəqib: server görüş sahəsindən geniş göndərir
+		# ([constant Const.AOI_FACTOR]) və QA ekranın 188 px altındakı rəqibə
+		# atılan toxunuşu tutdu — oyunçu görmədiyi hədəfə atəşi səhv sayır.
+		if not _view_rect.has_point(v.position):
+			continue
+		out.append({"key": gid, "pos": v.position,
+			"cyst": v.super_on and v.species == Const.Species.AMOEBA})
+	return out
+
+
+## Proqnoz topu açdı — istək bitdi.
+func _on_own_fire(angle: float) -> void:
+	var auto := is_nan(_shot_aim)
+	_shot_t = -INF
+	_face_aim = angle
+	_face_until = _clock + AIM_HOLD
+	if auto and _visuals.has(_shot_key):
+		var v: GermVisual = _visuals[_shot_key]["node"]
+		_aim_guide.lock(_shot_key, v.position, Const.germ_radius(v.capacity),
+			Palette.germ_color(my_color))
+
+
+## Nişan xətti (düymə sürüşdürülərkən) və kilid işarəsinin yeri — hər kadr.
+##
+## Xətt ÇƏKİLƏN mövqedən başlayır, proqnozunkundan yox: mikrob iki tick arasında
+## yumşaldılır və xətt ondan qopmamalıdır. Xətt "hazır" görünür, əgər buraxsan
+## top [constant FIRE_BUFFER] içində atılacaqsa.
+func _update_aim_guide() -> void:
+	var fb := _hud.fire_button
+	if fb.aiming and not _finished:
+		var r := Const.germ_radius(me.capacity)
+		var path := pred.aim_path(_shown_pos() + fb.aim_dir * r, fb.aim_dir,
+			Const.SHOT_SPEED * Const.SHOT_LIFETIME - r, AIM_BOUNCES)
+		var live := me.cooldown <= FIRE_BUFFER and me.balls >= Const.FIRE_MIN_BALLS 			and not me.in_cyst() and _phase != Const.Phase.COUNTDOWN
+		_aim_guide.show_path(path, Palette.germ_color(my_color), live)
+	else:
+		_aim_guide.hide_path()
+	var key := _aim_guide.locked_key()
+	if key < 0:
+		return
+	var entry: Dictionary = _visuals.get(key, {})
+	if entry.is_empty() or not (entry["node"] as GermVisual).visible 			or (entry["node"] as GermVisual).burst:
+		_aim_guide.unlock()
+		return
+	var v: GermVisual = entry["node"]
+	_aim_guide.follow(v.position, Const.germ_radius(v.capacity))
 
 
 ## Super YALNIZ basılan kadrda göndərilir, atəş kimi basılı saxlanmır.
@@ -1566,6 +1701,7 @@ func _return_to_menu() -> void:
 func _render(delta: float) -> void:
 	var render_time := _clock - Const.INTERP_DELAY
 	_render_germs(render_time)
+	_update_aim_guide()
 	# Öz topların rəqiblər YERLƏŞƏNDƏN sonra addımlanır: proqnoz məhz bu
 	# kadrda ekranda görünən mövqelərə qarşı yoxlayır.
 	_step_own_shots(delta)
@@ -3438,8 +3574,10 @@ func _queue_events(list: Array, at: float) -> void:
 			# Təsdiq gözləyən proqnoz topu elə bu sualın cavabıdır: varsa,
 			# atəş proqnozda oynadılıb; yoxdursa, yalnız server bilir və top
 			# da, effekt də burada doğulmalıdır.
-			if kind == Const.EvKind.FIRE \
-					and not _own_shots.take_unseen_fire(_clock, MUZZLE_GRACE):
+			if kind != Const.EvKind.FIRE:
+				continue
+			var seen := _own_shots.take_unseen_fire(_clock, MUZZLE_GRACE)
+			if not seen:
 				var at_pos := Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y]))
 				# Top indi DOĞULMUR — atəşi açan giriş göndəriləndə doğulub. Server onu
 				# həmin tick-də təsdiqlədi ([member _last_ack]); proqnozun zaman xətti də
@@ -3453,6 +3591,18 @@ func _queue_events(list: Array, at: float) -> void:
 				_juice.muzzle(at_pos, float(e[Const.EF.ARG]), Palette.germ_color(my_color))
 				Sfx.play("eject", 0.06)
 				_eject_from(my_color, float(e[Const.EF.ARG]))
+			# Atəş istəyi SERVERİN atəşi ilə bitir, onlayn oyunda isə proqnozunku
+			# ilə ([method _do_tick]) — burada yalnız proqnozun görmədiyi atəş.
+			#
+			# Məşqdə yerli dünya proqnozdan ƏVVƏL işləyir, ona görə proqnoz öz
+			# atəşini ya heç görmür, ya da soyuma gözlənəndə bir tick ERKƏN görür
+			# (barışıqdan sonra bir tick də özü addımlayır). Erkən atəşdə istək
+			# proqnozda bitirdisə, yerli dünya atəş bitini heç almırdı: ekranda top
+			# uçurdu, serverdə isə yox idi (QA: soyumanın son 0.2 s-indəki
+			# toxunuşların hamısı). İndi istək yerli dünya atana qədər yaşayır və
+			# proqnozun erkən topu burada onun təsdiqi kimi götürülür.
+			if not seen or _local_world != null:
+				_on_own_fire(float(e[Const.EF.ARG]))
 			continue
 		var pos := Vector2(float(e[Const.EF.X]), float(e[Const.EF.Y]))
 		var when := at

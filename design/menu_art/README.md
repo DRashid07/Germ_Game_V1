@@ -2,7 +2,8 @@
 
 Ana ekranın fonu, podiumu, üç növün qəhrəman şəkli, üç portret kartı və on səkkiz ikonu **Codex ilə
 çəkilib** (`codex exec`, daxili `image_gen` aləti). Oyunun qalan qrafikası
-kodla və ya SVG ilə çəkilir — bunlar layihədə yeganə raster şəkillərdir.
+kodla və ya SVG ilə çəkilir — bunlar və döyüşdəki dörd nişan ikonu (aşağıda, «DÖYÜŞ
+HUD-u») layihədə yeganə raster şəkillərdir.
 
 Niyə kodla yox: ana ekran Brawl Stars lobbisinin məntiqi ilə qurulub — fiqur
 ekranın SAHİBİDİR. Əvvəl orada oyunun öz [`GermVisual`]-ı 4.2× böyüdülürdü:
@@ -55,7 +56,25 @@ görünüş itmir — növün səhifəsindəki «OYUNDA» pəncərəsi canlı `G
 | `game/assets/menu/icon_invite.png` | `raw/icons/icon_invite.png` | KOMANDA DƏVƏTİ — məktub, mikrob möhürü ilə |
 | `game/assets/menu/icon_link.png` | `raw/icons/icon_link.png` | PAYLAŞ / LİNK — iki firuzəyi zəncir halqası |
 
-Bu beşi `gpt-6-astra` modeli ilə, reasoning effort **`max`** çəkilib (Codex CLI
+**DÖYÜŞ HUD-u — NİŞAN** (bax kök `README.md`, «Nişan — toxun və ya sürüşdür»). Bunlar
+menyu yox, matçın içindədir və **ağ-boz** çəkilib: oyun onları oyunçunun rəngi ilə
+vuraraq (`modulate`) boyayır, ona görə hər rəng üçün ayrı fayl lazım deyil:
+
+| Fayl (oyunda) | Xam mənbə | Nə |
+|---|---|---|
+| `game/assets/ui/hud_fire.png` | `raw/hud/hud_fire.png` | Atəş düyməsinin ikonu — yuxarı-sağa uçan top, arxasında üç sürət cizgisi |
+| `game/assets/ui/hud_aim_knob.png` | `raw/hud/hud_aim_knob.png` | Nişan başı — nişangahlı disk, sürüşdürərkən barmağın altında |
+| `game/assets/ui/hud_target.png` | `raw/hud/hud_target.png` | Kilid çərçivəsi — avtomatik nişanın hədəfinin üstündə; ortası BOŞDUR |
+| `game/assets/ui/hud_aim_arrow.png` | `raw/hud/hud_aim_arrow.png` | Nişan xəttinin ucu — sağa (+X) baxan şevron |
+
+Dördü də `gpt-6-astra`, reasoning effort **`max`** ilə çəkilib (Codex CLI 0.159.2).
+Brif: `brief/BRIEF_AIM.md`, faktiki promptlar: `brief/PROMPTS_AIM.md`. İstinad:
+oyunun öz kadrı və dörd təsdiqlənmiş ikon (`icon_practice`, `icon_settings`,
+`icon_link`, `super_trichocyst`). Neytrallıq yoxlanılıb — qeyri-şəffaf pikseldə
+kanallar arası fərq 24-dən azdır, yoxsa boyanan rəng çirklənərdi. İkonlar uzun
+tərəfi 256 px-ə kəsilib (`process.gd trim … 256`), `.import`-da mipmap açıqdır.
+
+Yuxarıdakı beşi `gpt-6-astra` modeli ilə, reasoning effort **`max`** çəkilib (Codex CLI
 0.159.2; 0.148 bu modeli tanımırdı). Brif: `brief/BRIEF_SOCIAL.md`, Codex-in
 hesabatı və faktiki promptlar: `brief/PROMPTS_SOCIAL.md`. Stil istinadı kimi
 dörd təsdiqlənmiş ikon `-i` ilə verildi (`mode_duo`, `icon_quests`,

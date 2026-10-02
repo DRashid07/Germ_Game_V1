@@ -1268,6 +1268,19 @@ Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 > iki nişan eyni ləkəyə dönür (ilk variantda kirpikli də radial idi və
 > ayaqlıdan seçilmirdi).
 
-Top atma düyməsi ([`fire_button.gd`](../game/scripts/client/fire_button.gd)) hazırda
-kodla çəkilir — oyunçunun rəngini və sursat vəziyyətini göstərməli olduğu üçün.
-Sprite-a keçirilsə, rəng `modulate` ilə verilməlidir.
+Top atma düyməsinin ([`fire_button.gd`](../game/scripts/client/fire_button.gd))
+diski, halqası və soyuma qövsü kodla çəkilir — oyunçunun rəngini və sursat
+vəziyyətini göstərməli olduğu üçün. Ortadakı ikon və nişan alanda barmağın
+altındakı baş isə **Codex ilə çəkilib** (PNG), dünyadakı nişan xəttinin oxu və
+avtomatik nişanın kilid çərçivəsi də ([`aim_guide.gd`](../game/scripts/client/aim_guide.gd)).
+Dördü də **ağ-boz** çəkilib və `modulate` ilə oyunçunun rənginə boyanır — yuxarıdakı
+növ siluetləri kimi. Rəngli çəkilsəydilər, hər oyunçu rəngi üçün ayrı fayl lazım olardı.
+
+| Fayl | Ölçü | Qeyd |
+|---|---|---|
+| `ui/hud_fire.png` | 256² | Atəş düyməsinin ikonu — uçan top və üç sürət cizgisi |
+| `ui/hud_aim_knob.png` | 256² | Nişan başı — nişangahlı disk, barmağın ardınca gedir |
+| `ui/hud_target.png` | 256² | Kilid çərçivəsi — dörd künc, ortası BOŞ (rəqib görünür) |
+| `ui/hud_aim_arrow.png` | 256² | Nişan xəttinin ucu — sağa baxan şevron |
+
+Mənbə və promptlar: [`menu_art/`](menu_art/) (`brief/BRIEF_AIM.md`, `brief/PROMPTS_AIM.md`).

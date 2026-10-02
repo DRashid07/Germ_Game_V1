@@ -88,8 +88,9 @@ const MAX_CAPACITY := 60
 const BASE_RADIUS := 28.0       ## START_CAPACITY tutumunda radius
 const RADIUS_PER_CAPACITY := 1.15
 ## Hərəkət sürəti. Mikrob üzür, qaçmır — ekranın enini (620 px) təxminən
-## 3 saniyəyə keçir. Sürətli hərəkət bu oyuna uyğun deyil: nişan almaq yoxdur,
-## ona görə dəymə bacarığı MÖVQE tutmaqdan asılıdır, mövqe isə vaxt istəyir.
+## 3 saniyəyə keçir. Sürətli hərəkət bu oyuna uyğun deyil: avtomatik nişan
+## rəqibin getdiyi yeri qabaqlamır ([AutoAim]), dəqiq nişan isə vaxt istəyir —
+## dəymə bacarığı MÖVQE tutmaqdan və nişandan asılıdır.
 const BASE_SPEED := 190.0       ## piksel/saniyə
 
 # ---------- Maye (qabın içindəki su) ----------

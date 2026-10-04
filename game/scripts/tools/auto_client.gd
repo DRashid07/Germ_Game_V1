@@ -27,6 +27,11 @@ var _arena: Arena = null
 ## Vuruşu ekranda ölçən probe (bax [HitProbe]); boş deyilsə kadrlar buraya yazılır.
 var probe_shots := ""
 var _probe: HitProbe = null
+## `--net-probe`: snapshot aralıqları, tick boşluqları və RTT ölçülür (bax `net_probe.gd`).
+## Tipsizdir və yolla yüklənir — söndürülü olanda heç kompilyasiya olunmur.
+var net_probe := false
+var net_probe_csv := ""
+var _net = null
 
 ## ── Dostluq və komanda testi (bax README, «Dostlar və komanda») ──
 ## Boş deyilsə, client bu gizli açarla tanınır (diskə yazılmır).
@@ -63,6 +68,11 @@ func _ready() -> void:
 	Net.world_joined.connect(_on_world_joined)
 	Net.join_rejected.connect(func(reason): _log("qəbul edilmədi: %s" % reason))
 	Net.you_burst.connect(_on_burst)
+	if net_probe:
+		_net = load("res://scripts/tools/net_probe.gd").new()
+		_net.label = label
+		_net.csv_path = net_probe_csv
+		add_child(_net)
 
 	var target := host if host.begins_with("ws") else "%s:%d" % [host, port]
 	_log("qoşulur → %s" % target)
@@ -103,6 +113,8 @@ func _on_world_joined(info: Dictionary) -> void:
 	arena.configure_online(info)
 	arena.auto_input = true
 	_arena = arena
+	if _net != null:
+		_net.arena = arena
 	_probe = HitProbe.new()
 	_probe.label = label
 	_probe.shots_dir = probe_shots
@@ -145,6 +157,8 @@ func _on_burst(result: Dictionary) -> void:
 ## Şəbəkə gecikməsi ilə sınaq üçündür: proqnozun göstərdiyi hər dəymənin
 ## server tərəfindən təsdiqlənməsi və təsdiqin nə qədər gec gəldiyi buradan oxunur.
 func _log_hits() -> void:
+	if _net != null:
+		_net.report()
 	if _arena == null or not is_instance_valid(_arena):
 		return
 	if _probe != null:

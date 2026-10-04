@@ -36,6 +36,16 @@ var mode := Const.Mode.ENDLESS
 var quality := Const.default_quality()
 
 var _peer: MultiplayerPeer = null
+## Client-in WebSocket giriş buferi (bax [method join_server]).
+##
+## Brauzerdə gələn hər mesaj DƏRHAL bu buferə yazılır (JS `onmessage`), Godot isə onu
+## yalnız kadrda boşaldır. İlkin 64 KiB ~3 s-lik snapshot axınıdır (~24 KB/s): Wi-Fi
+## donmasından sonra TCP-nin bir anda gətirdiyi dəstə onu doldurur və mühərrik mesajları
+## ATIR ("Buffer payload full! Dropping data.") — etibarlı RPC-lər də (on_burst, reyestr),
+## çünki WebSocket üstündə onları təkrar göndərən yoxdur. 512 KiB ~20 s-dir (server
+## qopan oyunçunu da 20 s saxlayır). Yaddaşda ~3 dəfə yer tutur (ölçülüb: +1.7 MB).
+## Native client bufer dolanda soketdən oxumur — orada itki onsuz da yoxdur.
+const INBOUND_BUFFER := 512 * 1024
 ## Serverdə lobby-ni saxlayır; client-də həmişə null.
 var lobby: Node = null
 
@@ -98,6 +108,8 @@ func join_server(address: String, port: int = Const.DEFAULT_PORT) -> Error:
 	var err := OK
 	if address.begins_with("ws://") or address.begins_with("wss://"):
 		var ws := WebSocketMultiplayerPeer.new()
+		# Ölçü bağlantıdan ƏVVƏL verilməlidir: bufer əl sıxışmada qurulur.
+		ws.inbound_buffer_size = INBOUND_BUFFER
 		err = ws.create_client(address)
 		_peer = ws
 		transport = "websocket"

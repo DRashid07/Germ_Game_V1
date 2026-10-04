@@ -149,6 +149,162 @@ body {
 	margin: 0 auto;
 }
 
+/* Telefonda yazı pəncərəsi (bax aşağıdakı `germText` və game/scripts/client/web_text.gd).
+   Kətanın üstündə həqiqi <input> — iOS klaviaturanı yalnız toxunuşun İÇİNDƏ fokuslanan
+   HTML sahəsi üçün açır. Kart ekranın YUXARISINDADIR: yatay telefonda klaviatura
+   ekranın yarıdan çoxunu örtür. Ölçü və yer `visualViewport`-dan gəlir (bax `fitToViewport`). */
+#text-entry {
+	position: fixed;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	display: none;
+	align-items: flex-start;
+	justify-content: center;
+	padding-top: max(12px, env(safe-area-inset-top));
+	box-sizing: border-box;
+	background-color: rgba(2, 7, 8, 0.72);
+	font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+	z-index: 10;
+}
+
+#text-entry.show {
+	display: flex;
+}
+
+#text-entry .te-card {
+	width: min(560px, calc(100% - 32px));
+	box-sizing: border-box;
+	padding: 12px 14px 14px;
+	border-radius: 16px;
+	background-color: #0E3346;
+	border: 3px solid #04090B;
+	box-shadow: 0 5px 0 #04090B;
+}
+
+#text-entry .te-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+#text-entry .te-title {
+	color: #EAFBF6;
+	font-size: 18px;
+	font-weight: 800;
+	letter-spacing: 0.04em;
+}
+
+#text-entry .te-cancel {
+	flex: none;
+	width: 40px;
+	height: 40px;
+	border: 3px solid #04090B;
+	border-radius: 10px;
+	background-color: #1F3D45;
+	color: #EAFBF6;
+	font-size: 20px;
+	font-weight: 800;
+	line-height: 1;
+	cursor: pointer;
+}
+
+#text-entry form {
+	display: flex;
+	gap: 10px;
+	margin: 0;
+}
+
+#text-entry input {
+	flex: 1;
+	min-width: 0;
+	height: 50px;
+	box-sizing: border-box;
+	padding: 0 14px;
+	border: 3px solid #2FE8E0;
+	border-radius: 12px;
+	background-color: #071012;
+	color: #EAFBF6;
+	/* 16 px-dən kiçik şriftdə iOS fokusda səhifəni yaxınlaşdırır. */
+	font-size: 22px;
+	font-weight: 700;
+	outline: none;
+	-webkit-user-select: text;
+	user-select: text;
+	-webkit-touch-callout: default;
+	touch-action: manipulation;
+}
+
+#text-entry input::placeholder {
+	color: #7FA0A0;
+	font-weight: 600;
+}
+
+#text-entry .te-ok {
+	flex: none;
+	min-width: 96px;
+	height: 50px;
+	padding: 0 16px;
+	border: 3px solid #04090B;
+	border-radius: 12px;
+	background-color: #52E08A;
+	color: #04090B;
+	font-size: 18px;
+	font-weight: 800;
+	cursor: pointer;
+}
+
+#text-entry .te-hint {
+	margin-top: 8px;
+	color: #7FA0A0;
+	font-size: 14px;
+	min-height: 1em;
+}
+
+/* Yığcam: yatay telefonda klaviatura açılanda görünən hissə 60–130 CSS px qalır
+   (emulyatorda ölçülüb: 71 px). Başlıq və izah gizlənir, sahə + GÖNDƏR + ✕ bir
+   sətirdə, ən yuxarıda durur — yoxsa sahə klaviaturanın altında qalırdı. */
+#text-entry.compact {
+	padding-top: 2px;
+}
+
+#text-entry.compact .te-card {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 8px;
+	border-width: 2px;
+	box-shadow: none;
+}
+
+#text-entry.compact form {
+	flex: 1;
+	min-width: 0;
+}
+
+#text-entry.compact .te-head {
+	order: 2;
+	margin: 0;
+}
+
+#text-entry.compact .te-title,
+#text-entry.compact .te-hint {
+	display: none;
+}
+
+#text-entry.compact input,
+#text-entry.compact .te-ok,
+#text-entry.compact .te-cancel {
+	height: 44px;
+}
+
+#text-entry.compact .te-cancel {
+	width: 44px;
+}
+
 #status-notice {
 	background-color: #5b3943;
 	border-radius: 0.5rem;
@@ -188,6 +344,20 @@ body {
 			</svg>
 			<p>Telefonu yan çevir</p>
 			<small>Germ Arena yalnız yatay oynanır</small>
+		</div>
+
+		<div id="text-entry" role="dialog" aria-modal="true">
+			<div class="te-card">
+				<div class="te-head">
+					<div class="te-title"></div>
+					<button type="button" class="te-cancel" aria-label="Bağla">✕</button>
+				</div>
+				<form>
+					<input type="text" autocomplete="off" autocorrect="off" spellcheck="false">
+					<button type="submit" class="te-ok">OK</button>
+				</form>
+				<div class="te-hint"></div>
+			</div>
 		</div>
 
 		<script src="$GODOT_URL"></script>
@@ -245,7 +415,287 @@ fitCanvas();
 window.addEventListener('resize', fitCanvas);
 window.addEventListener('orientationchange', fitCanvas);
 // Uzun basanda mobil brauzerin kontekst menyusu çıxmasın — nişan alma jesti kəsilir.
-window.addEventListener('contextmenu', (e) => e.preventDefault());
+// Yazı pəncərəsində isə lazımdır: kodu "Yapışdır" ilə qoymaq olsun.
+window.addEventListener('contextmenu', (e) => {
+	if (!e.target.closest || !e.target.closest('#text-entry')) {
+		e.preventDefault();
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Telefonda yazı sahəsi
+//
+// Godot telefon brauzerində yazı sahəsi üçün GİZLİ bir elementi 100 ms-dən bir
+// `focus()` edir. Android Chrome toxunuşdan sonrakı ~5 s ərzində bunu qəbul edib
+// klaviaturanı açır, iOS (Safari və iOS-dakı Chrome — ikisi də WebKit-dir) isə
+// klaviaturanı YALNIZ toxunuş hadisəsinin İÇİNDƏ fokuslanan sahə üçün açır. Ona
+// görə iPhone-da dost kodu ümumiyyətlə yazıla bilmirdi.
+//
+// Axın:
+//   1. Oyunçu sahəyə toxunur. Godot toxunuşu növbəti kadrda emal edir və
+//      `germText.arm(cfg)` çağırır (bax game/scripts/client/web_text.gd).
+//   2. Barmaq qalxanda (`touchend` — iOS-un icazə verdiyi an) sahə silahlıdırsa,
+//      bu pəncərə açılır və <input> ELƏ HƏMİN hadisədə fokuslanır: klaviatura çıxır.
+//   3. GÖNDƏR / Enter — nəticə Godot-a qaytarılır (`take`), ✕ və ya fona toxunmaq — ləğv.
+// Kadr çox yavaşdırsa və Godot toxunuşu barmaq qalxandan SONRA emal edirsə, pəncərə
+// dərhal açılır; iOS-da klaviatura üçün sahəyə bir dəfə də toxunmaq lazım gəlir.
+// ---------------------------------------------------------------------------
+window.germText = (function () {
+	const canvas = document.getElementById('canvas');
+	const root = document.getElementById('text-entry');
+	const title = root.querySelector('.te-title');
+	const hint = root.querySelector('.te-hint');
+	const form = root.querySelector('form');
+	const input = root.querySelector('input');
+	const ok = root.querySelector('.te-ok');
+	const cancel = root.querySelector('.te-cancel');
+	// Godot-un silahladığı sahə bu qədər ms gözləyir (toxunuş adətən 50–200 ms, uzun basış 1–2 s).
+	const ARM_TTL = 3000;
+	// Barmaq bundan çox sürüşübsə, bu toxunuş deyil — sürüşdürmədir.
+	const TAP_SLOP = 24;
+	let armed = null;
+	let touchStart = null;
+	let liftedAt = -1e9;
+	let current = null;
+	let result = null;
+
+	// Klaviatura açılanda layout viewport-u dəyişmir, görünən hissə kiçilir və sürüşür:
+	// kart görünən hissənin yuxarısında qalmalıdır. Alçaq olanda kart yığcamlaşır.
+	// Yatay telefon (hündürlük < 500) həmişə yığcamdır: klaviatura açılanda kart
+	// yerindən sıçramasın. Planşetdə yalnız görünən hissə həqiqətən alçalanda.
+	const COMPACT_BELOW = 240;
+	const PHONE_HEIGHT = 500;
+	function fitToViewport() {
+		const vv = window.visualViewport;
+		const h = vv ? vv.height : window.innerHeight;
+		root.classList.toggle('compact', h < COMPACT_BELOW
+			|| (window.innerWidth > window.innerHeight && window.innerHeight < PHONE_HEIGHT));
+		if (!vv) {
+			return;
+		}
+		root.style.left = vv.offsetLeft + 'px';
+		root.style.top = vv.offsetTop + 'px';
+		root.style.width = vv.width + 'px';
+		root.style.height = vv.height + 'px';
+	}
+
+	function open(cfg) {
+		current = cfg;
+		title.textContent = cfg.title || '';
+		hint.textContent = cfg.hint || '';
+		input.value = cfg.value || '';
+		input.placeholder = cfg.placeholder || '';
+		input.maxLength = cfg.max > 0 ? cfg.max : 524288;
+		input.inputMode = cfg.inputmode || 'text';
+		input.setAttribute('autocapitalize', cfg.upper ? 'characters' : 'off');
+		// Böyük hərf yalnız GÖRÜNÜR: dəyəri yazı zamanı dəyişmək Android klaviaturalarının
+		// söz yığımını (composition) pozur — hərflər təkrarlanır və ya itir. Dəyər göndəriləndə
+		// böyüdülür, Godot isə kodu onsuz da normallaşdırır (Social.clean_tag / clean_code).
+		input.style.textTransform = cfg.upper ? 'uppercase' : 'none';
+		input.setAttribute('enterkeyhint', cfg.enter || 'done');
+		ok.textContent = cfg.ok || 'OK';
+		root.classList.add('show');
+		fitToViewport();
+		input.focus();
+		try {
+			input.setSelectionRange(input.value.length, input.value.length);
+		} catch (e) {
+			// Bəzi növlərdə (məs. url) seçim dəstəklənmir.
+		}
+	}
+
+	// GÖNDƏR / Enter — mətn Godot-a gedir. ✕, fona toxunmaq, Esc — LƏĞV: heç nə qaytarılmır,
+	// sahə əvvəlki kimi qalır (əvvəl ləğvdə də yazılan mətn tətbiq olunurdu).
+	function close(submit) {
+		if (!current) {
+			return;
+		}
+		if (submit) {
+			const value = current.upper ? input.value.toUpperCase() : input.value;
+			result = {key: current.key, value: value, submit: true, at: performance.now()};
+		}
+		current = null;
+		root.classList.remove('show');
+		input.blur();
+		// Masaüstü klaviaturası yenə oyuna getsin.
+		canvas.focus();
+	}
+
+	form.addEventListener('submit', (e) => {
+		e.preventDefault();
+		close(true);
+	});
+	cancel.addEventListener('click', () => close(false));
+	root.addEventListener('pointerdown', (e) => {
+		if (e.target === root) {
+			close(false);
+		}
+	});
+	input.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			close(false);
+		}
+	});
+
+	// ── Kopyala / paylaş — eyni qayda ──────────────────────────────────────
+	// iOS panoya yazmağa və paylaşma pəncərəsinə də YALNIZ toxunuşun içində icazə verir.
+	// Godot-un `clipboard_set`-i kadr dövründən gəlir: iPhone-da susaraq uğursuz olurdu
+	// (mühərrik özü yazır: "only possible from an input callback"), oyun isə "KOPYALANDI"
+	// deyirdi; `navigator.share` isə heç nə açmırdı. Düymə basılanda Godot tapşırığı
+	// silahlayır (`armAction`), barmaq qalxanda burada icra olunur, nəticə Godot-a qayıdır.
+	let armedAction = null;
+
+	// Sinxron yol (`execCommand`) toxunuşun içində iOS-da da işləyir; alınmasa — Clipboard API.
+	function copyText(text) {
+		let ok = false;
+		try {
+			const ta = document.createElement('textarea');
+			ta.value = text;
+			ta.setAttribute('readonly', '');
+			ta.style.position = 'fixed';
+			ta.style.top = '-1000px';
+			ta.style.opacity = '0';
+			document.body.appendChild(ta);
+			ta.select();
+			ta.setSelectionRange(0, text.length);
+			ok = document.execCommand('copy');
+			ta.remove();
+		} catch (e) {
+			ok = false;
+		}
+		canvas.focus();
+		if (ok) {
+			return Promise.resolve(true);
+		}
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			return navigator.clipboard.writeText(text).then(() => true, () => false);
+		}
+		return Promise.resolve(false);
+	}
+
+	// Nəticə: {key, value: 'copied' | 'shared' | 'cancelled', submit: alındımı}.
+	function runAction(cfg) {
+		const finish = (ok, how) => {
+			result = {key: cfg.key, value: how, submit: !!ok, at: performance.now()};
+		};
+		if (cfg.action === 'share' && navigator.share) {
+			navigator.share({title: cfg.title || 'Germ Arena', text: cfg.text || '', url: cfg.url || ''})
+				.then(() => finish(true, 'shared'), (e) => {
+					if (e && e.name === 'AbortError') {
+						finish(true, 'cancelled');
+					} else {
+						copyText(cfg.url || cfg.text || '').then((ok) => finish(ok, 'copied'));
+					}
+				});
+			return;
+		}
+		const text = cfg.action === 'share' ? (cfg.url || cfg.text || '') : (cfg.text || '');
+		copyText(text).then((ok) => finish(ok, 'copied'));
+	}
+
+	// Barmaq artıq qalxıbmı (Godot toxunuşu gec emal etdi) və ya toxunuş heç olmayıbmı
+	// (iPad-da siçan/trackpad) — onda gözləməyin mənası yoxdur, dərhal icra olunur.
+	function noGestureComing(now) {
+		return !touchStart || now - touchStart.at > 1000
+			|| (liftedAt >= touchStart.at && now - liftedAt < 600);
+	}
+
+	canvas.addEventListener('touchstart', (e) => {
+		const t = e.changedTouches[0];
+		touchStart = {x: t.clientX, y: t.clientY, at: performance.now()};
+	}, {capture: true, passive: true});
+
+	canvas.addEventListener('touchend', (e) => {
+		const now = performance.now();
+		const t = e.changedTouches[0];
+		const moved = touchStart ? Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) : 0;
+		const tap = moved < TAP_SLOP && e.touches.length === 0;
+		if (tap && armed && now - armed.at < ARM_TTL) {
+			const cfg = armed.cfg;
+			armed = null;
+			armedAction = null;
+			open(cfg);
+			return;
+		}
+		if (tap && armedAction && now - armedAction.at < ARM_TTL) {
+			const cfg = armedAction.cfg;
+			armedAction = null;
+			armed = null;
+			runAction(cfg);
+			return;
+		}
+		// Bu toxunuş açmadı (sürüşdürmə, ikinci barmaq): silah qalmamalıdır — yoxsa sonrakı
+		// istənilən toxunuş (məs. OYNA) pəncərəni açardı.
+		armed = null;
+		armedAction = null;
+		liftedAt = now;
+	}, {capture: true, passive: true});
+
+	if (window.visualViewport) {
+		window.visualViewport.addEventListener('resize', fitToViewport);
+		window.visualViewport.addEventListener('scroll', fitToViewport);
+	}
+
+	return {
+		// Godot: sahəyə toxunuldu. `json` — {key, title, value, placeholder, max, upper, ok, hint, enter, inputmode}.
+		arm(json) {
+			const cfg = JSON.parse(json);
+			const now = performance.now();
+			if (current) {
+				return;
+			}
+			if (noGestureComing(now)) {
+				armed = null;
+				open(cfg);
+				return;
+			}
+			armed = {cfg: cfg, at: now};
+		},
+		// Godot: kopyala/paylaş düyməsi basıldı. `json` — {key, action: copy|share, text, title, url}.
+		armAction(json) {
+			const cfg = JSON.parse(json);
+			const now = performance.now();
+			if (current) {
+				return;
+			}
+			if (noGestureComing(now)) {
+				armedAction = null;
+				runAction(cfg);
+				return;
+			}
+			armedAction = {cfg: cfg, at: now};
+		},
+		// Nəticə gözləyən sahənin açarı; yoxdursa boş sətir.
+		pending() {
+			return result ? result.key : '';
+		},
+		// Nəticə və onun yaşı (ms) — Godot köhnəsini atır (bax WebText.RESULT_MAX_AGE_MS).
+		take() {
+			const r = result;
+			result = null;
+			if (!r) {
+				return '';
+			}
+			r.age = performance.now() - r.at;
+			return JSON.stringify(r);
+		},
+		isOpen() {
+			return current !== null;
+		},
+		// Sahə ekrandan getdi — açıq pəncərəsi də bağlanır (nəticəsiz).
+		dismiss(key) {
+			if (armed && armed.cfg.key === key) {
+				armed = null;
+			}
+			if (current && current.key === key) {
+				current = null;
+				root.classList.remove('show');
+				input.blur();
+			}
+		},
+	};
+}());
 
 (function () {
 	const statusOverlay = document.getElementById('status');

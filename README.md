@@ -648,6 +648,71 @@ yeni kod alır (Brawl Stars-da bunu Supercell ID həll edir — bizdə hələ yo
 > `Net` dəyişmir: köhnə client yeni serverdə oynayır (sadəcə dostları yoxdur),
 > yeni client köhnə serverdə də oynayır.
 
+#### Telefon brauzerində yazı — iPhone-da kod yazılmırdı
+
+Şikayət (2026-10-03): iPhone-da dost kodu yazıla bilmirdi. Səbəb mühərrikdədir.
+Godot brauzerdə yazı sahəsi fokus alanda gizli bir HTML elementini 100 ms-dən
+bir `focus()` edir (`GodotIME`). Android Chrome toxunuşdan sonrakı bir neçə
+saniyə buna icazə verir və klaviaturanı açır — Android-də ad yazılırdı. iOS isə
+(Safari də, iOS-dakı Chrome da WebKit-dir) klaviaturanı YALNIZ toxunuş
+hadisəsinin İÇİNDƏ fokuslanan sahə üçün açır. Taymerdən gələn fokus heç vaxt
+klaviatura açmır. Export-dakı `experimental_virtual_keyboard` də kömək etmir:
+onun `focus()`-u da mühərrikin kadr dövründən gəlir.
+
+Həll — telefon brauzerində sahə HTML pəncərəsində yazılır
+([`WebText`](game/scripts/client/web_text.gd), `germText` [`web/shell.html`](game/web/shell.html)-də):
+
+1. Sahənin Godot fokusu söndürülür — gizli element işə düşmür və pəncərənin fokusunu oğurlamır.
+2. Toxunuş sahəyə düşəndə Godot JS-ə "bu sahə basıldı" deyir (`germText.arm`).
+3. Barmaq qalxanda (`touchend` — iOS-un icazə verdiyi an) brauzer öz `<input>`-unu
+   açır və ELƏ HƏMİN hadisədə fokuslayır: klaviatura çıxır.
+4. GÖNDƏR / Enter — mətn sahəyə yazılır və `text_submitted` buraxılır, yəni dost
+   sorğusu birbaşa klaviaturadan gedir. ✕ və ya fona toxunmaq ləğv edir.
+
+Pəncərə ekranın YUXARISINDADIR və `visualViewport`-u izləyir: yatay telefonda
+klaviatura ekranın yarıdan çoxunu örtür, sahənin öz yeri onun altında qalardı.
+Kod sahələrində hərflər özü böyüyür, avtoduzəliş sönülüdür, "Yapışdır" işləyir.
+Dost kodu sahəsinə `#`, boşluq və tire üçün yer qalıb — mesajdan "#JL9 J9G YPY"
+kimi yapışdırılan kod kəsilmir. Eyni yol adda, komanda kodunda və server ünvanında
+işləyir. Masaüstü brauzerdə və APK-da heç nə dəyişməyib.
+
+> Kadr çox yavaşdırsa və Godot toxunuşu barmaq qalxandan SONRA emal edirsə,
+> pəncərə dərhal açılır, amma iOS onda klaviaturanı açmır — oyunçu sahəyə bir
+> dəfə də toxunur. iPad-da siçan/trackpad ilə (toxunuş yoxdur) pəncərə elə
+> basılan kimi açılır. iPadOS Safari özünü "Macintosh" kimi təqdim edir — toxunuş
+> nöqtəsi olan "Mac" iPad sayılır.
+
+Yatay telefonda klaviatura açılanda görünən hissə cəmi 60–130 CSS px qalır
+(emulyatorda ölçülüb: 71 px). Ona görə telefonda pəncərə YIĞCAMDIR: sahə + GÖNDƏR + ✕
+bir sətirdə, ən yuxarıda. ✕, fona toxunmaq və Esc LƏĞVDİR — yazılan mətn sahəyə
+keçmir. Böyük hərf yalnız göstərilir (CSS) və göndəriləndə tətbiq olunur: dəyəri yazı
+zamanı dəyişmək Android klaviaturalarının söz yığımını pozur.
+
+> Godot 4.7-nin `LineEdit`-i fokus ala bilməsə də, basılanda gizli IME elementini
+> işə salır və o, fokusu 100 ms-dən bir özünə çəkir (brauzerdə yoxlanıb) — HTML
+> sahəsinin klaviaturası dərhal bağlanırdı. Ona görə [`WebText`](game/scripts/client/web_text.gd)
+> sahənin ÜSTÜNÜ örtən şəffaf `Control`-dur: toxunuşu o tutur, `LineEdit` heç görmür.
+
+**KOPYALA və LİNK də iPhone-da işləmirdi** — eyni səbəbdən. Godot-un `clipboard_set`-i
+kadr dövründən çağırılır; iOS panoya yalnız toxunuşun içində yazmağa icazə verir və
+mühərrik özü konsola "only possible from an input callback" yazırdı, oyun isə
+"KOPYALANDI" göstərirdi. `navigator.share` isə heç nə açmırdı. İndi düymə BASILANDA
+tapşırıq silahlanır (`germText.armAction`), barmaq qalxanda brauzer kopyalayır və ya
+PAYLAŞ pəncərəsini açır (yoxdursa linki kopyalayır). Bildiriş nəticəyə görədir:
+"KOPYALANDI" və ya "KOPYALANMADI — əllə yaz: #KOD".
+
+Yoxlama (iPhone bu maşında yoxdur — iOS-un davranışı sənədlərdən və mühərrikin öz
+kodundan çıxarılıb, real cihazda sınanmayıb):
+
+| Harada | Nə yoxlanıb |
+|---|---|
+| Android emulyatoru (Chrome 113, DevTools ilə etibarlı toxunuş) | DOSTLAR → kod sahəsi: pəncərə açılır, real klaviatura çıxır, sətir klaviaturanın üstündə görünür, yazı → GÖNDƏR → sorğu gedir, sahə təmizlənir |
+| Başsız Chrome, telefon emulyasiyası (CDP, toxunuş) | ad: toxunuş açır, ✕ dəyişmir, OK dəyişir · KOPYALA toxunuşun içində `#KOD` kopyalayır, bir bildiriş · LİNK `?friend=KOD` ilə paylaşır, artıq kopyalamır · `ScrollContainer` içindəki kod sahəsi açılır · sahədən başlayan sürüşdürmə sonrakı toxunuşu silahlamır |
+
+> Masaüstü tətbiqin brauzer paneli GİZLİ olanda `requestAnimationFrame` dayanır —
+> Godot toxunuşu emal etmir və sınaq təsadüfi uğursuz olur. JS-lə yaradılan sintetik
+> `TouchEvent`-lər də etibarlı deyil. Etibarlı yol: CDP-nin `Input.dispatchTouchEvent`-i.
+
 İkonlar (DOSTLAR, dost əlavə et, lider tacı, dəvət məktubu, link) Codex ilə
 çəkilib — bax [design/menu_art/](design/menu_art/). Şəbəkəsiz stend (uydurma
 komanda ilə):
@@ -765,12 +830,15 @@ game/                    Godot layihəsi
       friends_view.gd    DOSTLAR ekranı: kodun, dost əlavə et, komanda, sorğular, son oyunçular
       chunky_box.gd      Brawl Stars düymə dili: kontur + dodaq + parıltı, konturlu yazı
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
+      web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        358 headless test
+      sim_test.gd        584 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
       hit_probe.gd       Vuruşu EKRANDA ölçür: toxunuş → parıltı, topun rəqibdən keçməsi
+      net_probe.gd       Şəbəkəni ölçür: snapshot boşluğu, gecikmə, ACK donması (`--net-probe`)
+      stall_probe.gd     Donmanı kadr-kadr ölçür: bufer boşluğu, geri sıçrayış (`--stall-probe`)
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
@@ -843,7 +911,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (568 test)
+# Simulyasiya + World + dostluq/komanda testləri (584 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -865,6 +933,21 @@ GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label
 GODOT --headless --path game -- --autoclient --host ws://127.0.0.1:27015 --label Bob \
       --secret bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --party 2 --quit-after 20 &
 ```
+
+Şəbəkə donmasını ölçmək (bax [«Donma və dəstə»](#donma-və-dəstə--server-yoxsa-wi-fi)):
+
+```bash
+# Snapshot boşluqları, gecikmə, giriş→təsdiq vaxtı, ACK donması (hər 10 s bir sətir)
+GODOT --headless --max-fps 60 --path game -- --autoclient --host wss://germ-arena.onrender.com/ws \
+      --label A --quit-after 240 --net-probe --net-probe-csv C:/yol/A.csv
+# Üstəlik hər kadr: bufer boşdurmu, rəqiblər geri sıçrayırmı, öz mikrobun nə qədər sıçradı
+#   --stall-probe --stall-probe-csv C:/yol/A_kadr.csv [--stall-move flip:0.6] [--stall-hitch 8:400]
+```
+
+`--max-fps` vacibdir: onsuz headless client həddsiz fırlanır. CSV yolu MÜTLƏQ
+olmalıdır. Hər iki probe ([`net_probe.gd`](game/scripts/tools/net_probe.gd),
+[`stall_probe.gd`](game/scripts/tools/stall_probe.gd)) yalnız bu bayraqlarla
+yüklənir, oyunun özündə yoxdur.
 
 Testlər oyunun HƏR İKİ ölüm qaydasını ayrıca yoxlayır: tutumu aşıb partlamaq
 və acından partlamaq. Bunlar oyunun bütün balansının dayandığı iki qaydadır.
@@ -1429,6 +1512,95 @@ köçür, qayıdana öz rəngi/növü/adı gedir, tərk edənin növbəsi silini
 Yoldaşı da ölüb dirilməsi ləğv olunan oyunçu isə nəticə ekranını alır — əvvəl
 matç bitənə qədər nəticəsiz izləyici qalırdı.
 
+### Donma və dəstə — server, yoxsa Wi-Fi?
+
+Şikayət (2026-10-03): üç nəfər qoşulanda oyun tez-tez donurdu və kəsilirdi.
+
+**Diaqnoz — server deyil, ortaq Wi-Fi.** Render logu (11:19–11:29 UTC):
+
+| Nə görüldü | Nə deyir |
+|---|---|
+| Üç cihaz (1 iPhone, 2 Android) və bu kompüter EYNİ ictimai IP-dən — bir Wi-Fi | ortaq yol |
+| Status sətri hər 5.03 s, tick orta 1.4–1.75 ms (büdcə 33 ms), **atılan tick 0** | server prosesi heç vaxt ilişməyib |
+| 11:25:17–22-də cəmi **74** giriş (normal ~300), növbəti 5 s-də **715** (gözlənilən 453) | girişlər itməyib — ~4 s **gecikib** və bir anda gəlib (TCP Wi-Fi kəsilməsindən sonra belə edir) |
+| 74 bir sağlam oyunçunun girişindən (151) də azdır | iki cihaz (iPhone və Android) EYNİ ANDA ilişib — fərqli əməliyyat sistemləri, ortaq şəbəkə |
+
+Canlı yoxlama: bu kompüterdən (eyni IP, 2.4 GHz Wi-Fi, kanal 11) canlı serverə
+3 test client-i + neytral ünvanlar (1.1.1.1, 8.8.8.8, Render `/healthz`) eyni
+anda ölçüldü. Yeganə uzun dayanma (~0.6 s) **hamısında birdən** göründü — oyunda
+da, Cloudflare/Google-a gedən yolda da. Render-in 0.1 CPU-su yalnız kiçik ilişmə
+verir: tick bəzən 13–39 ms-ə uzanır, saniyələrlə yox. Qrup oyunu üçün bir
+routerdə 5 GHz və ya mobil internet daha yaxşıdır.
+
+**Amma oyun hər dayanmanı böyüdürdü** (lokal ölçü, şəbəkə simulyatoru ilə
+1.5 s və 4 s dayanma — real hadisə kimi: TCP baytları saxlayır, sonra bir anda buraxır):
+
+| Problem | Ölçü (köhnə kod) | Düzəliş | Kod |
+|---|---|---|---|
+| Dayanmadan sonra 45–120 snapshot BİR kadrda tam emal olunurdu (barışıq, kölgələr, liderlər cədvəli hər biri üçün) | masaüstündə 124–290 ms-lik kadr — donmanın üstünə ikinci donma | Snapshot-lar növbəyə yığılır, kadrın əvvəlində birlikdə emal olunur; bahalı hissə yalnız ən təzəsi ilə bir dəfə | `Arena._drain_inbox`, `_ingest` |
+| Tick saatının ortası (0.7 s, 0.25 s-də köçmə) dəstədə dişli mişar kimi köçürdü | rəqiblər 16–22 tick (0.5–0.7 s) **geriyə** atılırdı | Baza gəlişlərin ORTASI yox, ƏN TEZİDİR — gec paket onu tərpətmir | `Arena._tick_time_of`, `_tt` |
+| Bufer quruyanda rəqiblər, toplar, qida birdən DONURDU, sonra sıçrayırdı | 1.5 s-də ön sıçrayış 45 tick bir kadrda | Göstərilən an (`Arena._rtick`) geri getmir; bufer quruyanda 200 ms son sürətlə irəli, sonra dayanır; sonra 3×-ə qədər sürətlənib yetişir (sıçramır) | `_advance_render`, `EXTRAP_MAX`, `CATCHUP_*` |
+| Jitter-ə görə bufer sabit 100 ms idi | Wi-Fi sıçrayışlarında boş bufer | Gecikmə son 3 s-in p95-i + tick + ehtiyat, 100–200 ms, yavaş dəyişir; serverə gedən görünən tick də elə odur | `_update_delay_target` |
+| Server dəstədə yalnız SON girişi saxlayırdı, donma boyu isə sonuncunu təkrarlayırdı | öz mikrobun 140–510 px **geri** dartılırdı | Server təxmin etdiyi tick-ləri gec gələn girişlərlə yenidən hesablayır (ən çox 4 s; mikroba kənardan bir şey toxunubsa — yox); client ankordan oynadır. Girişlər bağlı olanda (geri sayım, matçın sonu) heç nə təxmin sayılmır; ÜÇLÜK-də raund sıfırlananda hamısı unudulur | `World._replay_late`, `_self_row`, `Arena._reconcile` |
+| Client tick-ləri həmişəlik itirəndə (vərəq arxa planda, 0.5 s-dən uzun kadr) o slot-ların girişi heç gəlmir | ilk variantda bu "borc" adi jitter-də heç silinmirdi — yoldaşlar 155–1022 px sıçrayış görürdü (müstəqil yoxlamada tapılıb) | Borc girişlərin SAYI ilə yox, `seq` irəliləyişi ilə sayılır; girişlər 30 tick axırsa, pəncərənin ən kiçik qalığı daimidir və silinir | `World._settle_debt` |
+| Davamlı sürüşmə (yol uzanıb, server tick atıb): baza saniyədə 5 ms qalxırdı | 0.3–0.5 s-lik sürüşmədən sonra rəqiblər 30–65 s ekstrapolyasiya olunurdu | Son 1.5 s-in ən az gecikməsi də 60 ms-dən böyükdürsə, baza dərhal qalxır (donma dəstəsi bunu işə salmır) | `Arena._rebase` |
+| Barışıq düzəlişi birdən görünürdü | normal oyunda da 6–26 px titrəmə | Düzəliş 0.1 s-də sönən görüntü sürüşməsidir; simulyasiya dərhal serverin sözünə keçir. Doğuş, yenidən qoşulma, CÜT-də dirilmə və yeni raund TELEPORTDUR — onlar sürüşmür, dərhal yerinə qoyulur; "sənə dəydi" proqnozu da sürüşmənin yox, proqnozun yerinə baxır | `_smooth_correction`, `CORR_TAU`, `_snap_next`, `_pred_pos` |
+| Brauzerdə WebSocket giriş buferi 64 KiB idi | dəstə onu doldururdu, mühərrik mesajları ATIRDI — etibarlı RPC-lər də | 512 KiB (~20 s axın) | `Net.INBOUND_BUFFER` |
+| Godot uzun kadrda `delta`-nı 133 ms-də kəsir, client 5 tick-dən çoxunu atırdı | telefonun hər ilişməsində saat geri qalırdı | Hədd 0.5 s, kadrda 15 tick-ə qədər | `LONG_FRAME`, `TICKS_PER_FRAME` |
+| Donma "oyun ilişdi" kimi görünürdü | — | **ZƏİF BAĞLANTI** nişanı: 0.4 s snapshot gəlmirsə və ya giriş təsdiqlənmirsə | `Arena._watch_net`, `Hud.set_weak_net` |
+| Gözləyən dəymələr donma boyu "köhnəlirdi" | təsdiq gələndə ikinci, ayrı zərbə | Donma boyu gözləmə saatı dayanır | `_hold_claims` |
+
+`INPUT_BUFFER_MAX` 64-dən (2.1 s) 160-a (5.3 s) qalxdı — 4 s-lik donmada da
+barışıq tam olur. Köhnə client yeni serverdə işləyir (SELF sətrinin yalnız ilk iki
+sahəsini oxuyur), RPC-lər dəyişməyib.
+
+**Nəticə** — eyni şəbəkə simulyatoru, 2–3 client × 120 s hər ssenaridə, "köhnə" bu
+işdən əvvəlki koddur. Rəqəmlər dayanma pəncərələrinin medianıdır (mötərizədə ən pisi):
+
+| Ssenari (şəbəkə simulyatoru) | Göstərici | Köhnə kod | **İndi** |
+|---|---|---:|---:|
+| 0.4 s dayanma, hər iki istiqamət | öz mikrobunun sıçrayışı | 51 px (ən pisi 84) | **0** (0) |
+| | rəqiblərin bir kadrda irəli sıçrayışı | 9 tick | **0.8 tick** |
+| 1.5 s dayanma | öz mikrobunun sıçrayışı | 218 px (329) | **0** (0) |
+| | rəqiblərin GERİYƏ atılması | 16.5 tick | **0** |
+| | rəqiblərin bir kadrda irəli sıçrayışı | 45 tick | **1.5 tick** (sürətlənib yetişir) |
+| 1.5 s dayanma, oyunçu bu arada istiqaməti dəyişir | öz mikrobunun sıçrayışı | 201 px (328) | **0** (0) |
+| 1.5 s, yalnız yuxarı istiqamət (girişlər ilişir) | öz mikrobunun sıçrayışı | 139 px (218) | **0** (60; bir ölçüdə 939*) |
+| 4 s dayanma (real hadisə kimi) | öz mikrobunun sıçrayışı | 331 px (514) | **0** (52) |
+| | rəqiblərin GERİYƏ atılması | 22 tick | **0** |
+| | dəstənin emalı bir kadrda | 122 ms | **3 ms** |
+| Wi-Fi jitter-i (5–25 ms + 60–250 ms sıçrayışlar), dayanmasız | öz mikrobunun titrəməsi (>5 px) | 3–7 dəfə/dəq, ən çox 20–30 px | **0** |
+
+\* Server yenidən oynatmanı yalnız TƏMİZ yolda edir. Donma boyu mikroba kənardan nə isə
+toxunubsa (rəqiblə toqquşma, trixosist, tor, zərbənin təpməsi), o təsiri silmək olmaz —
+yoxsa bağlantını qəsdən ilişdirib zərbədən qaçmaq olardı. O halda köhnə qayda qalır və
+mikrob serverin təxmininə dartılır; sıx döyüşdə 3 client + botla bir ölçüdə bu, 939 px oldu.
+
+Dayanmanın ÖZÜ yox olmur — 4 s şəbəkə gəlmirsə, rəqiblər 4 s yenilənmir (indi
+200 ms irəli gedib dayanır və **ZƏİF BAĞLANTI** yazılır). Yox olan budur ki,
+donmadan sonra öz mikrobun geri dartılmır, rəqiblər geriyə atılmır, ekran ikinci
+dəfə ilişmir.
+
+Topların keçidi də ölçüldü (HitProbe, eyni ssenarilər). Öz topunun rəqibdən
+zərbəsiz keçməsi dayanmalarda belə 0–1-dir. Rəqibin topu ilə üçüncü mikrob
+arasındakı qalıq keçid isə dəyişməyib — Wi-Fi ssenarisində köhnə kodda 14 / 262
+(5.3%), indi 12 / 265 (4.5%). Bu, əvvəldən qalan səviyyədir (bax «Öz topunun
+təsdiqlənməyən dəymələri»). Topların və effektlərin vaxtı da artıq tick-ə
+bağlanıb, mütləq ana yox: baza erkən paketdə enəndə mikroblar dərhal sürüşür,
+toplar və zərbə parıltısı isə əvvəl növbəti snapshot-a qədər köhnə bazada qalırdı
+(8–25 px aralı).
+
+**Server diaqnostikası.** `--verbose` serverdə iki sətir əlavə olundu:
+
+```
+[lobby] 1 dünya · ... · atılan tick 0 · CPU 61 ms/s · kvotada saxlanma 3/50 dövr, 12 ms
+[net] Ana: girişlər 3810 ms gəlmədi, sonra 114-ü bir kadrda
+```
+
+Birincisi Render konteynerinin cgroup kvotasıdır (`/sys/fs/cgroup/cpu.stat`):
+"saxlanma" artırsa, server CPU-ya dirənir. İkincisi kimin, nə vaxt, nə qədər
+ilişdiyini deyir — bir neçə oyunçuda eyni anda görünürsə, səbəb onların ortaq şəbəkəsidir.
+
 ### Botlar
 
 io oyununun ölüm səbəbi boş dünyadır: ilk oyunçu qoşulanda ortada tək qalsa,
@@ -1774,6 +1946,17 @@ UDP 27015 portu açıq olmalıdır.
 > 
 > `.uid` faylı da elə `--import` zamanı yaranır; onsuz commit etsən başqa
 > maşında eyni hal təkrarlanır.
+
+> ⚠️ **iOS klaviaturanı YALNIZ toxunuşun içində fokuslanan HTML sahəsi üçün açır.**
+>
+> Godot-un brauzerdəki yazı sahəsi gizli elementi taymerlə fokuslayır. Android
+> Chrome buna icazə verir, iOS isə yox — və heç bir xəta yoxdur: sahə fokuslanır,
+> kursor yanır, sadəcə klaviatura çıxmır. Ona görə Android-də sınanan dost
+> ekranı "işləyirdi", iPhone-da isə kod ümumiyyətlə yazıla bilmirdi.
+>
+> Telefon brauzerində yeni `LineEdit` əlavə edəndə onu [`WebText.attach`](game/scripts/client/web_text.gd)
+> ilə bağla (bax «Telefon brauzerində yazı»). Yoxlamaq üçün emulyator kifayət
+> deyil: masaüstü Chrome-un telefon rejimi fokusu həmişə qəbul edir.
 
 ## Assetlər — bir vacib məhdudiyyət
 

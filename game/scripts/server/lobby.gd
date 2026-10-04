@@ -88,6 +88,8 @@ func _process(delta: float) -> void:
 	if verbose and _report_accum >= 5.0:
 		_report_accum = 0.0
 		_report()
+	if verbose:
+		_flush_input_gaps()
 
 
 # ---------------------------------------------------------------- giriş/çıxış
@@ -102,6 +104,7 @@ func join(peer: int, player_name: String, species := 0, mode := 0) -> void:
 	# Növ client-dən gəlir, yəni ETİBARSIZ ola bilər (bax [method Const.species_from]).
 	world.add_player(peer, names[peer], Const.species_from(species))
 	peer_world[peer] = world.id
+	_last_input_us.erase(peer)
 	Net.on_world_join.rpc_id(peer, world.join_info_for(peer))
 	social.set_in_game(peer, true)
 	print("[lobby] %s dünya #%d-ə girdi (%d insan)" % [
@@ -128,6 +131,7 @@ func join_party(peers: Array, mode: int) -> void:
 	for m in list:
 		var peer := int(m[0])
 		peer_world[peer] = world.id
+		_last_input_us.erase(peer)
 		Net.on_world_join.rpc_id(peer, world.join_info_for(peer))
 		social.set_in_game(peer, true)
 	print("[lobby] komanda (%d nəfər) dünya #%d-ə girdi: %s" % [
@@ -161,6 +165,7 @@ func _open_world(mode: Const.Mode, party := 1) -> World:
 
 ## Oyunçu könüllü çıxır və ya mikrobu partlayır.
 func leave(peer: int) -> void:
+	_last_input_us.erase(peer)
 	var world := _world_of(peer)
 	peer_world.erase(peer)
 	names.erase(peer)
@@ -191,6 +196,100 @@ func route_input(peer: int, packed: Array) -> void:
 	if world != null:
 		world.accept_input(peer, packed)
 		_inputs_seen += 1
+		if verbose:
+			_note_input_gap(peer)
+
+
+## ── Girişlərin fasiləsi (diaqnostika) ──────────────────────────────────
+##
+## "Oyun donur — server, yoxsa biz?" sualı 2026-10-03-də yalnız 5 saniyəlik giriş
+## sayından cavablandı: 74 giriş (normal ~450), sonra 715 — yəni girişlər itməyib,
+## ~4 s GECİKİB və bir anda gəlib (Wi-Fi). Kimin donduğu isə bilinmirdi. İndi hər
+## oyunçunun iki girişi arasındakı ən uzun fasilə tutulur və [constant GAP_REPORT]-dan
+## uzundursa elə o an yazılır: `[net] Ad: girişlər 3810 ms gəlmədi, sonra 114-ü bir kadrda`.
+## Eyni anda bir neçə oyunçuda görünürsə, səbəb onların ortaq şəbəkəsidir.
+const GAP_REPORT := 1000
+var _last_input_us := {}         ## peer -> son girişin anı (µs)
+var _gap_open := {}              ## peer -> [fasilənin ms-i, sonrakı dəstədə giriş sayı]
+var _frame_inputs := {}          ## peer -> bu kadrda gələn giriş sayı
+
+
+func _note_input_gap(peer: int) -> void:
+	var now := Time.get_ticks_usec()
+	var gap_ms := (now - int(_last_input_us.get(peer, now))) / 1000
+	_last_input_us[peer] = now
+	_frame_inputs[peer] = int(_frame_inputs.get(peer, 0)) + 1
+	if gap_ms >= GAP_REPORT:
+		_gap_open[peer] = gap_ms
+
+
+## Kadrın sonunda: fasilədən sonra BİR kadrda neçə giriş gəldiyi də yazılır.
+func _flush_input_gaps() -> void:
+	for peer in _gap_open:
+		print("[net] %s: girişlər %d ms gəlmədi, sonra %d-i bir kadrda" % [
+			names.get(peer, peer), int(_gap_open[peer]), int(_frame_inputs.get(peer, 0))])
+	_gap_open.clear()
+	_frame_inputs.clear()
+
+
+## ── Konteynerin CPU payı (diaqnostika) ─────────────────────────────────
+##
+## Render-in pulsuz planı 0.1 CPU verir (cgroup kvotası). Kvota dolanda Linux prosesi
+## dövrün sonuna qədər SAXLAYIR — tick-lər 13–39 ms uzanır (canlı logda görünüb),
+## amma bunun kvotadan gəldiyi yalnız ehtimal idi. cgroup v2 `cpu.stat` saxlanma
+## sayını və müddətini birbaşa verir. cgroup v1-də eyni rəqəmlər başqa fayllardadır
+## (nanosaniyə ilə) — ikisi də oxunur; heç biri yoxdursa (Windows) sətir yazılmır.
+const CGROUP_STAT := "/sys/fs/cgroup/cpu.stat"
+const CGROUP_V1_STAT := ["/sys/fs/cgroup/cpu,cpuacct/cpu.stat", "/sys/fs/cgroup/cpu/cpu.stat"]
+const CGROUP_V1_USAGE := ["/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage",
+	"/sys/fs/cgroup/cpuacct/cpuacct.usage"]
+var _cg_prev := {}
+
+
+## `açar dəyər` sətirli faylı lüğətə oxuyur; fayl yoxdursa boş lüğət.
+static func _read_stat(path: String) -> Dictionary:
+	var out := {}
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return out
+	for line in f.get_as_text().split("\n", false):
+		var kv := line.split(" ", false)
+		if kv.size() == 2:
+			out[kv[0]] = int(kv[1])
+	return out
+
+
+## cgroup sayğacları v2 adları ilə: usage_usec, nr_periods, nr_throttled, throttled_usec.
+static func _cgroup_now() -> Dictionary:
+	var now := _read_stat(CGROUP_STAT)
+	if now.has("usage_usec"):
+		return now
+	for path in CGROUP_V1_STAT:
+		var v1 := _read_stat(path)
+		if not v1.has("nr_periods"):
+			continue
+		now = {"nr_periods": v1["nr_periods"], "nr_throttled": v1.get("nr_throttled", 0),
+			"throttled_usec": int(v1.get("throttled_time", 0)) / 1000}
+		for usage in CGROUP_V1_USAGE:
+			var f := FileAccess.open(usage, FileAccess.READ)
+			if f != null:
+				now["usage_usec"] = int(f.get_as_text().strip_edges()) / 1000
+				return now
+	return {}
+
+
+func _cgroup_line() -> String:
+	var now := _cgroup_now()
+	if not now.has("usage_usec"):
+		return ""
+	var prev := _cg_prev
+	_cg_prev = now
+	if prev.is_empty():
+		return ""
+	var d := func(k: String) -> int: return int(now.get(k, 0)) - int(prev.get(k, 0))
+	return " · CPU %d ms/s · kvotada saxlanma %d/%d dövr, %d ms" % [
+		d.call("usage_usec") / 5000, d.call("nr_throttled"), d.call("nr_periods"),
+		d.call("throttled_usec") / 1000]
 
 
 func _tick_worlds(dt: float) -> void:
@@ -309,8 +408,8 @@ func _report() -> void:
 	# Tick büdcəsi 1000/TICK_RATE ms-dir; "atılan" sıfırdan böyükdürsə server
 	# real vaxtdan geri qalıb və oyun yavaşıyıb.
 	var avg_ms := float(_tick_us) / float(maxi(_tick_count, 1)) / 1000.0
-	print("[lobby] %d dünya · son 5 s-də %d giriş paketi · tick orta %.2f ms, maks %.2f ms · atılan tick %d" % [
-		worlds.size(), _inputs_seen, avg_ms, _tick_max_us / 1000.0, _dropped_ticks])
+	print("[lobby] %d dünya · son 5 s-də %d giriş paketi · tick orta %.2f ms, maks %.2f ms · atılan tick %d%s" % [
+		worlds.size(), _inputs_seen, avg_ms, _tick_max_us / 1000.0, _dropped_ticks, _cgroup_line()])
 	_inputs_seen = 0
 	_tick_us = 0
 	_tick_max_us = 0
@@ -336,6 +435,7 @@ func _report() -> void:
 ## Oyunçu dərhal atılmır — mikrobu [constant REJOIN_GRACE] saniyə dünyada
 ## saxlanılır ki, qayıda bilsin.
 func remove_peer(peer: int) -> void:
+	_last_input_us.erase(peer)
 	# Dostluq kanalı dərhal bağlanır; komandadakı yer isə bir müddət saxlanılır
 	# (bax [method SocialHub.drop]).
 	social.drop(peer)

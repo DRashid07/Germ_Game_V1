@@ -212,6 +212,8 @@ func _build_control_column() -> void:
 	addr_edit.text_changed.connect(func(t: String) -> void:
 		Settings.address = t
 		Settings.save())
+	WebText.attach(addr_edit, "server_addr", {
+		"title": "SERVER ÜNVANI", "ok": "OK", "inputmode": "url"})
 	box.add_child(addr_edit)
 
 	_gap(box, 6)

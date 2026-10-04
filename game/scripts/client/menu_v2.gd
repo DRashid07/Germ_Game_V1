@@ -718,10 +718,15 @@ func _build_top_bar() -> void:
 	# Ad yazılıb bitəndə yadda saxlanılır — dostlar və komanda yoldaşları yeni
 	# adı dərhal görsün (OYNA-nı gözləmədən).
 	_nick.text_submitted.connect(func(_t: String) -> void:
-		_nick.release_focus())
+		_nick.release_focus()
+		# Telefon brauzerində sahə fokus almır (bax [WebText]) — fokus itmədiyi üçün
+		# yadda saxlama elə buradan gedir. Ad dəyişməyibsə heç nə yazılmır.
+		if _clean_nick() != Net.nickname:
+			_save_settings())
 	_nick.focus_exited.connect(func() -> void:
 		if _clean_nick() != Net.nickname:
 			_save_settings())
+	WebText.attach(_nick, "nick", {"title": "ADIN", "ok": "OK"})
 	row.add_child(_nick)
 
 	# Alt yazı ("adı dəyişmək üçün toxun") yoxdur: Brawl Stars-ın yuxarı

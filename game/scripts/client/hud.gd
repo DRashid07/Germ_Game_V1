@@ -81,6 +81,9 @@ var _result_rule: ColorRect
 ## Çıxış təsdiqi (bax [method toggle_leave_prompt]).
 var _leave: Control
 var _fps_lbl: Label
+## "ZƏİF BAĞLANTI" nişanı (bax [method set_weak_net]).
+var _net_lbl: Label
+var _net_t := 0.0
 ## Kadr sayğacı saniyədə bir dəfə yenilənir — bax [method _process].
 var _fps_t := 0.0
 
@@ -368,6 +371,20 @@ func _build_system() -> void:
 	_fps_lbl.visible = false
 	_safe_root.add_child(_fps_lbl)
 
+	# Şəbəkə donanda oyun "ilişdi" görünürdü: rəqiblər dayanır, sonra sıçrayır. Nişan
+	# deyir ki, səbəb bağlantıdır (Wi-Fi), oyun yox. Kadr sayğacının altında, mərkəzdə.
+	_net_lbl = _make_label(24, Palette.WARNING)
+	_net_lbl.text = "ZƏİF BAĞLANTI"
+	_net_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_net_lbl.anchor_left = 0.5
+	_net_lbl.anchor_right = 0.5
+	_net_lbl.offset_left = -160.0
+	_net_lbl.offset_right = 160.0
+	_net_lbl.offset_top = 36.0
+	_net_lbl.offset_bottom = 68.0
+	_net_lbl.visible = false
+	_safe_root.add_child(_net_lbl)
+
 
 ## "MATÇDAN ÇIXIRSAN?" — GERİ jestinin təsdiqi (bax [signal leave_confirmed]).
 ##
@@ -604,6 +621,10 @@ func _process(delta: float) -> void:
 	if _hint_t > 0.0:
 		_hint_t = maxf(0.0, _hint_t - delta)
 
+	if _net_lbl.visible:
+		_net_t += delta
+		_net_lbl.modulate.a = 0.75 + 0.25 * sin(_net_t * 6.0)
+
 	# Xəbərdarlıq yazısı yanıb-sönür: hərəkət diqqəti mətndən tez çəkir.
 	if _warn_lbl.visible:
 		_warn_t += delta
@@ -684,6 +705,12 @@ func update_board(rows: PackedInt32Array, population: int, names: Dictionary) ->
 		var info: Array = names.get(gid, ["", 0])
 		lines.append("%d. %s  %d" % [i + 1, String(info[0]), rows[i * 2 + 1]])
 	_board_lbl.text = "\n".join(lines)
+
+
+## Bağlantı nişanı — [Arena] snapshot gəlməyəndə və ya girişlər təsdiqlənməyəndə yandırır.
+func set_weak_net(on: bool) -> void:
+	_net_lbl.visible = on
+	_net_t = 0.0
 
 
 func set_fire_state(ratio: float, has_ammo: bool) -> void:

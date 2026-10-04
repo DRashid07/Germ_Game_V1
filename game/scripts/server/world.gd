@@ -32,6 +32,56 @@ var tokens := {}
 var suspended := {}
 
 var _inputs := {}               ## germ_id -> Sim.PlayerInput (ən son gələn)
+
+## ── Gec gələn girişlər ──────────────────────────────────────────────────
+##
+## Yeni giriş gəlməyən tick-də server oyunçunun SONUNCU girişini təkrarlayır — bu,
+## TƏXMİNDİR. Wi-Fi donanda (TCP girişləri saxlayıb sonra bir anda gətirir) təxmin
+## saniyələrlə davam edirdi, dəstə gələndə isə [method accept_input] yalnız ən sonuncunu
+## saxlayırdı: oyunçunun donma ərzindəki hərəkəti itirdi və öz ekranında mikrob 100–400 px
+## geri dartılırdı (ölçülüb). Jitter-də də (paketlər cüt-cüt gəlir) hər birləşmədə proqnoz
+## bir tick titrəyirdi.
+##
+## İndi təxmin olunan tick-lər ("slot"-lar) gec gələn girişlər gələn kimi mikrobun ÖZ
+## hərəkəti üçün yenidən hesablanır ([method _replay_late], client proqnozunun eyni kodu —
+## [method Sim.step_movement]). Atəş və super yenə ən son girişə birləşir və indiki tick-də
+## işləyir — keçmişə yazılmır.
+##
+## Hədlər:
+##   • ən çox [constant REPLAY_MAX] tick (4 s) geri. Real Wi-Fi donmaları 3.8–4.2 s idi
+##     (Render logu, 2026-10-03); 1.5 s-lik hədd 4 s-lik donmada mikrobu yenə 500 px geri
+##     dartırdı (ölçülüb). "Lag switch" (yuxarı istiqaməti qəsdən saxlamaq) bununla
+##     topdan YAYINMAĞA imkan vermir: donma boyu dəymələr serverin TƏXMİN etdiyi yerdə —
+##     rəqiblərin gördüyü yerdə — sayılıb və geri alınmır; yalnız sonda sıçrayış görünür;
+##   • təxmin yolu TƏMİZ hərəkət deyilsə (rəqiblə toqquşma, trixosist itələməsi, tor, atəşin
+##     geri təpməsi) yenidən oynadılmır — bu təsirləri silmək olmaz; onda təxmin qalır və
+##     client barışıqla (hamar) düzəlir;
+##   • girişlər bağlı olanda (geri sayım, matçın sonu) nə təxmin sayılır, nə yenidən
+##     oynadılır; ÜÇLÜK-də raund sıfırlananda hamısı unudulur — yoxsa yenidən oynatma
+##     mikrobu yeni doğuş yerindən köhnə raundun yerinə qaytarırdı (yoxlamada tapılıb);
+##   • kistdə heç nə dəyişmir.
+const REPLAY_MAX := 120
+## DAİMİ BORC. Client tick-ləri həmişəlik itirə bilər (vərəq arxa plana keçib, kadr 0.5 s-dən
+## uzun çəkib, ENet-də paket itib): o slot-ların girişi heç vaxt gəlməyəcək, seq isə ardıcıl
+## qalır. Silinməsə server hər tick o slot-ları "gec giriş" sayıb yenidən oynadır.
+##
+## Ödənməyən borc belə tapılır: [constant DEBT_WINDOW] tick-lik pəncərədə girişlər AXIRSA
+## (ən çox [constant DEBT_SLACK] əskik), pəncərədəki ən kiçik təxmin sayı daimidir və silinir.
+## Əvvəlki qayda — 30 tick FASİLƏSİZ giriş — adi jitter-də heç ödənmirdi: bir boş tick
+## sayğacı sıfırlayırdı, borc sessiya boyu qalırdı və server hər tick k slot-u ən təzə
+## girişlə yenidən hesablayırdı — yoldaşlar 155–1022 px sıçrayış görürdü, client isə
+## 120-dən böyük borcda proqnozunu tamam itirirdi (yoxlamada ölçülüb).
+const DEBT_WINDOW := 30
+const DEBT_SLACK := 2
+## `--no-replay` ilə server köhnə qaydaya qayıdır (yalnız təxmin sayı göndərilir).
+var replay_enabled := true
+var _late_q := {}               ## peer -> Array[Sim.PlayerInput] — son tick-dən bəri gələnlər
+var _rep := {}                  ## peer -> təxmin olunan ardıcıl slot sayı (snapshot SELF[2])
+var _win := {}                  ## peer -> [tick sayı, giriş sayı, ən kiçik təxmin] — borc pəncərəsi
+var _seq_seen := {}             ## peer -> əvvəlki tick-in sonunda emal olunmuş seq
+var _ring := {}                 ## peer -> Array[[pos, vel, aim]] — hər tick-dən SONRAKI hal
+var _applied := {}              ## peer -> son tick-də işlənən giriş (hərəkət və nişan)
+var _scratch: Sim = null
 var _last_seq := {}             ## peer_id -> emal edilmiş son seq
 var _bots := {}                 ## bot_id -> Bot
 var _next_bot_id := BOT_ID_BASE
@@ -96,6 +146,7 @@ var _frame_board := PackedInt32Array()
 
 
 func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
+	replay_enabled = not OS.get_cmdline_user_args().has("--no-replay")
 	id = p_id
 	mode = p_mode
 	sim = Sim.new()
@@ -330,6 +381,13 @@ func _reset_round() -> void:
 		g.vel = Vector2.ZERO
 		g.pos = sim.find_spawn(g.radius())
 	sim.shots.clear()
+	# İnsanların köhnə raund girişi silinir: geri sayımda girişlər qəbul olunmur, server isə
+	# saxlanan SONUNCU girişi təkrarlayırdı — mikrob doğulduğu yerdən sürüşürdü, proqnoz
+	# (sayımda yerində durur) isə raund başlayanda geri dartılırdı. Gec giriş halı da
+	# unudulur: yenidən oynatma mikrobu köhnə raundun yerinə qaytara bilərdi.
+	for peer in peers:
+		_inputs.erase(peer)
+		_forget_replay(peer)
 
 
 ## CÜT: dirilmə növbəsini işlədir.
@@ -634,6 +692,11 @@ func accept_input(peer: int, packed: Array) -> void:
 		inp.fire = inp.fire or queued.fire
 		inp.use_super = inp.use_super or queued.use_super
 	_inputs[peer] = inp
+	# Gec gələn girişin hərəkəti saxlanılır — təxmin tick-ləri üçün (bax [method _replay_late]).
+	if peers.has(peer):
+		var q: Array = _late_q.get(peer, [])
+		q.append(Sim.PlayerInput.make(inp.seq, inp.move, inp.aim, false))
+		_late_q[peer] = q
 
 
 ## Bir tick. Partlayan oyunçuların siyahısını qaytarır — [Lobby] onlara
@@ -655,6 +718,9 @@ func tick(dt: float) -> Array:
 	for bid in _bots:
 		var bot: Bot = _bots[bid]
 		_inputs[bid] = bot.think(sim, dt)
+
+	# Gec gələn girişlər təxmin olunan tick-lər üçün yenidən oynadılır (bax [constant REPLAY_MAX]).
+	_replay_late()
 
 	# Matç bitibsə dünya DONUR.
 	#
@@ -695,6 +761,9 @@ func tick(dt: float) -> Array:
 			inp.shot = false
 			inp.fire_wait = 0
 		inp.use_super = false
+
+	# Hal və təxmin sayğacı (snapshot-un SELF sətri üçün, bax [method _self_row]).
+	_record_replay_state()
 
 	# YER — matçlı rejimdə partlayan mikrob o anda sağ qalanların sayı + 1
 	# yerini alır. Yəni ilk ölən sonuncu, sona qalan birincidir.
@@ -921,7 +990,7 @@ func snapshot_for(peer: int) -> Array:
 		_alive_count(),
 		sim.broken,
 		_match_row(peer),
-		[int(_last_seq.get(peer, 0)), g.cooldown if g != null else 0.0],
+		_self_row(peer, g),
 	]
 
 
@@ -1133,6 +1202,7 @@ func suspend_peer(peer: int) -> void:
 	suspended[peer] = true
 	# Saxlanan giriş silinir, yoxsa mikrob son əmrlə hərəkət etməyə davam edərdi.
 	_inputs.erase(peer)
+	_forget_replay(peer)
 
 
 ## Oyunçu yeni peer id ilə geri qayıtdı — bütün açarları köçürürük.
@@ -1158,6 +1228,7 @@ func resume_peer(old_peer: int, new_peer: int) -> void:
 
 	_inputs.erase(old_peer)
 	suspended.erase(old_peer)
+	_forget_replay(old_peer)
 	# Nişan dəyişmir: eyni oyunçu, eyni sessiya.
 
 
@@ -1176,6 +1247,7 @@ func holds(peer: int) -> bool:
 func drop_peer(peer: int) -> void:
 	peers.erase(peer)
 	_inputs.erase(peer)
+	_forget_replay(peer)
 	_last_seq.erase(peer)
 	tokens.erase(peer)
 	suspended.erase(peer)
@@ -1187,3 +1259,169 @@ func drop_peer(peer: int) -> void:
 
 func is_empty() -> bool:
 	return peers.is_empty()
+
+
+# ---------------------------------------------------------------- gec gələn girişlər
+
+func _forget_replay(peer: int) -> void:
+	_late_q.erase(peer)
+	_rep.erase(peer)
+	_win.erase(peer)
+	_seq_seen.erase(peer)
+	_ring.erase(peer)
+	_applied.erase(peer)
+
+
+## Təxmin olunan slot-ları gec gələn girişlərlə yenidən hesablayır (bax [constant REPLAY_MAX]).
+## [method tick]-də addımdan ƏVVƏL çağırılır: indiki tick artıq düzəldilmiş yerdən başlayır.
+## Faza bu tick-in əvvəlində dəyişibsə (ÜÇLÜK raundu bitib, mikroblar yeni doğuş yerindədir),
+## girişlər artıq bağlıdır və heç nə yenidən oynadılmır.
+func _replay_late() -> void:
+	if not replay_enabled or not inputs_open():
+		return
+	for peer in peers:
+		var q: Array = _late_q.get(peer, [])
+		var r := int(_rep.get(peer, 0))
+		if q.is_empty() or r <= 0:
+			continue
+		var g: Sim.GermState = sim.germs.get(peer)
+		var ring: Array = _ring.get(peer, [])
+		var guess: Sim.PlayerInput = _applied.get(peer)
+		var w := mini(r, REPLAY_MAX)
+		if g == null or not g.alive or g.in_cyst() or guess == null or ring.size() < w + 1:
+			continue
+		var start: Array = ring[ring.size() - 1 - w]
+		var c := _scratch_germ(peer, g, start)
+		# Əvvəl təxmin yolu özü yoxlanılır: halqadakı hal təmiz hərəkətlə (sonuncu girişin
+		# təkrarı) alınmırsa, mikroba başqa nə isə toxunub — yenidən oynatmaq onu silərdi.
+		var clean := true
+		for j in range(r - w + 1, r + 1):
+			_scratch.step_movement({peer: guess}, Const.TICK_DELTA, false)
+			var was: Vector2 = (ring[ring.size() - 1 - (r - j)] as Array)[0]
+			if c.pos.distance_squared_to(was) > 0.25:
+				clean = false
+				break
+		if not clean:
+			continue
+		c = _scratch_germ(peer, g, start)
+		# Slot `j` client-in `a + j` girişidir (a — təkrarlanan girişin seq-i); hələ
+		# gəlməyibsə ən yaxın əvvəlki (yəni yenə təxmin).
+		var a := int(_last_seq.get(peer, 0))
+		var qi := 0
+		var use := guess
+		for j in range(r - w + 1, r + 1):
+			while qi < q.size() and int((q[qi] as Sim.PlayerInput).seq) <= a + j:
+				use = q[qi]
+				qi += 1
+			_scratch.step_movement({peer: use}, Const.TICK_DELTA, false)
+			# Halqa da düzəlir: növbəti yenidən oynatma buradan başlamalıdır.
+			ring[ring.size() - 1 - (r - j)] = [c.pos, c.vel, c.aim]
+		g.pos = c.pos
+		g.vel = c.vel
+
+
+## Yenidən hesablama üçün tək mikroblu boş dünya — [param start] halından.
+##
+## Mikrob `Sim.add_germ` ilə YOX, birbaşa qurulur: o, hər çağırışda `find_spawn` ilə
+## doğuş yeri axtarır (maneələr arasında təsadüfi sınaqlar) — yenidən oynatmada iki dəfə,
+## hər tick. Yer onsuz da [param start]-dan gəlir.
+func _scratch_germ(peer: int, g: Sim.GermState, start: Array) -> Sim.GermState:
+	if _scratch == null:
+		_scratch = Sim.new()
+	_scratch.germs.clear()
+	_scratch.broken = sim.broken
+	_scratch.dish_radius = sim.dish_radius
+	var c := Sim.GermState.new()
+	c.id = peer
+	c.species = g.species
+	c.capacity = g.capacity
+	c.balls = g.balls
+	c.team = g.team
+	_scratch.germs[peer] = c
+	# Atəş yenidən hesablanmır: o, indiki tick-dədir.
+	c.cooldown = 1.0e9
+	c.pos = start[0]
+	c.vel = start[1]
+	c.aim = start[2]
+	return c
+
+
+## Tick-dən SONRA: halı halqaya yazır və təxmin sayğacını yeniləyir.
+func _record_replay_state() -> void:
+	var open := inputs_open()
+	for peer in peers:
+		var g: Sim.GermState = sim.germs.get(peer)
+		if g == null or suspended.has(peer):
+			_forget_replay(peer)
+			continue
+		var q: Array = _late_q.get(peer, [])
+		var r := int(_rep.get(peer, 0))
+		var seq := int(_last_seq.get(peer, 0))
+		var rep := 0
+		if not open:
+			# Geri sayım, matçın sonu: girişlər qəbul olunmur, deməli təxmin də yoxdur.
+			# Əvvəl ÜÇLÜK-ün 3 s-lik sayımı 90 "təxmin" kimi yığılırdı və ankor client-i
+			# köhnə raundun yerinə çəkirdi (yoxlamada tapılıb).
+			rep = 0
+		elif q.is_empty():
+			# Yeni giriş yox — server sonuncunu təkrarladı (və ya heç giriş yoxdur).
+			rep = r + 1 if _inputs.has(peer) else 0
+		else:
+			# Yeni girişlər r + 1 slot-un neçəsini doldurdu — SEQ irəliləyişi ilə: itən
+			# (və ya köhnə sayılıb atılan) paket də öz slot-unu tutur.
+			var seen := int(_seq_seen.get(peer, seq - q.size()))
+			rep = r + 1 - clampi(seq - seen, 0, r + 1)
+		_rep[peer] = _settle_debt(peer, rep, q.size(), open)
+		_seq_seen[peer] = seq
+		q.clear()
+		var cur: Sim.PlayerInput = _inputs.get(peer)
+		if cur != null:
+			_applied[peer] = Sim.PlayerInput.make(cur.seq, cur.move, cur.aim, false)
+		var ring: Array = _ring.get(peer, [])
+		ring.append([g.pos, g.vel, g.aim])
+		while ring.size() > REPLAY_MAX + 1:
+			ring.pop_front()
+		_ring[peer] = ring
+
+
+## Daimi borcu silir (bax [constant DEBT_WINDOW]): girişlər pəncərə boyu axıbsa və təxmin
+## sayı heç sıfıra enməyibsə, o ən kiçik qalıq heç vaxt gəlməyəcək slot-lardır.
+##
+## Donmada girişlər GƏLMİR — pəncərə "axın" sayılmır və borc toxunulmaz qalır. Donma
+## açılanda dəstə borcu özü ödəyir və pəncərənin minimumu 0 olur.
+func _settle_debt(peer: int, rep: int, inputs: int, open: bool) -> int:
+	if not open:
+		_win.erase(peer)
+		return rep
+	var w: Array = _win.get(peer, [0, 0, rep])
+	w[0] = int(w[0]) + 1
+	w[1] = int(w[1]) + inputs
+	w[2] = mini(int(w[2]), rep)
+	if int(w[0]) >= DEBT_WINDOW:
+		if int(w[1]) >= DEBT_WINDOW - DEBT_SLACK and int(w[2]) > 0:
+			rep -= int(w[2])
+		w = [0, 0, rep]
+	_win[peer] = w
+	return rep
+
+
+## Snapshot-un SELF sətri: `[ack, soyuma, təxmin sayı]`, təxmin varsa + `[ankor x, y, vx, vy]`.
+##
+## TƏXMİN SAYI — server sonuncu girişi neçə tick təkrarlayıb (client o qədər girişi
+## yenidən oynatmır — bax [method Arena._reconcile]). ANKOR — mikrobun təsdiqlənən girişin
+## öz slot-undan sonrakı halı, təxminlərdən ƏVVƏL: server təxmin etdiyi tick-ləri gec gələn
+## girişlərlə yenidən hesablayacaq ([method _replay_late]), ona görə client ankordan BÜTÜN
+## gözləyən girişləri oynadır və serverin son yeri ilə üst-üstə düşür. Köhnə client yalnız
+## ilk iki sahəni oxuyur.
+func _self_row(peer: int, g: Sim.GermState) -> Array:
+	var r := int(_rep.get(peer, 0))
+	var row := [int(_last_seq.get(peer, 0)), g.cooldown if g != null else 0.0, r]
+	if g == null or not replay_enabled:
+		return row
+	var ring: Array = _ring.get(peer, [])
+	if r > 0 and ring.size() > r:
+		var st: Array = ring[ring.size() - 1 - r]
+		var at: Vector2 = st[0]
+		var v: Vector2 = st[1]
+		row.append_array([at.x, at.y, v.x, v.y])
+	return row

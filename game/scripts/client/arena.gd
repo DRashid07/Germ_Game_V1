@@ -4,16 +4,20 @@ extends Node2D
 ##
 ## Üç fərqli zaman xətti burada birləşir:
 ##   1. İndi         — öz mikrobun. Girişi dərhal tətbiq olunur (prediction).
-##   2. 100 ms əvvəl — rəqiblər, toplar və qida. Snapshot-lar arasında interpolyasiya.
+##   2. Keçmiş       — rəqiblər, toplar və qida, 100–200 ms geridə (şəbəkənin jitter-inə
+##                     görə dəyişir, bax [method _update_delay_target]). Interpolyasiya.
 ##   3. Serverin sözü — snapshot gələndə öz vəziyyətin düzəldilir (reconciliation).
 ##
-## Rəqibləri qəsdən 100 ms geridə göstəririk: paket itsə belə interpolyasiya üçün
+## Rəqibləri qəsdən geridə göstəririk: paket gecikəndə belə interpolyasiya üçün
 ## əlimizdə həmişə iki snapshot olur, hərəkət titrəmir.
+
+## Kadrda yığılmış snapshot-lar emal olundu (bax [method _drain_inbox]) — test probe-u üçün:
+## öz mikrobun proqnozunun cəmi düzəlişi (px), emalın vaxtı (ms), snapshot sayı.
+signal drained(corr_px: float, ms: float, count: int)
 ##
 ## Dünya ekrandan böyükdür, ona görə kamera mikrobu izləyir və tutum böyüdükcə
 ## uzaqlaşır — böyük mikrob daha geniş sahə görür.
 
-const SNAP_BUFFER_MAX := 24
 const FX_LIFETIME := 0.26
 ## Effekt sprite-ı neçə dəfə böyüyür və ömrünün NEÇƏNCİ hissəsində.
 ##
@@ -170,37 +174,226 @@ var _last_snap: Array = []
 var _last_snap_t := 0.0
 var _shots_synced_t := -1.0
 
-## ── Tick saatı ───────────────────────────────────────────────────────────
+## ── Tick saatı və jitter buferi ─────────────────────────────────────────
 ##
-## Snapshot-lar xam GƏLİŞ anı ilə yox, tick-dən çıxan HAMAR an ilə çəkilir:
-## `_tick_base + tick × TICK_DELTA`. `_tick_base` gəlişlərin gecikməsinin yavaş
-## ortasıdır. Əvvəl hər snapshot öz gəliş anı ilə interpolyasiya olunurdu və
-## jitter-də (15–20 ms) rəqib tick-in yarısı qədər qabağa-geriyə sürüşürdü:
-## proqnoz topu rəqibi serverin yoxladığı dəqiq tick-də görür ([method _ghost_targets]),
-## ekranda isə rəqib başqa yerdə çəkilirdi — top gövdəyə girib dəymədən keçə
-## bilirdi. İndi ekrandakı rəqib elə həmin tick-dədir, hərəkət də hamardır.
+## Snapshot-lar xam GƏLİŞ anı ilə yox, tick-dən çıxan an ilə çəkilir:
+## `_floor + tick × TICK_DELTA` ([method _tt]). Əvvəl hər snapshot öz gəliş anı ilə
+## interpolyasiya olunurdu və jitter-də rəqib tick-in yarısı qədər qabağa-geriyə
+## sürüşürdü: proqnoz topu rəqibi serverin yoxladığı dəqiq tick-də görür
+## ([method _ghost_targets]), ekranda isə rəqib başqa yerdə çəkilirdi.
 ##
-## Gecikən paket öz anından gec gəlsə də, interpolyasiya gecikməsi (100 ms)
-## jitter-dən xeyli böyükdür — paket göstəriləcəyi anda artıq buferdədir.
-var _tick_base := 0.0
+## `_floor` gəlişlərin ORTASI yox, ƏN TEZİDİR (gəliş anı − tick vaxtı): gec gələn
+## paket — jitter və ya donmadan sonrakı dəstə — onu TƏRPƏTMİR. Əvvəlki orta (0.7 s
+## zaman sabiti, 0.25 s-dən böyük fərqdə dərhal köçmə) donmadan sonra gələn dəstədə
+## hər ~8 snapshot-da bir köçürdü: anlar dişli mişar kimi düzülür, rəqiblər 15–21
+## tick (0.5–0.7 s) GERİYƏ atılırdı (ölçülüb: 1.5 s donmada median 16.5 tick).
+## Baza yalnız yavaş qalxır ([constant FLOOR_RISE]) — yol həmişəlik uzananda; enməsi
+## isə dərhaldır (Godot uzun kadrda `delta`-nı ~133 ms-də kəsir, saat geri qalır).
+##
+## Göstərilən an [member _rtick] — rəqiblərin, topların, qidanın və effektlərin
+## server tick-i (kəsrli). Serverə gedən görünən tick ([method _view_tick]) da odur:
+##   • `_clock − _delay`-i izləyir. [member _delay] son [constant LATE_WINDOW] s-də
+##     snapshot-ların bazadan gecikməsinin p95-i + bir tick + ehtiyatdır,
+##     [constant Const.INTERP_DELAY]..[constant DELAY_MAX] arasında, yavaş dəyişir;
+##   • HEÇ VAXT geri getmir;
+##   • ən təzə snapshot-u [constant EXTRAP_MAX]-dan çox keçmir: bufer quruyanda
+##     rəqiblər son sürətləri ilə bu qədər irəli çəkilir, sonra DAYANIR;
+##   • geridə qalanda (donmadan sonra) SÜRƏTLƏNİB yetişir ([constant CATCHUP_GAIN],
+##     ən çox [constant CATCHUP_MAX]×): rəqiblər sıçramır, qısa müddət tez hərəkət edir.
+##     Çox geridədirsə ([constant CATCHUP_JUMP]) əvvəl [constant CATCHUP_LEFT] saniyəyə
+##     qədər sıçrayır — 4 s-lik donmanı sürətlə oynatmaq 2 s çəkərdi.
+const FLOOR_RISE := 0.005
+## Bundan çox gecikən snapshot jitter deyil, donmadır: bufer ölçüsünə daxil olmur.
+const LATE_STALL := 0.3
+const LATE_WINDOW := 3.0
+## Gecikmənin yuxarı həddi. Server topu ən çox [constant Const.REWIND_MAX] (0.4 s)
+## geri sarır: `RTT/2 + gecikmə` ondan böyük olanda atıcının gördüyü yoxlanmır.
+const DELAY_MAX := 0.2
+const DELAY_MARGIN := 0.015
+## Gecikmə saniyədə ən çox bu qədər dəyişir.
+const DELAY_RATE := 0.1
+const EXTRAP_MAX := 0.2
+## Yetişmə: geriləmə (s) × bu = artıq sürət — 25 ms geridə 1.1×, 0.5 s geridə 3×.
+## Qabaqda olanda ən çox 10% yavaşıyır. 1.5 s-lik donmadan sonra ~0.5 s sürətli hərəkət.
+const CATCHUP_GAIN := 4.0
+const CATCHUP_MAX := 3.0
+const CATCHUP_JUMP := 1.5
+const CATCHUP_LEFT := 0.75
+## Bundan böyük fərq (yeni dünya, yenidən qoşulma) — göstərilən an dərhal köçür.
+const RENDER_RESET := 5.0
+## Snapshot-lar sayla yox, VAXTLA saxlanılır: göstərilən andan bu qədər əvvəlkilər
+## atılır ([method _server_row] ən təzədən ən çox REWIND_MAX geri baxır).
+const SNAP_KEEP := 0.6
+const SNAP_HARD_MAX := 200
+## Zəif bağlantı nişanı: bu qədər snapshot gəlmir və ya təsdiq donursa yanır,
+## düzələndən sonra [constant WEAK_HOLD] saniyə qalır (bax [method _watch_net]).
+const WEAK_AFTER := 0.4
+const WEAK_HOLD := 1.0
+## DAVAMLI sürüşmə: yol uzanıb və ya server tick atıb — bundan sonra HƏR snapshot gec gəlir.
+## Baza saniyədə cəmi [constant FLOOR_RISE] qalxdığı üçün 0.3 s-lik sürüşmə 30 s, 0.5 s-lik
+## 65 s ekstrapolyasiya və donma demək idi (yoxlamada ölçülüb). İndi son [constant REBASE_WINDOW]
+## saniyənin ƏN AZ gecikməsi də [constant REBASE_MIN]-dən böyükdürsə, baza dərhal o qədər
+## qalxır. Donma dəstəsi bunu işə salmır: dəstənin paketləri eyni anda gəlir (səpələnmə
+## [constant REBASE_SPAN]-dan qısadır), ən təzələri isə gecikmir.
+const REBASE_WINDOW := 1.5
+const REBASE_SPAN := 1.2
+const REBASE_MIN := 0.06
+const REBASE_SAMPLES := 20
+
 var _tick_base_set := false
+## Son [constant REBASE_WINDOW] saniyədə HƏR snapshot-un gecikməsi (donma dəstəsi də daxil).
+var _late_all: Array[Vector2] = []
+var _floor := 0.0
+var _floor_t := 0.0
+## Son snapshot-ların bazadan gecikməsi: (gəliş anı, gecikmə).
+var _late: Array[Vector2] = []
+var _delay := Const.INTERP_DELAY
+var _delay_target := Const.INTERP_DELAY
+## Göstərilən server tick-i (kəsrli); mənfi — hələ yoxdur.
+var _rtick := -1.0
+## [member _rtick]-in yerli saatdakı anı (`_floor + _rtick × TICK_DELTA`).
+var _rt := -INF
+## Göstərilən an ən təzə snapshot-dan nə qədər qabaqdadır (ekstrapolyasiya, s).
+var _extra := 0.0
 ## [member _last_snap]-ın tick saatındakı anı.
 var _last_snap_tt := 0.0
-## Hamarlanma: hər snapshot ortanı bu qədər dartır (30 Hz-də ~0.7 s zaman sabiti).
-const TICK_BASE_RATE := 0.05
-## Bundan böyük fərq sıçrayışdır (yenidən qoşulma, uzun donma) — orta dərhal köçür.
-const TICK_BASE_SNAP := 0.25
+var _last_tick_seen := -1
+var _batch_stalled := false
+## Zəif bağlantı nişanı yanırmı (bax [method _watch_net]).
+var weak_net := false
+var _weak_until := -INF
+var _ack_moved_t := 0.0
+var _me_in_snap := false
+## Test ölçüləri (bax [method _probe_extra]).
+var _pm := {"corr": 0.0, "drain_ms": 0.0, "drained": 0}
 
 
-## Snapshot tick-inin yerli saatdakı hamar anı; gəlişi də ortaya əlavə edir.
+## Snapshot tick-inin yerli saatdakı anı; gəlişi bazaya və gecikmə statistikasına yazır.
 func _tick_time_of(tick: float) -> float:
 	var sample := _clock - tick * Const.TICK_DELTA
-	if not _tick_base_set or absf(sample - _tick_base) > TICK_BASE_SNAP:
-		_tick_base = sample
+	if not _tick_base_set:
 		_tick_base_set = true
+		_floor = sample
+		_floor_t = _clock
+		_late.clear()
+		_late_all.clear()
+		_rtick = -1.0
+	_floor = minf(_floor + FLOOR_RISE * maxf(_clock - _floor_t, 0.0), sample)
+	_floor_t = _clock
+	var late := sample - _floor
+	late -= _rebase(late)
+	# Donma dəstəsi jitter deyil: buferi böyütməməlidir (bax [method _drain_inbox]).
+	if late < LATE_STALL and not _batch_stalled:
+		_late.append(Vector2(_clock, late))
+	return _floor + tick * Const.TICK_DELTA
+
+
+## Davamlı sürüşmədə bazanı qaldırır (bax [constant REBASE_WINDOW]); qaldırılan miqdarı qaytarır.
+##
+## Göstərilən tick ([member _rtick]) dəyişmir — ekrandakı rəqiblər yerindən oynamır. Yalnız
+## gecikmə hədəfi yaxınlaşır və göstərilən an ən çox 10% yavaşıyaraq yenidən buferə girir.
+func _rebase(late: float) -> float:
+	_late_all.append(Vector2(_clock, late))
+	while not _late_all.is_empty() and _late_all[0].x < _clock - REBASE_WINDOW:
+		_late_all.pop_front()
+	if _late_all.size() < REBASE_SAMPLES or _clock - _late_all[0].x < REBASE_SPAN:
+		return 0.0
+	var m := INF
+	for v in _late_all:
+		m = minf(m, v.y)
+	if m <= REBASE_MIN:
+		return 0.0
+	_floor += m
+	for i in _late_all.size():
+		_late_all[i].y -= m
+	for i in _late.size():
+		_late[i].y = maxf(0.0, _late[i].y - m)
+	return m
+
+
+## Buferdəki snapshot-un anı — HƏMİŞƏ indiki bazadan (tick-ə görə monoton).
+func _tt(d: Array) -> float:
+	return _floor + float(d[Const.Snap.TICK]) * Const.TICK_DELTA
+
+
+func _render_time() -> float:
+	return _rt
+
+
+## Göstərilən tick ekstrapolyasiya ilə birlikdə (test probe-u üçün).
+func _render_tick() -> float:
+	return _rtick
+
+
+## Gecikmə hədəfi: son [constant LATE_WINDOW] saniyənin p95-i (dəstədən sonra bir dəfə).
+func _update_delay_target() -> void:
+	while not _late.is_empty() and _late[0].x < _clock - LATE_WINDOW:
+		_late.pop_front()
+	var lates := PackedFloat32Array()
+	for v in _late:
+		lates.append(v.y)
+	lates.sort()
+	var p95 := lates[mini(lates.size() - 1, int(0.95 * lates.size()))] if lates.size() > 0 else 0.0
+	_delay_target = clampf(p95 + DELAY_MARGIN + Const.TICK_DELTA, Const.INTERP_DELAY, DELAY_MAX)
+
+
+## Hər kadr bir dəfə ([method _process]): gecikmə və göstərilən an.
+func _advance_render(delta: float) -> void:
+	if _snaps.is_empty():
+		return
+	_delay += clampf(_delay_target - _delay, -DELAY_RATE * delta, DELAY_RATE * delta)
+	var want := (_clock - _delay - _floor) / Const.TICK_DELTA
+	var newest := float((_snaps[-1]["d"] as Array)[Const.Snap.TICK])
+	var cap := newest + EXTRAP_MAX / Const.TICK_DELTA
+	var prev := _rtick
+	if _rtick < 0.0 or absf(want - _rtick) * Const.TICK_DELTA > RENDER_RESET:
+		_rtick = minf(want, cap)
+		prev = _rtick
 	else:
-		_tick_base = lerpf(_tick_base, sample, TICK_BASE_RATE)
-	return _tick_base + tick * Const.TICK_DELTA
+		var lag := (want - _rtick) * Const.TICK_DELTA
+		if lag > CATCHUP_JUMP:
+			_rtick = want - CATCHUP_LEFT / Const.TICK_DELTA
+			lag = CATCHUP_LEFT
+		var rate := 1.0 + clampf(lag * CATCHUP_GAIN, -0.1, CATCHUP_MAX - 1.0)
+		_rtick += delta * rate / Const.TICK_DELTA
+	_rtick = clampf(_rtick, prev, maxf(cap, prev))
+	_rt = _floor + _rtick * Const.TICK_DELTA
+	_extra = maxf(0.0, _rtick - newest) * Const.TICK_DELTA
+
+
+## Bağlantı ilişib: snapshot [constant WEAK_AFTER] saniyədir gəlmir, və ya server
+## girişləri o qədər vaxtdır təsdiqləmir (yuxarı istiqamət ilişib). Geri sayımda və
+## mikrob dünyada olmayanda giriş onsuz da təsdiqlənmir — o hal sayılmır.
+func _link_stalled() -> bool:
+	if _local_world != null or _snaps.is_empty():
+		return false
+	if _clock - _last_snap_t > WEAK_AFTER:
+		return true
+	return _phase == Const.Phase.PLAYING and _me_in_snap and _clock - _ack_moved_t > WEAK_AFTER
+
+
+## Zəif bağlantı nişanı ([method Hud.set_weak_net]). Oyun "dondu" görünməsin —
+## oyunçu səbəbin şəbəkə olduğunu bilsin. Düzələndən sonra [constant WEAK_HOLD] qalır.
+func _watch_net() -> void:
+	var weak := false
+	if not _finished and not _reconnecting:
+		if _link_stalled():
+			_weak_until = _clock + WEAK_HOLD
+		weak = _clock < _weak_until
+	if weak != weak_net:
+		weak_net = weak
+		_hud.set_weak_net(weak)
+
+
+func _probe_extra() -> String:
+	var s := "%.0f|%.0f|%.1f|%d|%.1f|%d|%.1f|%d" % [_extra * 1000.0, _delay * 1000.0, _pm["corr"],
+		int(_pm["drained"]), float(_pm["drain_ms"]), 1 if weak_net else 0, _corr_off.length(), _srv_rep]
+	_pm["corr"] = 0.0
+	_pm["drained"] = 0
+	_pm["drain_ms"] = 0.0
+	return s
+
+
 var _finished := false
 
 ## Mikroba qayıtmaq üçün sessiya nişanı — serverdən dünyaya girəndə gəlir.
@@ -441,7 +634,23 @@ func configure_practice() -> void:
 		g.charge = Const.SUPER_MAX
 
 
+## ── Uzun kadr ────────────────────────────────────────────────────────────
+##
+## Godot kadrın `delta`-nı `max_physics_steps_per_frame / physics_ticks_per_second`-də
+## (8 / 60 = 133 ms) KƏSİR: 500 ms-lik kadrdan sonra `delta` 137 ms gəlir (ölçülüb), yəni
+## telefonun hər ilişməsində client-in saatı geri qalırdı. Oyunçunun o tick-lərinin girişi
+## heç göndərilmirdi — server həmin tick-ləri sonuncu girişlə TƏXMİN edirdi, proqnoz
+## düzəlirdi, rəqiblərin zaman xətti də sıçrayırdı. Oyunda fizika qovşağı yoxdur, ona görə
+## hədd [constant LONG_FRAME] saniyəyə qaldırılır və bir kadrda [constant TICKS_PER_FRAME]
+## tick-ə qədər işlənir. Məşqdə tick bütün dünyanı hesablayır — orada köhnə hədd qalır.
+const LONG_FRAME := 0.5
+const TICKS_PER_FRAME := 15
+const TICKS_PER_FRAME_PRACTICE := 5
+
+
 func _ready() -> void:
+	Engine.max_physics_steps_per_frame = maxi(Engine.max_physics_steps_per_frame,
+		ceili(LONG_FRAME * Engine.physics_ticks_per_second))
 	_build_glow()
 	_load_textures()
 	_build_world()
@@ -820,13 +1029,51 @@ func _init_prediction() -> void:
 		me.pos = start_at
 		me.vel = Vector2.ZERO
 	_sync_shown()
+	# Proqnoz təsadüfi yerdən başlayır — ilk barışıq serverin doğuş yerinə SIÇRAMALIDIR.
+	_snap_next = true
 
 
 ## Çəkiliş nöqtəsi: iki proqnoz tick-i arasında hara düşdüyümüzə görə.
 ##
 ## [member _tick_accum] tick-dən sonra qalan vaxtdır, yəni nisbət elə odur.
+## Üstünə serverin düzəlişinin hələ sönməmiş hissəsi gəlir (bax [member _corr_off]).
 func _shown_pos() -> Vector2:
+	return _pred_pos() + _corr_off
+
+
+## Proqnozun öz yeri — düzəlişin sönən hissəsi OLMADAN. Dəymə məntiqi bununla işləyir:
+## server səni burada görür; çəkiliş sürüşməsi yalnız göz üçündür (bax [member _corr_off]).
+func _pred_pos() -> Vector2:
 	return _pos_prev.lerp(_pos_curr, clampf(_tick_accum / Const.TICK_DELTA, 0.0, 1.0))
+
+
+## ── Düzəlişin hamarlanması ──────────────────────────────────────────────
+##
+## Server proqnozu düzəldəndə (barışıq) simulyasiya DƏRHAL serverin sözünə keçir,
+## çəkiliş isə köhnə yerdən başlayıb ona eksponensial yaxınlaşır. Əvvəl düzəliş
+## növbəti tick-də birdən görünürdü: şəbəkə donmasından sonra öz mikrobun
+## 37–404 px sıçrayırdı (ölçülüb). Yalnız GÖRÜNTÜDÜR — toqquşma, atəş, proqnoz
+## [member me]-nin həqiqi yeri ilə işləyir.
+const CORR_TAU := 0.1
+## Bundan böyük fərq doğuş, yenidən qoşulma və ya teleportdur — hamarlanmır.
+const CORR_SNAP := 500.0
+var _corr_off := Vector2.ZERO
+## Növbəti barışıq hamarlanmır, mikrob dərhal yerinə qoyulur: doğuş, yenidən qoşulma, CÜT-də
+## dirilmə, ÜÇLÜK-də yeni raund — bunlar teleportdur, düzəliş deyil. Əvvəl 500 px-dən qısa
+## teleport da sürüşərək görünürdü (yoxlamada tapılıb).
+var _snap_next := true
+
+
+## Barışıq proqnozu [param shift] qədər sürüşdürdü: çəkiliş yerində qalır.
+func _smooth_correction(shift: Vector2) -> void:
+	if shift.length_squared() < 0.0001:
+		return
+	if (_corr_off - shift).length() > CORR_SNAP:
+		_sync_shown()
+		return
+	_pos_prev += shift
+	_pos_curr += shift
+	_corr_off -= shift
 
 
 func _shown_aim() -> float:
@@ -843,12 +1090,20 @@ func _sync_shown() -> void:
 	_pos_curr = me.pos
 	_aim_prev = me.aim
 	_aim_curr = me.aim
+	_corr_off = Vector2.ZERO
 
 
 # ================================================================ dövr
 
 func _process(delta: float) -> void:
+	# Bu kadra qədər gələn snapshot-lar BİRLİKDƏ emal olunur (bax [method _drain_inbox]).
+	# Saat hələ artırılmayıb — əvvəlki kimi, siqnalın işlədiyi anın saatı.
+	_drain_inbox()
 	_clock += delta
+	_advance_render(delta)
+	_corr_off *= exp(-delta / CORR_TAU)
+	if _corr_off.length_squared() < 0.01:
+		_corr_off = Vector2.ZERO
 	_animate_environment()
 	# Oyun bitibsə basış yığılmamalıdır: yenidən qoşulanda mikrob öz-özünə
 	# superi işlədərdi.
@@ -857,14 +1112,16 @@ func _process(delta: float) -> void:
 
 	_tick_accum += delta
 	var steps := 0
-	while _tick_accum >= Const.TICK_DELTA and steps < 5:
+	var cap := TICKS_PER_FRAME_PRACTICE if _local_world != null else TICKS_PER_FRAME
+	while _tick_accum >= Const.TICK_DELTA and steps < cap:
 		_tick_accum -= Const.TICK_DELTA
 		steps += 1
 		_do_tick()
-	if steps == 5:
+	if steps == cap:
 		_tick_accum = 0.0
 
 	_render(delta)
+	_watch_net()
 	_watch_performance(delta)
 	_watch_resolution(delta)
 
@@ -1038,13 +1295,15 @@ func _sample_input() -> Sim.PlayerInput:
 ## Server topu məhz bu anın rəqiblərinə qarşı yoxlayır ([member Sim.lag_comp]).
 ## Kəsrlidir: rəqib iki snapshot arasında çəkilir, 33 ms-lik pillə isə
 ## sürətli rəqibdə 6 px xəta deməkdir. Bilinmirsə -1 — server geri sarmır.
+##
+## Göstərilən an [member _rtick]-dir (bax [method _advance_render]). Bufer quruyub
+## rəqiblər irəli çəkiləndə də ən təzə snapshot-un tick-i deyilir: ekstrapolyasiya
+## TƏXMİNDİR və server onu yoxlaya bilməz — gələcək tick iddia olunmur.
 func _view_tick() -> float:
-	var pair := _bracket(_clock - Const.INTERP_DELAY)
-	if pair.is_empty():
+	if _rtick < 0.0 or _snaps.is_empty():
 		return -1.0
-	var a := float((pair["a"] as Array)[Const.Snap.TICK])
-	var b := float((pair["b"] as Array)[Const.Snap.TICK])
-	return lerpf(a, b, float(pair["alpha"]))
+	return clampf(_rtick, float((_snaps[0]["d"] as Array)[Const.Snap.TICK]),
+		float((_snaps[-1]["d"] as Array)[Const.Snap.TICK]))
 
 
 ## WASD / ox düymələri. Diaqonal da normallaşdırılır ki, çəp getmək
@@ -1316,35 +1575,114 @@ func _nearest_enemy() -> Dictionary:
 
 # ================================================================ server sözü
 
+## ── Snapshot növbəsi ────────────────────────────────────────────────────
+##
+## Snapshot-lar gələn kimi emal olunmur: növbəyə yığılır və kadrın əvvəlində
+## ([method _process]) BİRLİKDƏ emal olunur.
+##
+## Şəbəkə donub açılanda (Wi-Fi, TCP təkrar göndərişi) 45–120 snapshot BİR kadrda
+## gəlir. Əvvəl hər biri tam emal olunurdu: barışıq (64-ə qədər girişin təkrarı),
+## kölgələr, liderlər cədvəli — masaüstündə 124–290 ms-lik kadr (telefonda bir neçə
+## dəfə çox), yəni donmanın üstünə ikinci donma. İndi bahalı hissə yalnız ƏN TƏZƏ
+## snapshot ilə bir dəfə işləyir; bufer, divarlar, matç və hadisələr isə hamısından,
+## gəliş sırası ilə — vuruş təsdiqləri əvvəlki kimi qalır.
+##
+## Məşqdə (yerli dünya) snapshot tick-in içində dərhal emal olunur — əvvəlki kimi.
+## Başqa server mesajından ([method _on_roster], [method _on_you_burst]) əvvəl də
+## növbə boşaldılır: mesajların sırası dəyişməsin.
+var _inbox: Array = []
+
+
 func _on_snapshot(data: Array) -> void:
 	if data.size() < 8:
 		return
-	# Mikroblar şəbəkədən SIX gəlir; burada bir dəfə sətirlərə açılır ki,
-	# çəkiliş və proqnoz kodu format dəyişikliyindən xəbərsiz qalsın.
-	data[Const.Snap.GERMS] = Const.unpack_germs(data[Const.Snap.GERMS])
-	data[Const.Snap.SHOTS] = Const.unpack_shots(data[Const.Snap.SHOTS])
-	data[Const.Snap.EVENTS] = Const.unpack_events(data[Const.Snap.EVENTS])
-	_last_snap = data
-	_last_snap_t = _clock
-	var at := _tick_time_of(float(data[Const.Snap.TICK]))
-	_last_snap_tt = at
-	_snaps.append({"t": at, "d": data})
-	while _snaps.size() > SNAP_BUFFER_MAX:
-		_snaps.pop_front()
+	_inbox.append(data)
+	if _local_world != null:
+		_drain_inbox()
 
-	for entry in data[Const.Snap.GERMS]:
+
+func _drain_inbox() -> void:
+	if _inbox.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+	var corr0 := float(_pm["corr"])
+	var n := _inbox.size()
+	var newest: Array = _inbox[n - 1]
+	# Dəstənin ən köhnəsi donma qədər gecikibsə, bütün dəstə jitter statistikasından
+	# çıxır: dəstənin sonu donmanın ortasında göndərilib və gecikməsi azdır, amma
+	# o da jitter deyil (bax [method _update_delay_target]).
+	_batch_stalled = _tick_base_set and _clock - float((_inbox[0] as Array)[Const.Snap.TICK]) \
+		* Const.TICK_DELTA - _floor > LATE_STALL
+	for i in n:
+		_ingest(_inbox[i], i == n - 1)
+	_inbox.clear()
+	_batch_stalled = false
+	_update_delay_target()
+	var was_in := _me_in_snap
+	_me_in_snap = false
+	for entry in newest[Const.Snap.GERMS]:
 		if int(entry[Const.GF.ID]) == my_id:
-			_reconcile(entry, data[Const.Snap.SELF])
+			_me_in_snap = true
+			# Mikrob snapshot-a QAYITDI (CÜT-də dirildi) — yeni doğuş yeridir.
+			if not was_in:
+				_snap_next = true
+			_reconcile(entry, newest[Const.Snap.SELF])
 			break
-
-	_apply_walls(data[Const.Snap.WALLS])
-	_apply_match(data[Const.Snap.MATCH])
-	_queue_events(data[Const.Snap.EVENTS], at)
-	_hud.update_board(data[Const.Snap.BOARD], int(data[Const.Snap.POP]), _roster)
+	_hud.update_board(newest[Const.Snap.BOARD], int(newest[Const.Snap.POP]), _roster)
 	# Minimap yaş radiusu da bilməlidir: TƏK QALAN-da təhlükəsiz zona 1200-dən
 	# 90 px-ə düşür və oyunçunun "hara qaçım" sualına cavab verən yeganə yer
 	# xəritədir. Onsuz minimap həmişə tam qabı göstərirdi.
 	_hud.minimap.wet_radius = _wet_radius
+	var ms := float(Time.get_ticks_usec() - t0) / 1000.0
+	_pm["drained"] = int(_pm["drained"]) + n
+	_pm["drain_ms"] = float(_pm["drain_ms"]) + ms
+	drained.emit(float(_pm["corr"]) - corr0, ms, n)
+
+
+## Bir snapshot-un ucuz hissəsi: bufer, təsdiq sayğacları, divarlar, matç, hadisələr.
+func _ingest(data: Array, newest: bool) -> void:
+	var tick := int(data[Const.Snap.TICK])
+	# Yeni dünya: tick sayğacı geri gedir və ya çox irəli sıçrayır — baza yenidən qurulur.
+	if _last_tick_seen >= 0 and (tick < _last_tick_seen or tick > _last_tick_seen + 900):
+		_tick_base_set = false
+		_snaps.clear()
+		_ack_seen = -1
+		_ack_tick = -1
+	_last_tick_seen = tick
+	# Mikroblar şəbəkədən SIX gəlir; burada bir dəfə sətirlərə açılır ki,
+	# çəkiliş və proqnoz kodu format dəyişikliyindən xəbərsiz qalsın.
+	data[Const.Snap.GERMS] = Const.unpack_germs(data[Const.Snap.GERMS])
+	# Toplar yalnız ən təzə snapshot-dan oxunur ([method _render_shots]).
+	if newest:
+		data[Const.Snap.SHOTS] = Const.unpack_shots(data[Const.Snap.SHOTS])
+	data[Const.Snap.EVENTS] = Const.unpack_events(data[Const.Snap.EVENTS])
+	var at := _tick_time_of(float(tick))
+	_snaps.append({"t": at, "d": data})
+	# Vaxtla saxlanılır: göstərilən andan SNAP_KEEP əvvəlkilər lazım deyil. Donmadan
+	# sonrakı dəstə isə BÜTÖV qalır — göstərilən an onun içindən keçib yetişir.
+	var keep_from := minf(_rt, _tt(data)) - SNAP_KEEP
+	while _snaps.size() > 2 and (_snaps.size() > SNAP_HARD_MAX or _tt(_snaps[1]["d"]) < keep_from):
+		_snaps.pop_front()
+	# Təsdiqin tick-i: eyni ACK neçə tick təkrarlanıb (köhnə server üçün, bax [method _reconcile]).
+	var acked := int((data[Const.Snap.SELF] as Array)[Const.SelfF.ACK])
+	if acked != _ack_seen:
+		_ack_seen = acked
+		_ack_tick = tick
+		_ack_moved_t = _clock
+	_last_ack = acked
+	if newest:
+		# Server təxmin sayını və ankoru özü göndərir (SELF[2..6], bax [method World._self_row]).
+		var me_self: Array = data[Const.Snap.SELF]
+		_srv_rep = int(me_self[2]) if me_self.size() > 2 else -1
+		_anchor = Vector4(float(me_self[3]), float(me_self[4]), float(me_self[5]), float(me_self[6])) \
+			if me_self.size() > 6 else Vector4.INF
+		_last_snap = data
+		_last_snap_t = _clock
+		_last_snap_tt = at
+		_snap_tick = tick
+	_apply_walls(data[Const.Snap.WALLS])
+	_apply_match(data[Const.Snap.MATCH])
+	_queue_events(data[Const.Snap.EVENTS], at)
 
 
 ## Ad və rəng cədvəli gəldi.
@@ -1353,6 +1691,7 @@ func _on_snapshot(data: Array) -> void:
 ## bilər və o halda mikrob bir neçə kadr adsız qalır. Yenilənmə olmasaydı,
 ## ad birdəfəlik boş qalardı — [method _ensure_germ] yalnız bir dəfə qurur.
 func _on_roster(table: Dictionary) -> void:
+	_drain_inbox()
 	_roster = table
 	_bot_colors.clear()
 	for gid in table:
@@ -1372,16 +1711,66 @@ func _on_roster(table: Dictionary) -> void:
 		entry["node"].set_identity(String(info[0]), int(info[1]))
 
 
+## ── Serverin təxmini ───────────────────────────────────────────────────
+##
+## Yeni giriş gəlməyən tick-də server SONUNCUNU təkrar işlədir və mikrob irəli
+## gedir, ACK isə yerində qalır. Barışıq ACK-dan sonrakı BÜTÜN girişləri yenidən
+## oynadırdı, yəni təkrarlanan tick-lər İKİ dəfə sayılırdı: jitter-də hər
+## birləşmədə ~6 px irəli-geri titrəmə, donmadan sonra isə əvvəl yüz pikseldən
+## çox İRƏLİ, bir RTT sonra GERİ sıçrayış (ölçülüb).
+##
+## İndi serverin təxmin etdiyi tick sayı ("slot") qədər giriş atılır: həmin
+## girişlərin vaxtını server artıq sonuncu girişlə doldurub. Sayı yeni server özü
+## göndərir (SELF[2]); köhnə serverdə ACK-ın neçə tick dəyişmədiyindən çıxır.
+##
+## ANKOR (SELF[3..6]) — serverin təxminlərdən ƏVVƏLKİ halı (bax [method World._self_row]):
+## gec gələn girişlər o tick-lər üçün yenidən oynadılacaq, ona görə proqnoz ankordan
+## BÜTÜN gözləyən girişləri oynadır və serverin son yeri ilə üst-üstə düşür.
+var _ack_seen := -1
+var _ack_tick := -1
+var _snap_tick := 0
+var _srv_rep := -1
+var _anchor := Vector4.INF
+## Server bundan çox tick TƏXMİN edirsə (yuxarı istiqamət ilişib), onun yeri oyunçunun
+## son girişinin uzantısıdır: proqnozun MÖVQEYİ sərbəst qalır, oyunçu idarəni itirmir.
+## Təzə ACK gələndə barışıq qayıdır; fərq varsa [method _smooth_correction] onu yumşaldır.
+const GUESS_TICKS := 6
+
+
 ## Serverin dediyi vəziyyəti qəbul edir, sonra hələ təsdiqlənməmiş
 ## girişləri yenidən oynadır — belə öz hərəkətin geri sıçramır.
 ## [param me_self] — [constant Const.Snap.SELF] sahəsi: təsdiqlənmiş giriş
 ## nömrəsi və atəş soyuması. Bunlar mikrob sətrindən çıxarılıb, çünki yalnız
 ## öz mikrobuna lazımdır və hər kadr hər rəqib üçün göndərilirdi.
 func _reconcile(entry: Array, me_self: Array) -> void:
-	me.pos = Vector2(float(entry[Const.GF.X]), float(entry[Const.GF.Y]))
-	me.vel = Vector2(float(entry[Const.GF.VX]), float(entry[Const.GF.VY]))
-	me.aim = float(entry[Const.GF.AIM])
-	me.cooldown = float(me_self[Const.SelfF.CD])
+	var acked := int(me_self[Const.SelfF.ACK])
+	var rep := _srv_rep if _srv_rep >= 0 else (_snap_tick - _ack_tick if _ack_tick >= 0 else 0)
+	rep = clampi(rep, 0, Const.INPUT_BUFFER_MAX)
+	# Ankordan oynatmaq üçün ilk təsdiqlənməmiş giriş buferdə olmalıdır.
+	var anchored := _anchor != Vector4.INF \
+		and (pending.is_empty() or pending[0].seq <= acked + 1)
+	# Sərbəst proqnoz yalnız təsdiq HƏQİQƏTƏN donanda (snapshot-larda ACK dəyişmir): server
+	# təxmin sayını desə də, ACK hər tick dəyişirsə barışıq dayanmamalıdır.
+	var frozen := _snap_tick - _ack_tick if _ack_tick >= 0 else 0
+	var keep := rep > GUESS_TICKS and frozen > GUESS_TICKS and not pending.is_empty()
+	var before := me.pos
+	var cd_before := me.cooldown
+	var super_before := me.super_t
+	if keep:
+		pass
+	elif anchored:
+		me.pos = Vector2(_anchor.x, _anchor.y)
+		me.vel = Vector2(_anchor.z, _anchor.w)
+		me.aim = float(entry[Const.GF.AIM])
+		# Soyuma ankorun tick-indən deyil, indidəndir: təxmin tick-lərində atəş olmur,
+		# yəni ankorda o, `rep` tick çox idi (sıfırdırsa — bilinmir, sıfır qalır).
+		var cd := float(me_self[Const.SelfF.CD])
+		me.cooldown = minf(cd + rep * Const.TICK_DELTA, Const.FIRE_COOLDOWN) if cd > 0.0 else 0.0
+	else:
+		me.pos = Vector2(float(entry[Const.GF.X]), float(entry[Const.GF.Y]))
+		me.vel = Vector2(float(entry[Const.GF.VX]), float(entry[Const.GF.VY]))
+		me.aim = float(entry[Const.GF.AIM])
+		me.cooldown = float(me_self[Const.SelfF.CD])
 	me.safe_t = 1.0 if int(entry[Const.GF.FLAGS]) & Const.GFlag.SAFE else 0.0
 
 	# Doluluq və superin işlək olması serverin sözüdür.
@@ -1433,8 +1822,16 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	if me.balls >= me.capacity - 1 or me.balls <= Const.MIN_BALLS:
 		Sfx.play_danger()
 
-	var acked := int(me_self[Const.SelfF.ACK])
-	while not pending.is_empty() and pending[0].seq <= acked:
+	# Təxmin slot-larının girişləri atılır (ankorla və ya sərbəst proqnozda — yox).
+	# Atılan, amma serverə hələ çatmayan girişin atəşi/superi proqnozda qalır: server
+	# onu gələndə ən son girişə birləşdirib işlədəcək ([method World.accept_input]).
+	var drop_to := acked if (anchored or keep) else acked + rep
+	var keep_fire := false
+	var keep_super := false
+	while not pending.is_empty() and pending[0].seq <= drop_to:
+		if pending[0].seq > acked:
+			keep_fire = keep_fire or pending[0].shot
+			keep_super = keep_super or pending[0].use_super
 		pending.pop_front()
 	_last_ack = acked
 	if _input_time.has(acked):
@@ -1446,6 +1843,12 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	for seq in _input_time.keys():
 		if int(seq) < acked:
 			_input_time.erase(seq)
+	if keep:
+		me.super_t = maxf(me.super_t, super_before)
+		# Kölgələr yenə təzə snapshot-dan qurulur: yoxsa donma boyu köhnə sürətlə irəli
+		# gedən "xəyali" rəqiblər proqnozdakı mikrobu itələyirdi (ölçülüb: 737 px düzəliş).
+		_sync_proxies()
+		return
 
 	# Yaxın rəqiblərin kölgəsi də eyni snapshot-dan qurulur və girişlərlə birlikdə
 	# irəli aparılır (bax [method _sync_proxies]).
@@ -1453,17 +1856,22 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	# Hadisələr saxlanmır: eyni atəş səsi hər düzəlişdə təkrar çalınmamalıdır.
 	for inp in pending:
 		pred.step_movement(_pred_inputs(inp), Const.TICK_DELTA, false)
+	if keep_fire:
+		me.cooldown = maxf(me.cooldown, cd_before)
+	if keep_super:
+		me.super_t = maxf(me.super_t, super_before)
 
 	# Düzəliş tick-dən KƏNARDA da gələ bilər (onlayn rejimdə snapshot istənilən
-	# anda düşür) və onda interpolyasiyanın ucları köhnə qalır.
-	#
-	# Amma hər düzəlişdə uçları bərabərləşdirmək OLMAZ: proqnoz düzgün işləyəndə
-	# fərq bir neçə pikseldir, saniyədə 30 dəfə sıçrayış isə elə həmin titrəməni
-	# geri gətirərdi. Ona görə yalnız proqnozun HƏQİQƏTƏN yanıldığı hal
-	# sıçradılır — divara dəymək, geri təpmə, yenidən qoşulma. Kiçik fərq
-	# növbəti tick-də onsuz da öz-özünə düzəlir.
-	if me.pos.distance_to(_pos_curr) > Const.germ_radius(me.capacity):
+	# anda düşür). Əvvəl kiçik düzəliş növbəti tick-də birdən, böyüyü (gövdə
+	# radiusundan çox) dərhal sıçrayışla görünürdü. İndi çəkiliş yerində qalır və
+	# düzəliş [constant CORR_TAU] ilə sönür (bax [method _smooth_correction]).
+	var shift := me.pos - before
+	_pm["corr"] = float(_pm["corr"]) + shift.length()
+	if _snap_next:
+		_snap_next = false
 		_sync_shown()
+	else:
+		_smooth_correction(shift)
 
 
 ## ── Proqnozda yaxın rəqiblər ─────────────────────────────────────────────
@@ -1553,6 +1961,7 @@ func _sync_proxies() -> void:
 ## Bir RPC-dir, çünki client üçün ikisi eyni şeydir: idarə dayanır, nəticə
 ## çıxır, menyuya qayıdılır. Fərqi serverin qoyduğu `won` bayrağı deyir.
 func _on_you_burst(result: Dictionary) -> void:
+	_drain_inbox()
 	# Yer yalnız matçlı rejimdə var: sonsuz arenada sıralama anlayışı yoxdur.
 	if _mode != Const.Mode.ENDLESS:
 		result["place"] = _place
@@ -1650,6 +2059,14 @@ func _on_rejoin_accepted(info: Dictionary) -> void:
 	pending.clear()
 	_snaps.clear()
 	_tick_base_set = false
+	_rtick = -1.0
+	_rt = -INF
+	_inbox.clear()
+	_ack_seen = -1
+	_ack_tick = -1
+	_srv_rep = -1
+	_anchor = Vector4.INF
+	_last_tick_seen = -1
 	# Köhnə sessiyanın topları yeni sessiyada təsdiqlənə bilməz: server id-ləri
 	# başqadır. Sprite-ları [method _render_ghosts] növbəti kadrda hovuza qaytarır.
 	_own_shots.clear()
@@ -1699,7 +2116,10 @@ func _return_to_menu() -> void:
 # ================================================================ render
 
 func _render(delta: float) -> void:
-	var render_time := _clock - Const.INTERP_DELAY
+	# Göstərilən an ([method _advance_render]): rəqiblər, toplar, qida və effektlər eyni
+	# zaman xəttindədir. Bufer quruyanda [constant EXTRAP_MAX]-dan sonra hamısı birlikdə
+	# DAYANIR, donmadan sonra birlikdə yetişir.
+	var render_time := _rt if _rt != -INF else _clock - _delay
 	_render_germs(render_time)
 	_update_aim_guide()
 	# Öz topların rəqiblər YERLƏŞƏNDƏN sonra addımlanır: proqnoz məhz bu
@@ -1830,7 +2250,8 @@ func _on_phase_changed() -> void:
 		Const.Phase.COUNTDOWN:
 			# Mətn burada YAZILMIR — sayımın hər iki sətri [method Hud.set_match]
 			# tərəfindən hər kadr yenilənir. Burada da yazsaq, iki sahib olar.
-			pass
+			# ÜÇLÜK-də yeni raund: hamı yeni doğuş yerindədir — öz mikrobun sürüşmədən köçür.
+			_snap_next = true
 		Const.Phase.PLAYING:
 			_hud.show_message("BAŞLADI", Const.mode_goal(int(_mode)))
 			get_tree().create_timer(1.4).timeout.connect(_hud.hide_message)
@@ -2408,6 +2829,7 @@ func _render_germs(render_time: float) -> void:
 	var older := _index_germs(pair["a"])
 	var newer := _index_germs(pair["b"])
 	var alpha: float = pair["alpha"]
+	var extra := float(pair.get("extra", 0.0))
 
 	for gid in newer:
 		if gid == my_id:
@@ -2433,6 +2855,9 @@ func _render_germs(render_time: float) -> void:
 		var aim := lerp_angle(float(o[Const.GF.AIM]), float(n[Const.GF.AIM]), alpha)
 		v.net_vel = Vector2(float(o[Const.GF.VX]), float(o[Const.GF.VY])).lerp(
 			Vector2(float(n[Const.GF.VX]), float(n[Const.GF.VY])), alpha)
+		if extra > 0.0:
+			# Bufer qurudu: son sürətlə qısa müddət irəli (bax [constant EXTRAP_MAX]).
+			pos = _clip_to_walls(pos, pos + v.net_vel * extra)
 		var flags := int(n[Const.GF.FLAGS])
 		v.apply(pos, aim, int(n[Const.GF.BALLS]), int(n[Const.GF.CAP]),
 			(flags & Const.GFlag.SAFE) != 0, true,
@@ -2509,17 +2934,24 @@ func _germ_by_color(color_index: int) -> GermVisual:
 func _bracket(render_time: float) -> Dictionary:
 	if _snaps.is_empty():
 		return {}
-	for i in range(_snaps.size() - 1):
-		var t0: float = _snaps[i]["t"]
-		var t1: float = _snaps[i + 1]["t"]
-		if t0 <= render_time and render_time <= t1:
+	# Anlar tick-dən və İNDİKİ bazadan hesablanır ([method _tt]) — həmişə monotondur.
+	# Sondan axtarılır: göstərilən an adətən ən təzə snapshot-ların yanındadır.
+	var newest_t := _tt(_snaps[-1]["d"])
+	if render_time >= newest_t:
+		# Bufer qurudu — ən təzə vəziyyət + sürətlə ən çox [constant EXTRAP_MAX] irəli.
+		var last: Array = _snaps[-1]["d"]
+		return {"a": last, "b": last, "alpha": 1.0,
+			"extra": minf(render_time - newest_t, EXTRAP_MAX)}
+	for i in range(_snaps.size() - 2, -1, -1):
+		var t0 := _tt(_snaps[i]["d"])
+		if t0 <= render_time:
+			var t1 := _tt(_snaps[i + 1]["d"])
 			var span := maxf(t1 - t0, 0.0001)
 			return {"a": _snaps[i]["d"], "b": _snaps[i + 1]["d"],
 				"alpha": clampf((render_time - t0) / span, 0.0, 1.0)}
-	# Buferdən kənardayıq (yenicə başladıq və ya paket axını kəsildi) —
-	# ən təzə məlum vəziyyəti göstəririk.
-	var last: Array = _snaps[-1]["d"]
-	return {"a": last, "b": last, "alpha": 1.0}
+	# Render saatı buferin ƏVVƏLİNDƏDİR (yenicə başladıq) — ən köhnəsi göstərilir.
+	var first: Array = _snaps[0]["d"]
+	return {"a": first, "b": first, "alpha": 1.0}
 
 
 static func _index_germs(snap: Array) -> Dictionary:
@@ -2597,11 +3029,14 @@ func _render_shots(render_time: float) -> void:
 			view["seen"] = _clock
 			view["base"] = Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
 			view["dir"] = dir
-			# Mikroblarla eyni tick saatı (bax [member _tick_base]).
-			view["t"] = _last_snap_tt
+			# Mikroblarla eyni tick saatı (bax [method _tt]). Tick saxlanılır, an hər kadr
+			# İNDİKİ bazadan hesablanır (aşağıda): baza erkən paketdə enəndə mikroblar
+			# dərhal sürüşür, top isə növbəti snapshot-a qədər köhnə bazada qalıb onlardan
+			# 20–60 ms (8–25 px) aralı çəkilirdi.
+			view["tick"] = _snap_tick
 			# Server topu `life`-ın sıfıra çatdığı tick-də HƏRƏKƏTSİZ silir: qalan uçuş
 			# `life − 1 tick`-dir (bax [method ShotPrediction._sim_tick]).
-			view["dies"] = _last_snap_tt + maxf(float(e[Const.SF.LIFE]) - Const.TICK_DELTA, 0.0)
+			view["life"] = maxf(float(e[Const.SF.LIFE]) - Const.TICK_DELTA, 0.0)
 			view["rewind"] = float(e[Const.SF.REWIND])
 
 	for sid in _shot_views:
@@ -2609,6 +3044,9 @@ func _render_shots(render_time: float) -> void:
 		var spr: Sprite2D = view["node"]
 		if spr == null:
 			continue
+		if view.has("tick"):
+			view["t"] = _floor + float(view["tick"]) * Const.TICK_DELTA
+			view["dies"] = float(view["t"]) + float(view["life"])
 		if bool(view.get("absorbed", false)):
 			continue
 		if not view.get("mine", false):
@@ -2679,11 +3117,16 @@ func _remote_shot_pos(sid: int, view: Dictionary, spr: Sprite2D, render_time: fl
 		# qalanda yanından keçən mikrob onun "içindən keçirdi" (probe belə tutub).
 		spr.visible = false
 		return past
-	var present := base + dir * Const.SHOT_SPEED * (minf(_clock + _rtt + lead, dies) - t)
+	# "İndi" də göstərilən anla bağlıdır: bufer quruyub rəqib dünyası dayananda sənin
+	# zaman xəttindəki top da dayanır, yetişəndə birlikdə yetişir. Normalda bu, `_clock`-dur.
+	var now_line := minf(_clock, render_time + _delay)
+	var present := base + dir * Const.SHOT_SPEED * (minf(now_line + _rtt + lead, dies) - t)
 	# Öz trixosistin topu məhz bu yerdə yoxlayır (bax [method _pop_remote_shots]).
 	var present_prev: Vector2 = view.get("present", present)
 	view["present"] = present
-	var me_at := _shown_pos()
+	# Proqnozun yeri, çəkilən yer yox: donmadan sonrakı 100–400 px-lik düzəliş sönərkən
+	# "sənə dəydi" proqnozu serverin səni görmədiyi yerdə verilərdi.
+	var me_at := _pred_pos()
 	var near := Const.germ_radius(me.capacity) + SELF_NEAR
 	var col := int(view.get("color", -1))
 	var drawn: Vector2 = view.get("shown", past)
@@ -2740,7 +3183,7 @@ func _remote_shot_pos(sid: int, view: Dictionary, spr: Sprite2D, render_time: fl
 	view["k"] = k
 	view["k_at"] = _clock
 	view["shown"] = pos
-	if _clock + _rtt + lead >= dies and k > 0.5:
+	if now_line + _rtt + lead >= dies and k > 0.5:
 		# Sənin zaman xəttində top artıq YOXDUR — ömrü bitib.
 		spr.visible = false
 		return pos
@@ -3047,6 +3490,7 @@ func _spawn_own_shot(membrane: Vector2, aim: float, age := 0.0, view := -1.0) ->
 ## Qaydalar [method Sim._step_shots]-dakı kimidir: doğuş qalxanlı və yoldaş
 ## mikrob keçilir, amöbün qabığı topu sıçradır.
 func _step_own_shots(delta: float) -> void:
+	_hold_claims(delta)
 	_prune_claims()
 	# Top ömründən uzun yaşayan id artıq heç bir snapshot-a düşə bilməz.
 	for sid in _own_sids.keys():
@@ -3089,8 +3533,14 @@ var _tick_targets := {}
 ## oxuyur ([method Sim._rewound_bits]).
 ##
 ## Tick bilinmirsə (mənfi) və ya bufer boşdursa — ekrandakı yerlər.
+##
+## Tick ən təzə snapshot-dan SONRADIRSA da ekrandakı yerlər götürülür. Bu, yalnız bufer
+## quruyanda olur (şəbəkə donub): rəqiblər ekranda son sürətləri ilə irəli çəkilir, sonra
+## dayanır ([constant EXTRAP_MAX]). Əvvəl top ən təzə snapshot-dakı yerlərə qarşı yoxlanırdı,
+## ekranda isə rəqib başqa yerdə idi — top onun gövdəsindən zərbəsiz keçirdi (ölçülüb).
 func _ghost_targets(t: float) -> Array:
-	if t < 0.0 or _snaps.size() < 2:
+	if t < 0.0 or _snaps.size() < 2 \
+			or t > float((_snaps[-1]["d"] as Array)[Const.Snap.TICK]) + 0.001:
 		return _screen_targets
 	var key := snappedf(t, 0.001)
 	if _tick_targets.has(key):
@@ -3410,6 +3860,19 @@ func _undo_own_soft() -> void:
 		_claims.remove_at(i)
 
 
+## Bağlantı ilişəndə ([method _link_stalled]) proqnozlar QOCALMIR.
+##
+## Təsdiq — serverin HIT hadisəsi — donmadan sonrakı dəstədədir. Əvvəl 1.2 s-dən uzun
+## donmada proqnoz dəymələri vaxtı keçib "boş" sayılırdı, dəstədəki təsdiq isə ikinci,
+## ayrı zərbə kimi göstərilirdi. İndi gözləmə saatı donma boyu dayanır.
+func _hold_claims(delta: float) -> void:
+	if not _link_stalled():
+		return
+	for list in [_claims, _self_claims, _early_hits]:
+		for c in list:
+			c["t"] = float(c["t"]) + delta
+
+
 func _prune_claims() -> void:
 	while not _early_hits.is_empty() and _clock - float(_early_hits[0]["t"]) > EARLY_HIT_KEEP:
 		_early_hits.pop_front()
@@ -3521,11 +3984,17 @@ func _give(pool: Array[Sprite2D], spr: Sprite2D) -> void:
 ## Görüş sahəsindən çıxan obyektlərin görüntüsü silinir.
 ## Kiçik möhlət verilir, çünki render 100 ms geridədir.
 func _sweep_views() -> void:
-	var cutoff := _clock - VIEW_GRACE
+	# Möhlət göstərilən anın gecikməsi qədərdir (bax [constant VIEW_GRACE]) — gecikmə indi dəyişkəndir.
+	var grace := _delay + Const.TICK_DELTA
+	var cutoff := _clock - grace
+	# Top görüntüsü yalnız TƏZƏ snapshot-da olmayanda silinir. Donmada snapshot gəlmir:
+	# əvvəl bütün rəqib topları 133 ms sonra yox olurdu, indi rəqiblərlə birlikdə dayanır.
+	var shot_cutoff := minf(_clock, _last_snap_t + Const.TICK_DELTA) - grace
 	for dict in [_visuals, _food_views, _shot_views]:
 		var dead := []
+		var cut := shot_cutoff if is_same(dict, _shot_views) else cutoff
 		for key in dict:
-			if float(dict[key].get("seen", 0.0)) < cutoff:
+			if float(dict[key].get("seen", 0.0)) < cut:
 				dead.append(key)
 		for key in dead:
 			var node: Node = dict[key]["node"]
@@ -3656,7 +4125,10 @@ func _queue_events(list: Array, at: float) -> void:
 			# interpolyasiya gözləyirdi və mükafat öldürmədən ƏVVƏL görünürdü.
 			when = -INF
 		_fx_queue.append({
-			"at": when,
+			# Bazaya NİSBƏTƏN saxlanılır (tick × TICK_DELTA): baza erkən paketdə dərhal
+			# enir və mikroblar onunla birlikdə sürüşür ([method _tt]) — mütləq an
+			# saxlansaydı, zərbə toxunuşdan o qədər əvvəl və ya sonra yanardı.
+			"at": when - _floor,
 			"kind": kind,
 			"pos": pos,
 			"arg": float(e[Const.EF.ARG]),
@@ -3667,12 +4139,25 @@ func _queue_events(list: Array, at: float) -> void:
 		})
 
 
+## Göstərilən an sıçrayanda (uzun donmadan sonra) bu qədər köhnə SAF görüntü
+## effektləri — atəş qığılcımı, qida udma, divar sıçrayışı — oynadılmır: onlarla səs
+## bir kadrda çalınardı. Zərbə, partlama, super və divarın dağılması həmişə oynanır.
+const FX_STALE := 0.5
+
+
 func _flush_fx(render_time: float) -> void:
 	var i := 0
 	while i < _fx_queue.size():
 		var e: Dictionary = _fx_queue[i]
-		if float(e["at"]) > render_time:
+		var at := float(e["at"]) + _floor
+		if at > render_time:
 			i += 1
+			continue
+		var fx_kind := int(e["kind"])
+		if at < render_time - FX_STALE and (fx_kind == Const.EvKind.FIRE \
+				or fx_kind == Const.EvKind.ABSORB \
+				or (fx_kind == Const.EvKind.HIT and float(e["arg"]) <= 0.5)):
+			_fx_queue.remove_at(i)
 			continue
 		var pos: Vector2 = e["pos"]
 		var col: Color = e["color"]

@@ -191,21 +191,31 @@ func _build_left(keep_tag: String, keep_code: String) -> void:
 	my.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ChunkyBox.stroke(my, 6, true)
 	my_row.add_child(my)
-	my_row.add_child(_btn("KOPYALA", Palette.MENU_BLUE, 15, func() -> void:
-		_copy("#" + Friends.my_tag, "Oyunçu kodun")))
-	my_row.add_child(_btn("LİNK", Palette.GERM_COLORS[1].darkened(0.35), 15, func() -> void:
-		_share("Germ Arena-da məni dost əlavə et!", Friends.share_link_friend()), ICON_LINK))
+	var copy_tag := _btn("KOPYALA", Palette.MENU_BLUE, 15, func() -> void:
+		_copy("#" + Friends.my_tag, "Oyunçu kodun"))
+	_web_copy(copy_tag, "copy_tag", "#" + Friends.my_tag, "Oyunçu kodun")
+	my_row.add_child(copy_tag)
+	var share_tag := _btn("LİNK", Palette.GERM_COLORS[1].darkened(0.35), 15, func() -> void:
+		_share("Germ Arena-da məni dost əlavə et!", Friends.share_link_friend()), ICON_LINK)
+	_web_share(share_tag, "share_tag", "Germ Arena-da məni dost əlavə et!", Friends.share_link_friend())
+	my_row.add_child(share_tag)
 
 	_head(_left, "DOST ƏLAVƏ ET")
 	var add_row := HBoxContainer.new()
 	add_row.add_theme_constant_override("separation", 10)
 	_left.add_child(add_row)
-	tag_edit = _edit("#OYUNÇU KODU", Social.TAG_LEN + 1)
+	# Yer `#`, boşluq və tire üçündür: kodu mesajdan "#JL9 J9G YPY" kimi yapışdıran
+	# oyunçunun mətni kəsilməsin — [method Social.clean_tag] onları onsuz da atır.
+	tag_edit = _edit("#OYUNÇU KODU", Social.TAG_LEN + 4)
 	tag_edit.text = keep_tag
 	var send := func() -> void:
 		if Friends.request(tag_edit.text):
 			tag_edit.text = ""
 	tag_edit.text_submitted.connect(func(_t: String) -> void: send.call())
+	# Telefon brauzerində yazı HTML pəncərəsində gedir — iPhone-da başqa yol yoxdur (bax [WebText]).
+	WebText.attach(tag_edit, "friend_tag", {
+		"title": "DOST ƏLAVƏ ET", "ok": "GÖNDƏR", "enter": "send", "upper": true,
+		"hint": "Dostunun 9 simvollu kodu — o, dostunun DOSTLAR ekranında yazılıb"})
 	add_row.add_child(tag_edit)
 	var send_btn := _btn("GÖNDƏR", Palette.SAFE.darkened(0.3), 17, send, ICON_ADD)
 	send_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -225,6 +235,9 @@ func _build_left(keep_tag: String, keep_code: String) -> void:
 		code_edit = _edit("KOMANDA KODU", Social.CODE_LEN + 2)
 		code_edit.text = keep_code
 		code_edit.text_submitted.connect(func(_t: String) -> void: Friends.join_code(code_edit.text))
+		WebText.attach(code_edit, "party_code", {
+			"title": "KOMANDAYA QOŞUL", "ok": "QOŞUL", "enter": "go", "upper": true,
+			"hint": "Komanda kodu 6 simvoldur — dostun KOMANDA bölməsindədir"})
 		row.add_child(code_edit)
 		row.add_child(_btn("QOŞUL", Palette.MENU_BLUE, 17, func() -> void:
 			Friends.join_code(code_edit.text)))
@@ -247,10 +260,14 @@ func _build_party_card() -> void:
 	lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ChunkyBox.stroke(lab, 6, true)
 	row.add_child(lab)
-	row.add_child(_btn("KOPYALA", Palette.MENU_BLUE, 15, func() -> void:
-		_copy(code, "Komanda kodu")))
-	row.add_child(_btn("LİNK", Palette.GERM_COLORS[1].darkened(0.35), 15, func() -> void:
-		_share("Germ Arena-da komandama gəl!", Friends.share_link_party()), ICON_LINK))
+	var copy_code := _btn("KOPYALA", Palette.MENU_BLUE, 15, func() -> void:
+		_copy(code, "Komanda kodu"))
+	_web_copy(copy_code, "copy_party", code, "Komanda kodu")
+	row.add_child(copy_code)
+	var share_code := _btn("LİNK", Palette.GERM_COLORS[1].darkened(0.35), 15, func() -> void:
+		_share("Germ Arena-da komandama gəl!", Friends.share_link_party()), ICON_LINK)
+	_web_share(share_code, "share_party", "Germ Arena-da komandama gəl!", Friends.share_link_party())
+	row.add_child(share_code)
 
 	var leader := str(Friends.party.get("leader", ""))
 	var mode := int(Friends.party.get("mode", 0))
@@ -385,13 +402,43 @@ static func _status_color(p: int) -> Color:
 ## Mətni buferə yazır. Veb-də brauzer bunu yalnız toxunuşun ardınca icazə
 ## verir — düymə basılan kadrda çağırıldığı üçün icazə var.
 func _copy(text: String, what: String) -> void:
+	# Telefon brauzerində kopyalama toxunuşun içində gedir (bax [method _web_copy]) —
+	# buradan ikinci dəfə (və iOS-da uğursuz) getməməlidir.
+	if WebText.enabled():
+		return
 	DisplayServer.clipboard_set(text)
 	Friends.notice.emit("KOPYALANDI", "%s: %s" % [what, text], "ok")
+
+
+## Telefon brauzerində KOPYALA: brauzer barmaq qalxan anda kopyalayır (bax [WebText]).
+## Bildiriş yalnız HƏQİQƏTƏN kopyalananda "KOPYALANDI"-dır — alınmasa kod göstərilir.
+func _web_copy(button: Button, key: String, text: String, what: String) -> void:
+	WebText.attach_action(button, key, func() -> Dictionary:
+		return {"action": "copy", "text": text},
+		func(ok: bool, _how: String) -> void: _copied(ok, text, what))
+
+
+## Telefon brauzerində LİNK: sistemin PAYLAŞ pəncərəsi (yoxdursa link kopyalanır).
+func _web_share(button: Button, key: String, text: String, url: String) -> void:
+	WebText.attach_action(button, key, func() -> Dictionary:
+		return {"action": "share", "title": "Germ Arena", "text": text, "url": url},
+		func(ok: bool, how: String) -> void:
+			if how == "copied":
+				_copied(ok, url, "Link"))
+
+
+func _copied(ok: bool, text: String, what: String) -> void:
+	if ok:
+		Friends.notice.emit("KOPYALANDI", "%s: %s" % [what, text], "ok")
+	else:
+		Friends.notice.emit("KOPYALANMADI", "%s — əllə yaz: %s" % [what, text], "warn")
 
 
 ## Telefonun brauzerində sistemin PAYLAŞ pəncərəsi (WhatsApp, Telegram…);
 ## olmayan yerdə link buferə yazılır.
 func _share(text: String, url: String) -> void:
+	if WebText.enabled():
+		return
 	if OS.has_feature("web"):
 		var ok = JavaScriptBridge.eval(
 			"(function(){ if (navigator.share) { navigator.share({title: 'Germ Arena', text: %s, url: %s}).catch(function(){}); return true; } return false; })()"

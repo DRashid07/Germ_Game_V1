@@ -147,6 +147,13 @@ static func run() -> int:
 	_test_heliozoan_gait()
 	_test_amoeba_crawl()
 	_test_eject_strain()
+	_test_late_inputs_replayed()
+	_test_guess_counter_resets()
+	_test_guess_debt_clears_under_jitter()
+	_test_round_reset_forgets_replay()
+	_test_render_clock_stall()
+	_test_render_clock_shift()
+	_test_replay_keeps_pushes()
 	# Dostluq və komanda — ayrıca faylda, amma eyni sayğacla (bax [SocialTest]).
 	SocialTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
@@ -4887,6 +4894,303 @@ static func _touch(index: int, pressed: bool) -> InputEventScreenTouch:
 	e.pressed = pressed
 	e.position = Vector2(100.0, 100.0)
 	return e
+
+
+## ── Şəbəkə donması (bax README, «Donma və dəstə») ──────────────────────
+
+## Botsuz dünya: yalnız oyunçunun öz hərəkəti yoxlanır (ayırma, tor qarışmasın).
+## İkinci, girişsiz oyunçu uzaqda durur: tək mikroblu dünya "matç bitdi" sayılır.
+static func _lonely_world(seed_id: int) -> World:
+	var world := World.new(seed_id, Const.Mode.ENDLESS)
+	world._seeded = true
+	world._bot_timer = 1.0e9
+	return world
+
+
+static func _park_far(world: World, from: Vector2) -> void:
+	var other := world.add_player(B_ID, "B")
+	var away := Vector2(0.0, 700.0) if from.y < 0.0 else Vector2(0.0, -700.0)
+	other.pos = from + away
+
+
+## Yuxarı istiqamət donanda server sonuncu girişi TƏKRARLAYIR (təxmin), donma açılanda
+## isə girişlər bir tick-də gəlir. Server onları təxmin tick-ləri üçün yenidən oynadır:
+## mikrobun yeri oyunçunun ÖZ yolu ilə üst-üstə düşür, proqnoz geri dartılmır.
+static func _test_late_inputs_replayed() -> void:
+	var ends := {}
+	for replay in [true, false]:
+		var world := _lonely_world(91)
+		world.replay_enabled = replay
+		var g := world.add_player(A_ID, "A")
+		_park_far(world, g.pos)
+		var ref := Sim.new()
+		var c := ref.add_germ(A_ID, "A", g.color, false, g.species)
+		c.pos = g.pos
+		c.vel = g.vel
+		c.capacity = g.capacity
+		var seq := 0
+		var anchor_ok := false
+		for t in 36:
+			var move := Vector2.RIGHT if t < 10 else Vector2.UP
+			ref.dish_radius = world.sim.dish_radius
+			# 10..29: donma — client girişləri göndərir, server heç birini almır.
+			if t < 10 or t >= 30:
+				var upto := t + 1
+				while seq < upto:
+					seq += 1
+					var m := Vector2.RIGHT if seq <= 10 else Vector2.UP
+					world.accept_input(A_ID, Sim.PlayerInput.make(seq, m, m.angle(), false).to_array())
+			world.tick(Const.TICK_DELTA)
+			ref.step_movement({A_ID: Sim.PlayerInput.make(t + 1, move, move.angle(), false)},
+				Const.TICK_DELTA, false)
+			if t == 29 and replay:
+				world._build_frame()
+				var me_self: Array = world.snapshot_for(A_ID)[Const.Snap.SELF]
+				anchor_ok = me_self.size() == 7 and int(me_self[2]) == 20 \
+					and Vector2(float(me_self[3]), float(me_self[4])).distance_to(ends["anchor"]) < 0.01
+			if t == 9:
+				ends["anchor"] = g.pos
+		ends[replay] = g.pos.distance_to(c.pos)
+		if replay:
+			world._build_frame()
+			var after: Array = world.snapshot_for(A_ID)[Const.Snap.SELF]
+			_check(anchor_ok and after.size() == 3 and int(after[2]) == 0,
+				"donmada SELF təxmin sayı (20) və ankoru daşıyır, açılandan sonra sıfırdır")
+	_check(float(ends[true]) < 1.0,
+		"20 tick-lik donmadan sonra server oyunçunun ÖZ yolundadır (fərq %.1f px)" % float(ends[true]))
+	_check(float(ends[false]) > 100.0,
+		"yenidən oynatmasız server təxmin yolunda qalır (fərq %.0f px) — yoxlama mənalıdır"
+			% float(ends[false]))
+
+
+## Donma ərzində mikroba kənardan nə isə toxunubsa (burada trixosist itələməsi kimi
+## sürət zərbəsi), təxmin yolu təmiz hərəkət deyil: yenidən oynatmaq o təsiri SİLƏRDİ.
+## Belə pəncərə yenidən oynadılmır — server köhnə qayda ilə davranır.
+static func _test_replay_keeps_pushes() -> void:
+	var pos := {}
+	var spawn := Vector2.INF
+	for replay in [true, false]:
+		var world := _lonely_world(93)
+		world.replay_enabled = replay
+		var g := world.add_player(A_ID, "A")
+		# Doğuş yeri təsadüfidir — iki dünya eyni yerdən başlamalıdır.
+		if spawn == Vector2.INF:
+			spawn = g.pos
+		g.pos = spawn
+		g.vel = Vector2.ZERO
+		_park_far(world, g.pos)
+		var seq := 0
+		for t in 36:
+			if t < 10 or t >= 30:
+				while seq < t + 1:
+					seq += 1
+					var m := Vector2.RIGHT if seq <= 10 else Vector2.UP
+					world.accept_input(A_ID, Sim.PlayerInput.make(seq, m, m.angle(), false).to_array())
+			if t == 15:
+				g.vel += Vector2(0.0, 250.0)
+			world.tick(Const.TICK_DELTA)
+		pos[replay] = g.pos
+	_check(Vector2(pos[true]).distance_to(pos[false]) < 0.01,
+		"donmada itələnən mikrobun yolu yenidən oynadılmır (fərq %.2f px)"
+			% Vector2(pos[true]).distance_to(pos[false]))
+
+
+## Client tick-ləri ATANDA (uzun kadr) o slot-ların girişi heç vaxt gəlmir: təxmin sayğacı
+## girişlər axanda ən çox iki [constant World.DEBT_WINDOW] pəncərəsində sıfırlanmalıdır.
+static func _test_guess_counter_resets() -> void:
+	var world := _lonely_world(92)
+	_park_far(world, world.add_player(A_ID, "A").pos)
+	var seq := 0
+	var reps := []
+	for t in 80:
+		# 20..24 tick-lərində client heç nə göndərmir və seq-i də ARTIRMIR (tick-ləri atıb).
+		if t < 20 or t >= 25:
+			seq += 1
+			world.accept_input(A_ID, Sim.PlayerInput.make(seq, Vector2.RIGHT, 0.0, false).to_array())
+		world.tick(Const.TICK_DELTA)
+		world._build_frame()
+		reps.append(int((world.snapshot_for(A_ID)[Const.Snap.SELF] as Array)[2]))
+	_check(int(reps[24]) == 5 and int(reps[30]) == 5 and int(reps[79]) == 0,
+		"atılan tick-lərin təxmini sayılır (%d), girişlər axanda sıfırlanır (%d)"
+			% [int(reps[24]), int(reps[79])])
+
+
+## Borc JITTER-də də silinir (yoxlamada tapılıb). Client 15 tick-i həmişəlik atır (vərəq arxa
+## planda), sonra girişlər adi jitter-lə gəlir: hər yeddinci bir tick gecikir, yəni bir tick
+## boş, növbətidə iki giriş. Köhnə qayda (30 tick FASİLƏSİZ giriş) heç ödənmirdi: borc sessiya
+## boyu 15 qalırdı, server hər tick 15 slot-u ən təzə girişlə yenidən hesablayırdı və oyunçu
+## dönəndə mikrob bir tick-də 155 px sıçrayırdı.
+static func _test_guess_debt_clears_under_jitter() -> void:
+	var world := _lonely_world(94)
+	var g := world.add_player(A_ID, "A")
+	_park_far(world, g.pos)
+	var seq := 0
+	var held := []
+	var last_rep := -1
+	var max_step := 0.0
+	var prev := g.pos
+	for t in 200:
+		if t < 20 or t >= 35:
+			seq += 1
+			var m := Vector2.RIGHT if t < 120 else Vector2.UP
+			held.append(Sim.PlayerInput.make(seq, m, m.angle(), false).to_array())
+		if t % 7 != 3:
+			for a in held:
+				world.accept_input(A_ID, a)
+			held.clear()
+		world.tick(Const.TICK_DELTA)
+		world._build_frame()
+		last_rep = int((world.snapshot_for(A_ID)[Const.Snap.SELF] as Array)[2])
+		if t > 100:
+			max_step = maxf(max_step, g.pos.distance_to(prev))
+		prev = g.pos
+	_check(last_rep <= 1 and max_step < 20.0,
+		"atılan tick-lərin borcu jitter-də silinir (təxmin %d), dönəndə sıçrayış yoxdur (%.1f px/tick)"
+			% [last_rep, max_step])
+
+
+## ÜÇLÜK raundu vaxtla bitəndə mikroblar yeni doğuş yerinə köçür. Həmin tick-də növbədə gec
+## gələn giriş olsa belə, yenidən oynatma mikrobu köhnə raundun yerinə QAYTARMAMALIDIR,
+## geri sayım boyu da heç nə "təxmin" sayılmamalıdır (yoxlamada tapılıb: sayım 90 təxmin
+## yığırdı, ankor client-i köhnə yerə çəkirdi). Saxlanan köhnə giriş də silinir — sayımda
+## mikrobu yalnız su axını aparır, proqnozdakı kimi (köhnə raundun hərəkəti yox).
+static func _test_round_reset_forgets_replay() -> void:
+	var world := World.new(96, Const.Mode.TRIO)
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+	var steps := int(Const.COUNTDOWN_TIME / Const.TICK_DELTA) + 2
+	for i in steps:
+		world.tick(Const.TICK_DELTA)
+	var seq := 0
+	for t in 20:
+		seq += 1
+		world.accept_input(A_ID, Sim.PlayerInput.make(seq, Vector2.RIGHT, 0.0, false).to_array())
+		world.tick(Const.TICK_DELTA)
+	# Bir tick giriş gəlmir (təxmin), sonra iki gec giriş növbədə — və raund elə o tick bitir.
+	world.tick(Const.TICK_DELTA)
+	for i in 2:
+		seq += 1
+		world.accept_input(A_ID, Sim.PlayerInput.make(seq, Vector2.DOWN, PI / 2.0, false).to_array())
+	world.match_t = Const.TRIO_ROUND
+	world.tick(Const.TICK_DELTA)
+	var g: Sim.GermState = world.sim.germs[A_ID]
+	var still := g.vel.length() < 0.01
+	var stale := world._inputs.has(A_ID)
+	var max_rep := 0
+	for i in steps - 4:
+		world.tick(Const.TICK_DELTA)
+		world._build_frame()
+		max_rep = maxi(max_rep, int((world.snapshot_for(A_ID)[Const.Snap.SELF] as Array)[2]))
+	_check(world.phase == Const.Phase.COUNTDOWN and still,
+		"raund sıfırlananda yenidən oynatma mikrobu köhnə yerə qaytarmır (sürət %s)" % str(g.vel))
+	_check(max_rep == 0 and not stale,
+		"geri sayımda təxmin sayılmır (%d), köhnə raundun girişi saxlanmır (%s)" % [max_rep, stale])
+
+
+## Göstərilən an: geri getmir, ən təzə snapshot-dan EXTRAP_MAX-dan çox qabağa keçmir,
+## 1.5 s donmadan sonra SIÇRAMADAN (ən çox CATCHUP_MAX× sürətlə) yetişir, 4 s-lik
+## donmada bir dəfə sıçrayır və 2.5 s ərzində normal gecikməyə qayıdır.
+static func _test_render_clock_stall() -> void:
+	for stall in [1.5, 4.0]:
+		var a := Arena.new()
+		var dt := 1.0 / 60.0
+		var k := 0
+		var back := false
+		var over := false
+		var max_step := 0.0
+		var jumps := 0
+		var lag_after := INF
+		var snap_at := func(tick: int) -> float:
+			var at := tick * Const.TICK_DELTA + 0.05
+			if at >= 5.0 and at < 5.0 + stall:
+				at = 5.0 + stall
+			return at
+		var now := 0.0
+		while now < 5.0 + stall + 2.5:
+			var batch := []
+			while snap_at.call(k + 1) <= now:
+				k += 1
+				batch.append(k)
+			if not batch.is_empty():
+				a._batch_stalled = a._tick_base_set and a._clock - float(batch[0]) * Const.TICK_DELTA \
+					- a._floor > Arena.LATE_STALL
+				for tick in batch:
+					var snap := []
+					snap.resize(Const.Snap.EVENTS + 1)
+					snap[Const.Snap.TICK] = tick
+					a._snaps.append({"t": a._tick_time_of(float(tick)), "d": snap})
+				a._batch_stalled = false
+				a._update_delay_target()
+			var prev := a._rtick
+			a._clock += dt
+			now += dt
+			a._advance_render(dt)
+			if prev >= 0.0:
+				var step := a._rtick - prev
+				back = back or step < -0.0001
+				if now > 5.0 + stall:
+					max_step = maxf(max_step, step)
+					if step > Arena.CATCHUP_MAX * dt / Const.TICK_DELTA + 0.01:
+						jumps += 1
+			over = over or a._rtick > float(k) + Arena.EXTRAP_MAX / Const.TICK_DELTA + 0.01
+			lag_after = (a._clock - a._delay - a._floor) / Const.TICK_DELTA - a._rtick
+		_check(not back and not over, "%.1f s donma: göstərilən tick geri getmir, %.1f s-dən çox irəli çəkilmir"
+			% [stall, Arena.EXTRAP_MAX])
+		_check((jumps == 0) if stall < 2.0 else (jumps == 1),
+			"%.1f s donmadan sonra %s (kadrda ən böyük addım %.1f tick, sıçrayış %d)"
+				% [stall, "sıçrayış yoxdur" if stall < 2.0 else "bir sıçrayış", max_step, jumps])
+		_check(lag_after * Const.TICK_DELTA < 0.05,
+			"%.1f s donmadan 2.5 s sonra göstərilən an normaldır (geriləmə %.0f ms)"
+				% [stall, lag_after * Const.TICK_DELTA * 1000.0])
+		a.free()
+
+
+## DAVAMLI sürüşmə (yol uzanıb, server tick atıb): 5-ci saniyədən hər snapshot 0.3 / 0.5 s gec
+## gəlir, üstəlik adi jitter. Baza yavaş qalxanda rəqiblər 30–65 s ekstrapolyasiya olunurdu
+## (yoxlamada ölçülüb). İndi baza ~1.5 s-də yenidən qurulur: sürüşmədən 3 s sonra göstərilən
+## an artıq buferin içindədir, geriyə isə heç vaxt getmir.
+static func _test_render_clock_shift() -> void:
+	var base_frames := -1
+	for shift in [0.0, 0.3, 0.5]:
+		var a := Arena.new()
+		var dt := 1.0 / 60.0
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 7
+		var k := 0
+		var next_at := Const.TICK_DELTA
+		var back := false
+		var extra_late := 0
+		var now := 0.0
+		while now < 12.0:
+			var batch := []
+			while next_at <= now:
+				k += 1
+				batch.append(k)
+				next_at = k * Const.TICK_DELTA + 0.05 + rng.randf() * 0.03 \
+					+ (shift if k * Const.TICK_DELTA >= 5.0 else 0.0)
+				next_at = maxf(next_at, now)
+			for tick in batch:
+				var snap := []
+				snap.resize(Const.Snap.EVENTS + 1)
+				snap[Const.Snap.TICK] = tick
+				a._snaps.append({"t": a._tick_time_of(float(tick)), "d": snap})
+			if not batch.is_empty():
+				a._update_delay_target()
+			var prev := a._rtick
+			a._clock += dt
+			now += dt
+			a._advance_render(dt)
+			back = back or (prev >= 0.0 and a._rtick < prev - 0.0001)
+			if now > 5.0 + shift + 3.0 and a._extra > 0.0:
+				extra_late += 1
+		a.free()
+		# Sürüşməsiz hal ölçü xəttidir: adi jitter də bəzən bir-iki kadr boşluq verir.
+		if shift == 0.0:
+			base_frames = extra_late
+			continue
+		_check(not back and extra_late <= base_frames + 12,
+			"%.1f s davamlı sürüşmə: 3 s sonra ekstrapolyasiya sürüşməsizdəki qədərdir (%d / %d kadr), geri getmir"
+				% [shift, extra_late, base_frames])
 
 
 static func _check(ok: bool, label: String) -> void:

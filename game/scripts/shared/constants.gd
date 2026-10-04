@@ -71,7 +71,10 @@ const DEFAULT_SERVER := "wss://germ-arena.onrender.com/ws"
 ## biri qalıbsa, o, ünvanı özü yazmayıb — yeni ilkin ünvana keçirilir (bax [Settings]).
 const OLD_DEFAULT_SERVERS := ["wss://germ-arena-production.up.railway.app"]
 const MAX_CLIENTS := 256
-const INPUT_BUFFER_MAX := 64    ## Client-də reconciliation üçün saxlanan input sayı
+## Client-də reconciliation üçün saxlanan input sayı. 64 (2.1 s) Wi-Fi donmasından qısa idi:
+## yuxarı istiqamət 3–4 s ilişəndə ən köhnə girişlər atılırdı və donmadan sonra barışıq
+## yarımçıq qalırdı. 160 = 5.3 s; barışıq kadrda bir dəfə işləyir (bax [method Arena._drain_inbox]).
+const INPUT_BUFFER_MAX := 160
 
 ## Bir dünyada maksimum CANLI oyunçu. Dolanda lobby yeni dünya açır.
 const WORLD_CAPACITY := 10

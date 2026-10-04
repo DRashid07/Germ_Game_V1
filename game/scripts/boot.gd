@@ -246,6 +246,9 @@ func _start_auto_client(args: PackedStringArray) -> void:
 	client.secret = _arg_value(args, "--secret", "")
 	client.befriend_secret = _arg_value(args, "--befriend-secret", "")
 	client.party = int(_arg_value(args, "--party", "0"))
+	# `--net-probe [--net-probe-csv <fayl>]` — şəbəkə ölçüsü (bax `tools/net_probe.gd`).
+	client.net_probe = args.has("--net-probe")
+	client.net_probe_csv = _arg_value(args, "--net-probe-csv", "")
 	get_tree().root.add_child.call_deferred(client)
 
 	# `--shot` burada da işləməlidir: onsuz ONLAYN oyunun görüntüsünü çəkmək

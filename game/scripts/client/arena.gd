@@ -1244,7 +1244,9 @@ func _do_tick() -> void:
 	if _local_world == null:
 		Net.send_input.rpc_id(1, inp.to_array())
 
-	_hud.set_fire_state(me.cooldown / Const.FIRE_COOLDOWN, me.balls >= Const.FIRE_MIN_BALLS)
+	# Miniqanda top pulsuzdur — sursat həddi düyməni söndürməməlidir.
+	_hud.set_fire_state(me.cooldown / Const.FIRE_COOLDOWN,
+		me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst())
 	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready())
 	if _mode != Const.Mode.ENDLESS:
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
@@ -1296,6 +1298,11 @@ func _sample_input() -> Sim.PlayerInput:
 		return Sim.PlayerInput.make(_seq, Vector2.ZERO, me.aim, false, false)
 	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_ENTER):
 		_request_shot(NAN)
+	# Amöbün miniqanı: düymə BASILI qaldıqca atəş fasiləsizdir. Adi atəş barmaq
+	# qalxanda açılır (bax [FireButton]), burada isə barmağı qaldırmaq lazım deyil —
+	# sürüşdürülürsə nişanın tərəfinə, yoxsa avtomatik nişanla.
+	if me.in_cyst() and _hud.fire_button.held and not _hud.fire_button.is_cancelling():
+		_request_shot(_hud.fire_button.aim_dir.angle() if _hud.fire_button.aiming else NAN)
 	# Atəş istəyi gözləyirsə, bit soyuma bitənə qədər HƏR paketdə durur —
 	# əvvəlki basılı düymə kimi; server atəşi proqnozun açdığı paketdə tanıyır
 	# ([member Sim.PlayerInput.shot]).
@@ -1423,8 +1430,7 @@ func _aim_targets() -> Array:
 		# atılan toxunuşu tutdu — oyunçu görmədiyi hədəfə atəşi səhv sayır.
 		if not _view_rect.has_point(v.position):
 			continue
-		out.append({"key": gid, "pos": v.position,
-			"cyst": v.super_on and v.species == Const.Species.AMOEBA})
+		out.append({"key": gid, "pos": v.position})
 	return out
 
 
@@ -1451,7 +1457,7 @@ func _update_aim_guide() -> void:
 		var r := Const.germ_radius(me.capacity)
 		var path := pred.aim_path(_shown_pos() + fb.aim_dir * r, fb.aim_dir,
 			Const.SHOT_SPEED * Const.SHOT_LIFETIME - r, AIM_BOUNCES)
-		var live := me.cooldown <= FIRE_BUFFER and me.balls >= Const.FIRE_MIN_BALLS 			and not me.in_cyst() and _phase != Const.Phase.COUNTDOWN
+		var live := me.cooldown <= FIRE_BUFFER and (me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst()) 			and _phase != Const.Phase.COUNTDOWN
 		_aim_guide.show_path(path, Palette.germ_color(my_color), live)
 	else:
 		_aim_guide.hide_path()
@@ -1544,6 +1550,9 @@ func _auto_sample() -> Sim.PlayerInput:
 	# düşmədi, digər iki növünkü isə ilk cəhddə düşdü.
 	var saving := me.charge >= Const.SUPER_MAX and not me.super_ready()
 	var fire := not saving and me.balls > Const.FIRE_MIN_BALLS and _seq % 8 == 0
+	# Amöbün miniqanı: düymə basılı saxlanan kimi — hər tick.
+	if me.in_cyst():
+		fire = true
 
 	# Super HAZIR olan kimi basılır.
 	#
@@ -3220,7 +3229,7 @@ func _remote_shot_pos(sid: int, view: Dictionary, spr: Sprite2D, render_time: fl
 		# Sənin zaman xəttində top artıq YOXDUR — ömrü bitib.
 		spr.visible = false
 		return pos
-	if k < 0.99 or _finished or me.safe_t > 0.0 or me.in_cyst() or view.has("no_claim"):
+	if k < 0.99 or _finished or me.safe_t > 0.0 or view.has("no_claim"):
 		return pos
 	var shape := Sim.hit_shape(int(me.species), me.capacity, me.vel)
 	var hit_t := Sim.seg_ellipse_hit_t(prev, pos, me_at, shape)
@@ -3545,7 +3554,6 @@ func _step_own_shots(delta: float) -> void:
 			# Serverlə EYNİ toqquşma ellipsi (bax [method Sim.hit_shape]).
 			"shape": Sim.hit_shape(int(v.species), v.capacity, v.net_vel),
 			"key": gid,
-			"cyst": v.super_on and v.species == Const.Species.AMOEBA,
 		})
 	for c in _own_shots.step(delta, _clock, pred.obstacles, _broken, _ghost_targets):
 		_on_own_contact(c)
@@ -3613,7 +3621,6 @@ func _ghost_targets(t: float) -> Array:
 			"radius": Const.germ_radius(cap),
 			"shape": Sim.hit_shape(int(kind), cap, vel),
 			"key": gid,
-			"cyst": (flags & Const.GFlag.SUPER) != 0 and kind == Const.Species.AMOEBA,
 		})
 	_tick_targets[key] = out
 	return out

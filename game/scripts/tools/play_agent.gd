@@ -636,13 +636,10 @@ func _drive(delta: float) -> void:
 	if want_fire and playing and _fire_cool <= 0.0 and me.balls > Const.FIRE_MIN_BALLS:
 		_fire_cool = 0.5
 		_counts.fire_taps = int(_counts.fire_taps) + 1
+		# Amöbün kistində də atəş İŞLƏYİR (yerində donmuş qüllə, bax
+		# [method Sim._step_germs]) — cavab yoxlaması orada da eynidir.
 		var probe := _fire_tap_t < 0.0 and hud.fire_button._cooldown_ratio <= 0.01 \
 				and hud.fire_button._has_ammo
-		if probe and me.in_cyst():
-			# Kistada simulyasiya girişi ümumiyyətlə emal etmir ([method Sim._step_germs]),
-			# yəni atəş QAYDA ilə bağlıdır. Problem düymədədir: o, hazır görünür.
-			_issue("HUD", "Amöb kistadadır (atəş mümkün deyil), amma atəş düyməsi HAZIR görünür — basış səssizcə itir")
-			probe = false
 		if probe:
 			_fire_tap_t = _t
 			_eject_before = _ejects

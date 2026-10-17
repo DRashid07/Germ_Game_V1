@@ -411,9 +411,17 @@ const NET_RADIUS := 4.0         ## öz radiusuna nisbətdə
 const NET_PULL := 420.0         ## qida bu sürətlə axır
 const NET_SLOW := 0.60          ## tora düşən rəqibin sürət əmsalı
 
-## AMÖB — sistləşmə. Qabıq bağlıdır: top səkir, metabolizm dayanır,
-## amma nə hərəkət var, nə atəş.
+## AMÖB — miniqan. Amöb yerində donur, metabolizm dayanır və fasiləsiz atəş
+## açır: top PULSUZDUR (öz sayından getmir). Qalxan YOXDUR — ona top adi kimi
+## dəyir (bax [method Sim._step_germs]). Ad (CYST) tarixidir: əvvəl bu,
+## toxunulmaz qabıq idi.
 const CYST_TIME := 2.5
+## Superdə iki atəş arası. Adi dövr 1 s-dir; 0.25 s bir superdə ~10 top verir.
+## Daha qısa olmasın: snapshot eyni anda ən çoxu [constant SHOT_SEND_MAX] top
+## daşıyır, top isə 2.2 s yaşayır — 0.15 s-də amöbün öz topları (2.2 / 0.15 ≈ 15)
+## büdcənin demək olar hamısını tutardı və rəqiblərin ekranında topların bir
+## qismi görünməzdi.
+const MINIGUN_COOLDOWN := 0.25
 ## Növ snapshot-da neçə bit tutur — [enum GFlag] bunu istifadə edir.
 const SPECIES_COUNT := 3
 

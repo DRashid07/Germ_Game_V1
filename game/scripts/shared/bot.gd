@@ -157,6 +157,13 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 		move = wander
 		aim = wander.angle()
 
+	# Amöbün miniqanı: top pulsuzdur, ehtiyat saxlamağa ehtiyac yoxdur — hədəf
+	# açıq xətdədirsə, hər dövrdə atır (aclıq da, qida da onu yayındırmır).
+	if me.in_cyst() and target != null and sim.has_line_of_sight(me.pos, target.pos):
+		aim = (_lead_point(me.pos, target) - me.pos).angle() \
+			+ _rng.randf_range(-AIM_ERROR, AIM_ERROR) / maxf(difficulty, 0.1)
+		fire = true
+
 	move = _avoid(sim, me, move)
 
 	var use_super := me.super_ready() and _wants_super(sim, me, target, meal, hungry)
@@ -209,9 +216,10 @@ static func _avoid(sim: Sim, me: Sim.GermState, move: Vector2) -> Vector2:
 ##   • kirpikli — üstünə top gələndə (qaçış)
 ##   • ayaqlı   — yeri boş, yaxınlıqda qida var (yığım). Dolu ikən İŞLƏTMİR:
 ##     tor onu öz tutumundan keçirib partlada bilər
-##   • amöb     — sıxılanda: ya acdır, ya rəqib top atmağa hazırdır (möhlət)
+##   • amöb     — rəqib atəş məsafəsində və açıq xətdədir (miniqan hücumdur,
+##     qalxan deyil — ac ikən rəqibin yanında donmaq onu ölümə aparar)
 static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
-		meal: Sim.FoodState, hungry: bool) -> bool:
+		meal: Sim.FoodState, _hungry: bool) -> bool:
 	match me.species:
 		Const.Species.CILIATE:
 			# Trixosist top xərcləyir — acıqkən qaçış özü ölümə apara bilər.
@@ -232,11 +240,10 @@ static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
 				return false
 			return meal.pos.distance_to(me.pos) < me.radius() * Const.NET_RADIUS
 		Const.Species.AMOEBA:
-			if hungry and me.balls <= Const.MIN_BALLS + 1:
-				return true
 			if target == null:
 				return false
-			return target.pos.distance_to(me.pos) < Bot.IDEAL_RANGE * 0.7
+			return target.pos.distance_to(me.pos) < Bot.IDEAL_RANGE * 1.2 \
+				and sim.has_line_of_sight(me.pos, target.pos)
 		_:
 			return false
 

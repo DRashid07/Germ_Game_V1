@@ -2370,14 +2370,15 @@ func _draw_inner_balls(r: float) -> void:
 			draw_circle(p - Vector2(dot * 0.3, dot * 0.3), dot * 0.35, Color(Palette.TEXT, 0.8))
 
 
-## Sistləşmiş amöb — bağlı qabıq.
+## Amöbün superi — bağlı qabıq görüntüsü.
+##
+## Görüntü əvvəlki kistdəndir və oyunçunun istəyi ilə saxlanılıb: super artıq
+## qalxan deyil (miniqandır, top ona adi kimi dəyir, bax [method
+## Sim._step_germs]), amma görünüşü dəyişməyib.
 ##
 ## Gövdə artıq yumşaq deyil, ona görə qabıq gövdənin öz konturunu TƏKRARLAMIR:
-## üstünə düzgün, sərt bir halqa oturur. Fərq qəsdən kobuddur — oyunçu bir
-## baxışda "bura top girmir" deməlidir, forma oxumağa vaxt sərf etməməlidir.
-##
-## Rəng mikrobun öz rəngindən çıxarılır, amma TÜNDLƏŞDİRİLİR: sist yatmış
-## haldır, işıq saçmır. Bütün oyunda yeganə "sönmüş" mikrob budur.
+## üstünə düzgün, sərt bir halqa oturur. Rəng mikrobun öz rəngindən çıxarılır,
+## amma TÜNDLƏŞDİRİLİR.
 ## [param fade] 0..1 — qabıq bağlanarkən və açılarkən keçid (bax [member _super_fade]).
 func _draw_cyst(r: float, fade := 1.0) -> void:
 	# Qabıq həm SOLUR, həm də QAPANIR: açılan sist gövdəyə yaxınlaşıb itir.

@@ -2025,16 +2025,19 @@ ekologiyasıdır: planktonik üzgüçü, bentik yeriyən, substrat sürünəni.
 |---|---|---|---|
 | **Kirpikli** | ən cəld: tez qopur, uzun sürüşür · axın onu daha çox aparır | **TRİXOSİST** — yaxındakı rəqib topları dağılıb qidaya çevrilir, mikroblar itələnir, özü geri sıçrayır | −2 top; dağılan toplar yerə düşür və rəqib onları geri yeyə bilər |
 | **Ayaqlı** | axına dirənir (pəncələr yapışır) · ən yavaş növ | **AKSOPODİYA TORU** — 4 saniyə: qida ona axır, tora düşən rəqib 40% yavaşlayır | tutumu aşarsa **öz superi onu partladır** — dolu ikən açmaq olmaz |
-| **Amöb** | maneə radiusu kiçikdir: başqasının sığmadığı aralıqdan keçir | **SİSTLƏŞMƏ** — 2.5 saniyə qabıq: top **səkir**, metabolizm dayanır | tam hərəkətsizsən: nə qaçırsan, nə atırsan, nə yeyirsən |
+| **Amöb** | maneə radiusu kiçikdir: başqasının sığmadığı aralıqdan keçir | **MİNİQAN** — 2.5 saniyə yerində donub **fasiləsiz** atəş: 0.25 s-də bir top, toplar **öz sayından getmir**, metabolizm dayanır | qalxan yoxdur — sənə top adi kimi dəyir, qaça da bilmirsən |
 
 Super **döyüşərək** dolur (Brawl Stars məntiqi): dəymə +3, qida +1/3 top,
 sənə dəyəndə +1, partlatma isə tam doldurur. Hədd **15**-dir və bu rəqəm
 təsadüfi deyil — dörd bitə tam sığır.
 
-> **Heç bir super rəqibin top sayına toxunmur.** Zərər verən super
-> `SHOT_PAYLOAD` riyaziyyatını yan yoldan pozardı, ona görə üçü də **mövqe,
-> qida və vaxt** üzərində işləyir. Atəş dövrü, topun qiyməti və tutum artımı
-> üç növdə də eynidir — bunu sənəd yox, `sim_test` saxlayır.
+> **Superin özü rəqibin top sayına toxunmur.** Zərər verən super
+> `SHOT_PAYLOAD` riyaziyyatını yan yoldan pozardı, ona görə trixosist və tor
+> **mövqe və qida** üzərində işləyir. Amöbün miniqanı isə adi topla vurur — top
+> rəqibə yenə `SHOT_PAYLOAD` qədər verir, sadəcə super boyu atəş tez və PULSUZDUR
+> (oyunçunun istəyi). Bu, qəsdən istisnadır: miniqanın topları dünyaya maddə
+> əlavə edir. Supersiz atəş dövrü, topun qiyməti və tutum artımı üç növdə də
+> eynidir — bunu sənəd yox, `sim_test` saxlayır.
 
 Botlar da superini işlədir və bu, məcburidir: dünyanın əhalisinin çoxu botdur,
 super yalnız onlar da işlədəndə oyunun bir hissəsinə çevrilir.

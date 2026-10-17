@@ -26,11 +26,10 @@ extends RefCounted
 ## edəni isə qabaqlamadığı üçün çox vaxt qaçırır. Əvvəl 6° idi və QA 600 px-də
 ## 79% ölçdü — yəni avtomatik nişan dəqiq nişandan az fərqlənirdi.
 const ERROR := 0.175
-## Görünməyən (maneə arxasındakı) və kistdəki rəqibin cəriməsi — məsafənin
+## Görünməyən (maneə arxasındakı) rəqibin cəriməsi — məsafənin
 ## [method reach] payı kimi. Rədd edilmirlər: başqa hədəf yoxdursa, oyunçu
 ## ekranda gördüyü rəqibə atdığını gözləyir.
 const BLOCKED_PENALTY := 1.0
-const CYST_PENALTY := 0.5
 
 
 ## Nişanın çatdığı məsafə — kamera ilə böyüyür (bax [method Const.view_span]).
@@ -41,7 +40,7 @@ static func reach(capacity: int) -> float:
 	return Const.view_span(capacity)
 
 
-## Ən yaxşı hədəf: [param targets] `{"key", "pos", "cyst"?}` sözlükləridir.
+## Ən yaxşı hədəf: [param targets] `{"key", "pos"}` sözlükləridir.
 ## Boşdursa və ya heç kim çatmırsa — boş sözlük (top getdiyin tərəfə gedir).
 ##
 ## [param sight] maneələri bilən simulyasiyadır (client-in proqnozu); `null`
@@ -57,8 +56,6 @@ static func pick(from: Vector2, targets: Array, max_reach: float, sight: Sim) ->
 		var score := d
 		if sight != null and not sight.has_line_of_sight(from, p):
 			score += max_reach * BLOCKED_PENALTY
-		if bool(t.get("cyst", false)):
-			score += max_reach * CYST_PENALTY
 		if score < best_score:
 			best_score = score
 			best = t

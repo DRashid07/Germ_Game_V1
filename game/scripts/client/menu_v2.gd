@@ -2255,7 +2255,9 @@ static func _species_super_name(kind: Const.Species) -> String:
 		Const.Species.HELIOZOAN:
 			return "AKSOPODİYA TORU"
 		Const.Species.AMOEBA:
-			return "SİSTLƏŞMƏ"
+			# Əvvəl "SİSTLƏŞMƏ" idi — toxunulmaz qabıq. İndi qalxan yoxdur, yerində
+			# fasiləsiz atəşdir (bax [method Sim._step_germs]).
+			return "MİNİQAN"
 		_:
 			return "TRİXOSİST"
 
@@ -2322,7 +2324,7 @@ static func _species_super_note(kind: Const.Species) -> String:
 				int(Const.NET_TIME), roundi((1.0 - Const.NET_SLOW) * 100.0)]
 		Const.Species.AMOEBA:
 			# Onluq kəsr VERGÜLLƏ yazılır ("2,5") — Azərbaycan dilinin qaydası.
-			return "%s saniyə qabığa çəkilirsən: toplar səkir, aclıq dayanır. Amma nə qaçır, nə atırsan." % \
+			return "%s saniyə yerində donub fasiləsiz atəş açırsan: toplar öz sayından getmir, aclıq dayanır. Qalxan yoxdur — sənə də dəyir." % \
 				("%.1f" % Const.CYST_TIME).replace(".", ",")
 		_:
 			return "Yaxındakı rəqib topları qidaya çevrilir, mikroblar itələnir, sən geri sıçrayırsan. Qiyməti: %d top." % Const.TRICHO_COST

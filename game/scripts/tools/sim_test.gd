@@ -61,7 +61,8 @@ static func run() -> int:
 	_test_super_charge()
 	_test_super_no_damage()
 	_test_trichocyst()
-	_test_cyst_bounces()
+	_test_minigun_no_shield()
+	_test_minigun_fires()
 	_test_net_pulls_food()
 	_test_shot_injects()
 	_test_overfill_bursts()
@@ -86,7 +87,6 @@ static func run() -> int:
 	_test_trichocyst_waits_for_rewind()
 	_test_bot_sees_rewound_shot()
 	_test_prediction_blast()
-	_test_rewound_cyst()
 	_test_rewound_safe()
 	_test_world_seed_repeats()
 	_test_prediction_separates()
@@ -1172,7 +1172,7 @@ static func _test_hit_ellipse() -> void:
 				server_at = e["pos"]
 	var p := ShotPrediction.new()
 	p.spawn(start, Vector2.RIGHT, 0.0)
-	var target := {"pos": Vector2.ZERO, "radius": r, "key": 5, "cyst": false,
+	var target := {"pos": Vector2.ZERO, "radius": r, "key": 5,
 		"shape": Sim.hit_shape(int(Const.Species.AMOEBA), cap, h.vel)}
 	var ghost_at := Vector2.INF
 	for i in 60:
@@ -1469,51 +1469,6 @@ static func _test_prediction_blast() -> void:
 		"partlayış radiusundakı proqnoz topu dayanır, uzaqdakı uçur")
 
 
-## Kist də atıcının GÖRDÜYÜ andan oxunur, mövqe kimi.
-##
-## Amöb qabığa İNDİ girir, atıcı isə onu `rewind` geridə — hələ qabıqsız —
-## görür: top içəri keçir. Botun topu (geri sarmasız) isə qabıqdan səkir.
-static func _test_rewound_cyst() -> void:
-	for back in [6.0, -1.0]:
-		var s := Sim.new()
-		s.obstacles = [] as Array[Vector4]
-		s.lag_comp = true
-		var a := s.add_germ(A_ID, "A", 0)
-		var b := s.add_germ(B_ID, "B", 1, false, Const.Species.AMOEBA)
-		a.safe_t = 0.0
-		b.safe_t = 0.0
-		b.charge = Const.SUPER_MAX
-		var a_at := Vector2(-150.0, LANE_Y)
-		var b_at := Vector2(100.0, LANE_Y)
-		for i in 12:
-			a.pos = a_at
-			b.pos = b_at
-			a.vel = Vector2.ZERO
-			b.vel = Vector2.ZERO
-			s.step({}, Const.TICK_DELTA)
-		var view := -1.0 if back < 0.0 else float(s.tick + 1) - float(back)
-		var before := b.balls
-		var cysted := false
-		for i in 30:
-			a.pos = a_at
-			b.pos = b_at
-			a.vel = Vector2.ZERO
-			b.vel = Vector2.ZERO
-			var inputs := {}
-			if i == 0:
-				inputs[A_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true, false, view)
-			elif not cysted and not s.shots.is_empty() \
-					and s.shots[0].pos.distance_to(b_at) <= 90.0:
-				inputs[B_ID] = Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, false, true)
-				cysted = true
-			s.step(inputs, Const.TICK_DELTA)
-		var hit := b.balls > before
-		if back > 0.0:
-			_check(cysted and hit, "kist geri sarılır: atıcı qabıqsız görmüşdü — top keçir")
-		else:
-			_check(cysted and not hit, "botun topu yeni kistdən səkir")
-
-
 ## Doğuş qalxanı da keçmişdən oxunur: atıcı qalxanı görürdüsə, top keçir.
 static func _test_rewound_safe() -> void:
 	var s := Sim.new()
@@ -1689,7 +1644,7 @@ static func _test_prediction_tick_targets() -> void:
 		var st := (p0 as Vector4).lerp(p1 as Vector4, t - float(t0))
 		return [{"pos": Vector2(st.x, st.y), "radius": Const.germ_radius(cap),
 			"shape": Sim.hit_shape(int(Const.Species.CILIATE), cap, Vector2(st.z, st.w)),
-			"key": B_ID, "cyst": false}]
+			"key": B_ID}]
 	var p := ShotPrediction.new()
 	p.spawn(origin, Vector2.RIGHT, 0.0, view)
 	var ghost_hit := Vector2.INF
@@ -1725,9 +1680,9 @@ static func _test_world_seed_repeats() -> void:
 	_check(same, "eyni toxumlu iki bot dünyası 10 saniyədə eyni qalır")
 
 
-## Proqnoz topu ekrandakı rəqibə dəyir; amöbün qabığından isə sıçrayır.
+## Proqnoz topu ekrandakı rəqibə dəyir.
 static func _test_prediction_hits_target() -> void:
-	var target := {"pos": Vector2(100.0, LANE_Y), "radius": 28.0, "key": 7, "cyst": false}
+	var target := {"pos": Vector2(100.0, LANE_Y), "radius": 28.0, "key": 7}
 	var p := ShotPrediction.new()
 	p.spawn(Vector2(-100.0, LANE_Y), Vector2.RIGHT, 0.0)
 	var hit: Dictionary = {}
@@ -1745,18 +1700,6 @@ static func _test_prediction_hits_target() -> void:
 				% [Vector2(hit["pos"]).x, edge])
 		_check(not p.ghosts[0].alive, "dəyən top dayanır — rəqibin içindən keçmir")
 
-	var shell := target.duplicate()
-	shell["cyst"] = true
-	var q := ShotPrediction.new()
-	q.spawn(Vector2(-100.0, LANE_Y), Vector2.RIGHT, 0.0)
-	var bounced := false
-	for i in 30:
-		for c in q.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4],
-				PackedByteArray(), [shell]):
-			if int(c["kind"]) == ShotPrediction.Contact.BOUNCE:
-				bounced = true
-	_check(bounced and q.ghosts[0].alive and q.ghosts[0].dir.x < 0.0,
-		"amöbün qabığı proqnoz topunu geri sıçradır")
 
 
 ## Server topu proqnozla BİR dəfə birləşir; təsdiqsiz top özü sönür.
@@ -2871,27 +2814,91 @@ static func _test_trichocyst() -> void:
 		"trixosist top xərcləyir (%d → %d)" % [balls_before, a.balls])
 
 
-## Sistləşmiş amöba top GİRMİR, səkir; qabıq açılanda yenidən dəyir.
-static func _test_cyst_bounces() -> void:
+## Amöbün superində QALXAN YOXDUR: ona top adi kimi dəyir.
+##
+## Əvvəl super toxunulmaz qabıq (kist) idi və top ondan səkirdi. Oyunçunun
+## istəyi ilə indi miniqandır — yerində donub atır, amma qorunmur.
+static func _test_minigun_no_shield() -> void:
 	var s := _fresh()
 	var a: Sim.GermState = s.germs[A_ID]
 	var b: Sim.GermState = s.germs[B_ID]
 	b.species = Const.Species.AMOEBA
 	b.charge = Const.SUPER_MAX
 	s._use_super(b)
-	_check(b.in_cyst(), "amöb qabığa girdi (%.1f s qaldı)" % b.super_t)
-
+	_check(b.in_cyst(), "amöbün superi işləyir (%.1f s qaldı)" % b.super_t)
 	var before := b.balls
 	_fire_once(s, a, 0.0, 24)
-	_check(b.balls == before, "qabığa top girmir (%d → %d)" % [before, b.balls])
-
-	# Qabıq açılır. Atəş dövrü də sıfırlanır — yoxsa ikinci atəş soyuma
-	# ucbatından ümumiyyətlə baş vermir və test qabığı yox, dövrü ölçər.
-	b.super_t = 0.0
-	a.cooldown = 0.0
-	_fire_once(s, a, 0.0, 24)
 	_check(b.balls == before + Const.SHOT_PAYLOAD,
-		"qabıq açılanda top yenidən dəyir (%d → %d)" % [before, b.balls])
+		"superdəki amöbə top dəyir — qalxan yoxdur (%d → %d)" % [before, b.balls])
+
+
+## Amöbün superi — yerində donmuş MİNİQAN: atəş basılı qaldıqca
+## [constant Const.MINIGUN_COOLDOWN]-da bir, toplar amöbün öz sayından GETMİR,
+## geri təpmə onu tərpətmir. Super bitəndə adi atəş qaydası qayıdır.
+static func _test_minigun_fires() -> void:
+	var s := _fresh()
+	var a: Sim.GermState = s.germs[A_ID]
+	var b: Sim.GermState = s.germs[B_ID]
+	a.species = Const.Species.AMOEBA
+	a.charge = Const.SUPER_MAX
+	a.balls = Const.MIN_BALLS        # ac amöb də atır — top pulsuzdur
+	a.cooldown = 0.0
+	s._use_super(a)
+	# Hədəf partlamasın — yoxsa sayım yarıda kəsilərdi.
+	b.capacity = 80
+	var at := a.pos
+	var b_at := b.pos
+	var b_before := b.balls
+	var fires := 0
+	var drift := 0.0
+	var ticks := roundi(Const.CYST_TIME / Const.TICK_DELTA)
+	for i in ticks:
+		# Hədəf yerində saxlanılır — axın onu atəş xəttindən çıxarmasın.
+		b.pos = b_at
+		b.vel = Vector2.ZERO
+		# Həm hərəkət, həm atəş istənir: amöb yerində qalmalıdır.
+		s.step({A_ID: Sim.PlayerInput.make(i + 1, Vector2.RIGHT, 0.0, true)}, Const.TICK_DELTA)
+		for e in s.events:
+			if String(e.get("t", "")) == "fire" and int(e["color"]) == a.color:
+				fires += 1
+		# Yalnız super işləyən tick-lər: son tick-də super bitir və hərəkət qayıdır.
+		if a.in_cyst():
+			drift = maxf(drift, a.pos.distance_to(at))
+	var want := floori(Const.CYST_TIME / Const.MINIGUN_COOLDOWN)
+	_check(fires >= want and fires <= want + 1,
+		"miniqan fasiləsiz atır: %d atəş / %.1f s (gözlənilən ~%d)" % [fires, Const.CYST_TIME, want])
+	_check(a.balls == Const.MIN_BALLS,
+		"miniqanın topu öz sayından getmir (%d top)" % a.balls)
+	_check(drift < 0.01,
+		"amöb yerində qalır: nə hərəkət, nə geri təpmə (%.2f px)" % drift)
+	_check(b.balls > b_before,
+		"miniqanın topları rəqibə dəyir (%d → %d)" % [b_before, b.balls])
+
+	# Superdən təzəcə adi atəş açılıb (soyuma 1 s): miniqan onu gözləmir.
+	var s3 := _fresh()
+	var d: Sim.GermState = s3.germs[A_ID]
+	d.species = Const.Species.AMOEBA
+	d.charge = Const.SUPER_MAX
+	d.cooldown = Const.FIRE_COOLDOWN
+	s3._use_super(d)
+	var late := 0
+	for i in ticks:
+		s3.step({A_ID: Sim.PlayerInput.make(i + 1, Vector2.ZERO, 0.0, true)}, Const.TICK_DELTA)
+		for e in s3.events:
+			if String(e.get("t", "")) == "fire" and int(e["color"]) == d.color:
+				late += 1
+	_check(late >= want - 1,
+		"adi atəşdən qalan soyuma miniqanı gecikdirmir (%d atəş, gözlənilən ~%d)" % [late, want])
+
+	# Super bitdi — adi atəş: top xərclənir, dövr 1 s.
+	var s2 := _fresh()
+	var c: Sim.GermState = s2.germs[A_ID]
+	c.species = Const.Species.AMOEBA
+	c.balls = 7
+	c.cooldown = 0.0
+	s2.step({A_ID: Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true)}, Const.TICK_DELTA)
+	_check(c.balls == 6 and is_equal_approx(c.cooldown, Const.FIRE_COOLDOWN),
+		"supersiz amöbün atəşi adidir (top %d, dövr %.2f s)" % [c.balls, c.cooldown])
 
 
 ## Ayaqlının toru qidanı özünə çəkir.
@@ -4218,7 +4225,7 @@ static func _test_fire_button() -> void:
 
 
 ## Avtomatik nişan hədəfi seçir: ən yaxın görünən rəqib; maneə arxasındakı
-## və kistdəki ancaq başqası yoxdursa. Xəta atəş başına çəkilir və həddi aşmır.
+## ancaq başqası yoxdursa. Xəta atəş başına çəkilir və həddi aşmır.
 static func _test_auto_aim() -> void:
 	var s := Sim.new()
 	s.obstacles.clear()
@@ -4229,10 +4236,6 @@ static func _test_auto_aim() -> void:
 		"ən yaxın rəqib seçilir")
 	_check(AutoAim.pick(Vector2.ZERO, [{"key": 3, "pos": Vector2(900.0, 0.0)}], 600.0, s).is_empty(),
 		"nişanın çatmadığı rəqib seçilmir — top getdiyin tərəfə gedir")
-
-	var cyst := {"key": 5, "pos": Vector2(0.0, -150.0), "cyst": true}
-	_check(int(AutoAim.pick(Vector2.ZERO, [cyst, near], 600.0, s).get("key", -1)) == 1,
-		"kistdəki amöb (top ondan səkir) açıq hədəfdən sonra gəlir")
 
 	s.obstacles.append(Vector4(100.0, 0.0, 40.0, DishMap.Kind.MUCUS))
 	s.broken = PackedByteArray([0])

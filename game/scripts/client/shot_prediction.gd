@@ -222,7 +222,7 @@ func blast(at: Vector2, reach: float, now: float) -> Array[Ghost]:
 ## topun bir-iki paketdən düşə bilir. Proqnozu yalnız öz qaydası (dəymə,
 ## sıçrama haqqı, ömür) və serverin dəymə hadisəsi ([method stop_nearest]) bitirir.
 ##
-## [param targets] — rəqiblər: `{"pos", "radius", "key", "cyst", "shape"}`
+## [param targets] — rəqiblər: `{"pos", "radius", "key", "shape"}`
 ## massivi (hər tick üçün eyni), və ya server tick-i alıb həmin tick-in
 ## massivini qaytaran [Callable] (bax [method Arena._ghost_targets]).
 ##
@@ -315,11 +315,9 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 	var list: Array = targets.call(g.view0 + float(k) if g.view0 >= 0.0 else -1.0) \
 		if targets is Callable else targets
 	for target in list:
-		# Server kimi: kistdən yalnız kənardan giriş səkir, qalan mikroba içində
-		# başlayan parça da dəyir (bax [method Sim.seg_ellipse_hit_t]).
-		var t := (Sim.seg_ellipse_t(from, to, target["pos"], target["shape"])
-			if bool(target.get("cyst", false))
-			else Sim.seg_ellipse_hit_t(from, to, target["pos"], target["shape"])) \
+		# Server kimi: mikroba içində başlayan parça da dəyir (bax
+		# [method Sim.seg_ellipse_hit_t]).
+		var t := Sim.seg_ellipse_hit_t(from, to, target["pos"], target["shape"]) \
 			if target.has("shape") else Sim._seg_circle_t(from, to, target["pos"],
 				float(target["radius"]) + Const.SHOT_RADIUS)
 		if t >= 0.0 and t < best:
@@ -332,11 +330,6 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 		var when := float(k) + best
 		if not victim.is_empty():
 			var key := int(victim["key"])
-			if bool(victim.get("cyst", false)):
-				var normal := Sim.ellipse_normal(at, victim["pos"], victim["shape"]) \
-					if victim.has("shape") else (at - Vector2(victim["pos"])).normalized()
-				_bounce(g, at, normal, best, when, key)
-				return
 			_finish(g, Contact.HIT, at, when, key, best)
 			# Xəttin qurbandan nə qədər dərin keçdiyi — sərhəddəki dəymənin zərbəsini
 			# [Arena] serverin təsdiqinə saxlayır (bax [constant Arena.OWN_SURE_DEPTH]).

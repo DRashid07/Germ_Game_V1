@@ -101,7 +101,8 @@ class GermState:
 			return false
 		return balls >= Const.super_min_balls(int(species))
 
-	## Amöb qabığın içindədir: top səkir, metabolizm dayanır, tərpənmir.
+	## Amöbün superi işləyir: yerində donub pulsuz, sürətli atəş açır (miniqan).
+	## Ad tarixidir — əvvəl bu, toxunulmaz qabıq (kist) idi.
 	func in_cyst() -> bool:
 		return species == Const.Species.AMOEBA and super_t > 0.0
 
@@ -484,12 +485,23 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 		g.super_t = maxf(0.0, g.super_t - dt)
 
 		if g.in_cyst():
-			# Qabıq bağlıdır: nə hərəkət, nə axın, nə metabolizm, nə atəş.
-			# Sist YATMIŞ haldır — canlı öz həyatını müvəqqəti dayandırır.
+			# AMÖBÜN SUPERİ — yerində donmuş MİNİQAN. Nə hərəkət, nə axın, nə
+			# metabolizm; atəş isə [constant Const.MINIGUN_COOLDOWN]-da bir və
+			# PULSUZDUR — top amöbün öz sayından getmir. Qalxan YOXDUR: ona top
+			# adi kimi dəyir (bax [method germ_bits]).
+			#
+			# Əvvəl bu, toxunulmaz qabıq idi və atəş qadağan idi. Oyunçunun istəyi
+			# ilə dəyişdi: köhnə xətalı versiyada (proqnoz kisti tez bitirirdi)
+			# ekranda fasiləsiz, top xərcləmədən atəş görünürdü və məhz bu hiss
+			# superin özü oldu.
 			g.vel = Vector2.ZERO
 			g.age += dt
 			g.cooldown = maxf(0.0, g.cooldown - dt)
 			g.safe_t = maxf(0.0, g.safe_t - dt)
+			if inp != null and inp.fire and g.cooldown <= 0.0:
+				_fire(g, inp.view_tick, inp.fire_aim, true)
+				# Geri təpmə amöbü tərpətmir — yerində qalır.
+				g.vel = Vector2.ZERO
 			continue
 
 		if wish.length_squared() > 0.0001:
@@ -542,8 +554,11 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 		if inp != null and inp.use_super and g.super_ready():
 			_use_super(g)
 
-		if inp != null and inp.fire and g.cooldown <= 0.0 and g.balls >= Const.FIRE_MIN_BALLS:
-			_fire(g, inp.view_tick, inp.fire_aim)
+		# Amöbün superi elə bu tick açılıbsa, atəş artıq miniqandır — pulsuz və
+		# sursat həddinə baxmır.
+		if inp != null and inp.fire and g.cooldown <= 0.0 \
+				and (g.balls >= Const.FIRE_MIN_BALLS or g.in_cyst()):
+			_fire(g, inp.view_tick, inp.fire_aim, g.in_cyst())
 
 		if g.balls < Const.MIN_BALLS and not _no_metabolism:
 			starved.append(g)
@@ -580,9 +595,10 @@ func _net_slow(g: GermState, helios: Array[GermState]) -> float:
 
 ## Super işə düşdü. Doluluq sıfırlanır və növün öz effekti başlayır.
 ##
-## Üç super da rəqibin TOP SAYINA toxunmur: biri mövqe, biri qida, biri vaxt
-## üzərində işləyir. Zərər verən super [constant Const.SHOT_PAYLOAD]
-## riyaziyyatını yan yoldan pozardı (bax həmin sabitin izahı).
+## Superin özü rəqibin TOP SAYINA toxunmur: trixosist mövqe, tor qida üzərində
+## işləyir. Zərər verən super [constant Const.SHOT_PAYLOAD] riyaziyyatını yan
+## yoldan pozardı (bax həmin sabitin izahı). Amöbün miniqanı adi topla vurur —
+## sadəcə super boyu tez və pulsuz (bax [method _step_germs]).
 func _use_super(g: GermState) -> void:
 	g.charge = 0
 	# Hadisənin arg sahəsi trixosistin TƏSİR RADİUSUNU daşıyır (qalan iki
@@ -607,6 +623,11 @@ func _use_super(g: GermState) -> void:
 			_super_trichocyst(g)
 		_:
 			g.super_t = Const.super_time(int(g.species))
+	# Miniqan dərhal işə düşür: adi atəşdən qalan 1 saniyəlik soyuma ona keçsəydi,
+	# ilk top 1 s-ə qədər gecikərdi və 2.5 saniyəlik superdən 3 top itərdi
+	# (onlayn ölçülüb: superdən əvvəl atan amöb 10 əvəzinə 7 top atırdı).
+	if g.in_cyst():
+		g.cooldown = minf(g.cooldown, Const.MINIGUN_COOLDOWN)
 
 
 ## KİRPİKLİ — trixosist partlayışı.
@@ -766,7 +787,9 @@ func _separate_germs() -> void:
 
 ## [param view_tick] — atıcının ekranındakı tick ([member PlayerInput.view_tick]).
 ## [param aim] — atəşin öz nişanı ([member PlayerInput.fire_aim]); NAN = mikrobun nişanı.
-func _fire(g: GermState, view_tick := -1.0, aim := NAN) -> void:
+## [param minigun] — amöbün superi: top PULSUZDUR və dövr qısadır
+## ([constant Const.MINIGUN_COOLDOWN]).
+func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false) -> void:
 	var dir := Vector2.from_angle(g.aim if is_nan(aim) else aim)
 	var s := ShotState.new()
 	s.id = _next_shot_id
@@ -798,8 +821,11 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN) -> void:
 	s.life = Const.SHOT_LIFETIME
 	shots.append(s)
 
-	g.balls -= 1
-	g.cooldown = Const.FIRE_COOLDOWN
+	if minigun:
+		g.cooldown = Const.MINIGUN_COOLDOWN
+	else:
+		g.balls -= 1
+		g.cooldown = Const.FIRE_COOLDOWN
 	# Geri təpmə: atəş həm də manevr vasitəsidir.
 	g.vel -= dir * Const.SHOT_RECOIL
 	# Atəş açan toxunulmazlığını itirir — doğuş qorunması hücum qalxanı deyil.
@@ -832,10 +858,6 @@ func _step_shots(dt: float) -> void:
 		# Ən yaxın toqquşmanı tapırıq: maneə mikrobdan öndədirsə, top ona dəyir.
 		var best := 2.0
 		var victim: Sim.GermState = null
-		## Qurbanın dəyilən andakı mövqeyi — geri sarılıbsa keçmişdəki.
-		var victim_at := Vector2.ZERO
-		var victim_shape := Vector3.ZERO
-		var victim_cyst := false
 		var hit_obstacle := Vector4.ZERO
 		var hit_index := -1
 
@@ -869,14 +891,10 @@ func _step_shots(dt: float) -> void:
 			# yoldaşından qaçmağa məcbur edərdi.
 			if owner != null and owner.team >= 0 and g.team == owner.team:
 				continue
-			# Doğuş qalxanı və kist də atıcının GÖRDÜYÜ andan oxunur, mövqe kimi.
-			# İndikindən oxunanda top ekranda hələ qabıqsız amöbə girirdi, serverdə
-			# isə yeni bağlanmış qabıqdan səkirdi — ölçülüb, boş dəymələrin bir
-			# qismi belə idi.
+			# Doğuş qalxanı atıcının GÖRDÜYÜ andan oxunur, mövqe kimi.
 			var bits := germ_bits(g) if s.rewind <= 0.0 else _rewound_bits(g, s.rewind)
 			if bits & HIST_SAFE:
 				continue
-			var cyst := (bits & HIST_CYST) != 0
 			var state := Vector4(g.pos.x, g.pos.y, g.vel.x, g.vel.y) if s.rewind <= 0.0 \
 				else _rewound_state(g, s.rewind)
 			var at := Vector2(state.x, state.y)
@@ -886,28 +904,15 @@ func _step_shots(dt: float) -> void:
 			if at.distance_squared_to(from) > near * near:
 				continue
 			var shape := hit_shape(int(g.species), g.capacity, Vector2(state.z, state.w))
-			# Kistdən top SƏKİR, ona görə orada yalnız kənardan giriş sayılır.
-			var t := seg_ellipse_t(from, to, at, shape) if cyst \
-				else seg_ellipse_hit_t(from, to, at, shape)
+			var t := seg_ellipse_hit_t(from, to, at, shape)
 			if t >= 0.0 and t < best:
 				best = t
 				victim = g
-				victim_at = at
-				victim_shape = shape
-				victim_cyst = cyst
 				hit_index = -1
 
 		if best <= 1.0:
 			var hit_pos := from.lerp(to, best)
 			if victim != null:
-				# Sistləşmiş amöb müvəqqəti QABIQDIR: top içəri girmir, səkir.
-				# Səkən top başqasına dəyə bilər — səni vuran öz topunu geri
-				# ala bilər.
-				if victim_cyst:
-					var cn := ellipse_normal(hit_pos, victim_at, victim_shape)
-					if _bounce(s, hit_pos, cn):
-						survivors.append(s)
-					continue
 				_inject(victim, hit_pos, s)
 				continue
 			if hit_index >= 0:
@@ -964,12 +969,12 @@ func _record_history() -> void:
 
 ## Tarixçədə mikrobun dəyməni dəyişən halları (bax [method germ_bits]).
 const HIST_SAFE := 1
-const HIST_CYST := 2
 
 
-## Mikrobun İNDİKİ halı: doğuş qalxanı və kist.
+## Mikrobun İNDİKİ halı: doğuş qalxanı. Amöbün superi qalxan DEYİL — ona top
+## adi kimi dəyir (bax [method _step_germs]).
 static func germ_bits(g: GermState) -> int:
-	return (HIST_SAFE if g.safe_t > 0.0 else 0) | (HIST_CYST if g.in_cyst() else 0)
+	return HIST_SAFE if g.safe_t > 0.0 else 0
 
 
 ## Mikrobun [param back] tick əvvəlki halı — atıcının ekranındakı kimi.

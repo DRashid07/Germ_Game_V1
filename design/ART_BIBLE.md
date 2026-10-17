@@ -107,7 +107,7 @@ Hədd 15-dir — dörd bitə sığdığı üçün.
 |---|---|---|---|
 | **Kirpikli** | **TRİXOSİST** | r×3.5 zolağındakı rəqib topları dağılıb **qidaya** çevrilir, mikroblar itələnir, özü geri sıçrayır | −2 top; dağılan toplar yerdə qalır və rəqib onları geri yeyə bilər |
 | **Ayaqlı** | **AKSOPODİYA TORU** | 4 saniyə: r×4 zolağındakı qida ona axır, tora düşən rəqib 40% yavaşlayır | dolu ikən açsa **öz superi onu partladır** |
-| **Amöb** | **SİSTLƏŞMƏ** | 2.5 saniyə: top **səkir**, metabolizm dayanır | tam hərəkətsiz — nə qaçır, nə atır, nə yeyir |
+| **Amöb** | **MİNİQAN** | 2.5 saniyə yerində donub fasiləsiz atəş açır, toplar pulsuzdur, metabolizm dayanır | qalxan yoxdur, qaça bilmir |
 
 Üçü də real biologiyadandır: paramesium yırtıcı toxunanda trixosistlərini
 partladıb geri üzür (bu qabiliyyəti olmayan mutantlar 9–45 dəfə tez yeyilir);

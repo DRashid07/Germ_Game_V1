@@ -2664,8 +2664,13 @@ static func _test_wall_sync() -> void:
 
 
 ## Dünya boş qalmır: çatmayan yer botlarla doldurulur.
+##
+## Generator toxumlanır: botlar döyüşür və yoxlama anında biri təzəcə partlamış
+## ola bilərdi — yeri növbəti [constant World.BOT_RESPAWN]-da dolur, amma yoxlama
+## onu gözləmirdi və 6 çalışmanın birində "5 / 6" ilə düşdü.
 static func _test_world_keeps_population() -> void:
 	var world := World.new(3)
+	world.sim.rng.seed = 3
 	world.add_player(A_ID, "A")
 	# Hər bot BOT_RESPAWN saniyədən bir gəlir.
 	var ticks := int((Const.MIN_POPULATION + 1) * World.BOT_RESPAWN / Const.TICK_DELTA)
@@ -4900,8 +4905,15 @@ static func _touch(index: int, pressed: bool) -> InputEventScreenTouch:
 
 ## Botsuz dünya: yalnız oyunçunun öz hərəkəti yoxlanır (ayırma, tor qarışmasın).
 ## İkinci, girişsiz oyunçu uzaqda durur: tək mikroblu dünya "matç bitdi" sayılır.
+##
+## Generator TOXUMLANIR: `Sim` onu hər dəfə təsadüfi qurur, yəni doğuş yeri hər
+## çalışmada başqa idi. Yol maneəyə və ya qabın kənarına düşəndə ölçülər dəyişirdi
+## — "yenidən oynatmasız server təxmin yolunda qalır" 7 çalışmada 64–177 px verdi
+## (hədd 100) və təsadüfən düşürdü. Toxumla iki dünya (yenidən oynatmalı və
+## oynatmasız) üstəlik EYNİ yerdən başlayır — müqayisə ədalətli olur.
 static func _lonely_world(seed_id: int) -> World:
 	var world := World.new(seed_id, Const.Mode.ENDLESS)
+	world.sim.rng.seed = seed_id
 	world._seeded = true
 	world._bot_timer = 1.0e9
 	return world

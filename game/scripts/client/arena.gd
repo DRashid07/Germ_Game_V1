@@ -52,6 +52,13 @@ const VIEW_GRACE := Const.INTERP_DELAY + Const.TICK_DELTA
 ## deyil.
 const MUZZLE_GRACE := 0.6
 
+## Proqnozun oynatdığı öz superi serverin SUPER hadisəsini bu qədər saniyə
+## gözləyir (bax [method _take_own_super]). Gediş-gəlişdən və adi donmadan
+## xeyli uzundur; gəlməsə (server superi rədd edib), qeyd bu müddətdən sonra
+## düşür. İki öz super arasında partlatma doluluğu dərhal doldursa da, hər
+## basılış öz qeydini qoyur — sıra ilə götürülür, səhv uyğunlaşma olmur.
+const OWN_SUPER_GRACE := 2.0
+
 ## Proqnozlaşdırılmış dəymənin vədi (top sayı, super doluluğu) bu qədər
 ## saniyə saxlanılır. Serverin sözü RTT + interpolyasiya (~250 ms) sonra
 ## ekrana çatır; server dəyməni qəbul etməsə, vəd bu müddətdən sonra sönür.
@@ -520,6 +527,9 @@ var hit_stats := {"predicted": 0, "confirmed": 0, "server_only": 0, "ghost": 0,
 	"self_soft": 0, "self_soft_conf": 0, "self_soft_miss": 0, "self_undo": 0,
 	"own_soft": 0, "own_soft_conf": 0, "own_soft_miss": 0, "own_soft_undo": 0}
 var _fx_queue: Array[Dictionary] = []
+## Proqnozun oynatdığı öz superlərinin anları — serverin hadisəsini gözləyir
+## (bax [method _take_own_super]).
+var _own_supers: Array[float] = []
 var _tex := {}
 var _view_span := Const.VIEW_SPAN_BASE
 ## Kameranın gördüyü dünya düzbucaqlısı — ekrandan kənardakı mikrobu çəkməmək
@@ -1219,9 +1229,14 @@ func _do_tick() -> void:
 			if _local_world == null:
 				_on_own_fire(float(e["arg"]))
 			inp.shot = true
-		elif e.get("t") == "super" and float(e["arg"]) > 0.0:
+		elif e.get("t") == "super":
+			# Öz superin effekti DƏRHAL — serverin hadisəsi onu sonra yalnız
+			# təsdiqləyir (bax [method _take_own_super]).
+			_play_super(Vector2(e["pos"]), float(e["arg"]), my_color)
+			_own_supers.append(_clock)
 			# Öz trixosistin (arg = təsir radiusu, bax [method Sim._use_super]).
-			tricho = float(e["arg"])
+			if float(e["arg"]) > 0.0:
+				tricho = float(e["arg"])
 	if tricho > 0.0:
 		_pop_remote_shots(tricho)
 	# Giriş proqnozdan SONRA gedir: server atəşi proqnozun açdığı paketdə tanısın
@@ -2087,6 +2102,7 @@ func _on_rejoin_accepted(info: Dictionary) -> void:
 	# Köhnə sessiyanın topları yeni sessiyada təsdiqlənə bilməz: server id-ləri
 	# başqadır. Sprite-ları [method _render_ghosts] növbəti kadrda hovuza qaytarır.
 	_own_shots.clear()
+	_own_supers.clear()
 	_claims.clear()
 	_own_sids.clear()
 	_input_time.clear()
@@ -4099,6 +4115,12 @@ func _queue_events(list: Array, at: float) -> void:
 			if kind == Const.EvKind.SUPER and float(e[Const.EF.ARG]) > 0.0 \
 					and _local_world != null:
 				_pop_remote_shots(float(e[Const.EF.ARG]))
+			# Öz superin: proqnoz onu artıq oynadıbsa atılır, oynatmayıbsa
+			# interpolyasiyanı gözləmir — öz mikrobun indidə çəkilir.
+			if kind == Const.EvKind.SUPER:
+				if _take_own_super():
+					continue
+				when = -INF
 			# ÖZ topunun təması proqnozda artıq göstərilib — ikinci dəfə yox.
 			if kind == Const.EvKind.HIT and _match_claim(pos, float(e[Const.EF.ARG]) > 0.5,
 					Const.hit_victim(float(e[Const.EF.ARG]))):
@@ -4185,58 +4207,7 @@ func _flush_fx(render_time: float) -> void:
 				Sfx.play("eject", 0.06, -6.0)
 				_eject_from(int(e["ci"]), float(e["arg"]))
 			Const.EvKind.SUPER:
-				# Səs üçün ayrıca fayl yoxdur, ona görə mövcud səslər rolu ilə
-				# seçilir: trixosist PARTLAYIŞDIR, tor və qabıq isə AÇILIŞDIR.
-				#
-				# arg sıfırdan böyükdürsə, bu, trixosistdir və rəqəm onun təsir
-				# RADİUSUDUR (bax [method Sim._use_super]).
-				var reach := float(e["arg"])
-				var ci := int(e["ci"])
-				# Açılış anı ayrıca effektdir (bax [SuperFx]). Əvvəl kirpiklidə
-				# `burst.svg` buludu idi: 0.26 saniyə yaşayır, ilk kadrdan sönürdü
-				# və kadr ardıcıllığında praktiki olaraq görünmürdü.
-				#
-				# Növ hadisədə GƏLMİR: trixosist öz radiusunu göndərir (arg > 0),
-				# qalan ikisi isə mikrobun görüntüsündən tapılır.
-				var who := _germ_by_color(ci)
-				var kind := Const.Species.CILIATE
-				var body := Const.BASE_RADIUS
-				# Rəqibin trixosisti öz uçan toplarını elə İNDİ dağıdır — partlayış
-				# ekranda görünən anda. Server də bu anı yoxlayır (bax [member Sim._blasts]):
-				# partlayışdan əvvəl rəqibə çatan top dəyir, sonra çatan dağılır.
-				if reach > 0.0 and ci != my_color:
-					for gh in _own_shots.blast(pos, reach, _clock):
-						_spawn_fx("spark", gh.pos, 0.45, Palette.germ_color(my_color))
-				if who != null:
-					body = Const.germ_radius(who.capacity)
-					if reach <= 0.0:
-						kind = who.species
-				if reach <= 0.0:
-					# Torun sərhədi [method GermVisual._draw_net] ilə eyni düsturdur;
-					# kist isə gövdənin öz qabığıdır.
-					if kind == Const.Species.HELIOZOAN:
-						reach = body * Const.NET_RADIUS
-					else:
-						reach = body + GermVisual.SHIELD_GAP * 0.5
-				var sfx := SuperFx.new()
-				sfx.position = pos
-				sfx.setup(kind, col, body, reach, Const.is_light(int(Net.quality)))
-				if kind != Const.Species.CILIATE and who != null:
-					sfx.follow(who)
-				_fx.add_child(sfx)
-				if kind == Const.Species.CILIATE:
-					_spawn_fx("spark", pos, 0.9, Palette.TEXT)
-					Sfx.play("burst", 0.0, -4.0)
-				else:
-					_spawn_fx("spark", pos, 0.9, col)
-					Sfx.play("level_up", 0.0, -4.0)
-				if ci == my_color:
-					# Öz ultin partlatma ilə eyni sinifdə hadisədir. Yazı yalnız
-					# SƏNİN superində çıxır: 10 mikrobun hamısınınkı yazılsaydı
-					# ekran dolardı.
-					_add_shake(6.0)
-					_punch = maxf(_punch, 0.05)
-					_pop_text(pos, "SUPER!", Palette.SUPER_READY, 34)
+				_play_super(pos, float(e["arg"]), int(e["ci"]))
 			Const.EvKind.SPORE:
 				# Tutum artımı — partlatma ilə eyni mükafat, ona görə eyni səs.
 				_spawn_fx("spark", pos, 0.9, Palette.FOCUS)
@@ -4354,6 +4325,82 @@ func _brittle_at(at: Vector2, include_gone: bool) -> int:
 ## örtürdü. [BurstFx] bunu əvvəldən düz edirdi (`z_index = 3`), `_spawn_fx`-də
 ## isə unudulmuşdu.
 const FX_Z := 3
+
+
+## Superin açılış anı — qığılcım, səs və [SuperFx].
+##
+## İki yerdən çağırılır: başqasının superi serverin hadisəsindən, interpolyasiya
+## anında ([method _flush_fx]); ÖZ superin isə proqnozdan, basılan tick-də
+## ([method _do_tick]) — atəş kimi. Əvvəl öz superin də serverin hadisəsini
+## gözləyirdi: kirpiklinin trixosisti (onun superinin YEGANƏ görüntüsü) məşqdə
+## 130 ms, onlayn bir gediş-gəliş üstəgəl bufer qədər gec çıxırdı, mikrob isə
+## proqnozda dərhal geri sıçrayırdı — partlayış onun ARXASINDA, köhnə yerdə yanırdı.
+##
+## Səs üçün ayrıca fayl yoxdur, ona görə mövcud səslər rolu ilə seçilir:
+## trixosist PARTLAYIŞDIR, tor və qabıq isə AÇILIŞDIR.
+##
+## [param reach] sıfırdan böyükdürsə, bu, trixosistdir və rəqəm onun təsir
+## RADİUSUDUR (bax [method Sim._use_super]).
+func _play_super(pos: Vector2, reach: float, ci: int) -> void:
+	var col := Palette.germ_color(ci)
+	# Açılış anı ayrıca effektdir (bax [SuperFx]). Əvvəl kirpiklidə
+	# `burst.svg` buludu idi: 0.26 saniyə yaşayır, ilk kadrdan sönürdü
+	# və kadr ardıcıllığında praktiki olaraq görünmürdü.
+	#
+	# Növ hadisədə GƏLMİR: trixosist öz radiusunu göndərir (arg > 0),
+	# qalan ikisi isə mikrobun görüntüsündən tapılır.
+	var who := _germ_by_color(ci)
+	var kind := Const.Species.CILIATE
+	var body := Const.BASE_RADIUS
+	# Rəqibin trixosisti öz uçan toplarını elə İNDİ dağıdır — partlayış
+	# ekranda görünən anda. Server də bu anı yoxlayır (bax [member Sim._blasts]):
+	# partlayışdan əvvəl rəqibə çatan top dəyir, sonra çatan dağılır.
+	if reach > 0.0 and ci != my_color:
+		for gh in _own_shots.blast(pos, reach, _clock):
+			_spawn_fx("spark", gh.pos, 0.45, Palette.germ_color(my_color))
+	if who != null:
+		body = Const.germ_radius(who.capacity)
+		if reach <= 0.0:
+			kind = who.species
+	if reach <= 0.0:
+		# Torun sərhədi [method GermVisual._draw_net] ilə eyni düsturdur;
+		# kist isə gövdənin öz qabığıdır.
+		if kind == Const.Species.HELIOZOAN:
+			reach = body * Const.NET_RADIUS
+		else:
+			reach = body + GermVisual.SHIELD_GAP * 0.5
+	var sfx := SuperFx.new()
+	sfx.position = pos
+	sfx.setup(kind, col, body, reach, Const.is_light(int(Net.quality)))
+	if kind != Const.Species.CILIATE and who != null:
+		sfx.follow(who)
+	_fx.add_child(sfx)
+	if kind == Const.Species.CILIATE:
+		_spawn_fx("spark", pos, 0.9, Palette.TEXT)
+		Sfx.play("burst", 0.0, -4.0)
+	else:
+		_spawn_fx("spark", pos, 0.9, col)
+		Sfx.play("level_up", 0.0, -4.0)
+	if ci == my_color:
+		# Öz ultin partlatma ilə eyni sinifdə hadisədir. Yazı yalnız
+		# SƏNİN superində çıxır: 10 mikrobun hamısınınkı yazılsaydı
+		# ekran dolardı.
+		_add_shake(6.0)
+		_punch = maxf(_punch, 0.05)
+		_pop_text(pos, "SUPER!", Palette.SUPER_READY, 34)
+
+
+## Proqnozun oynatdığı öz superi serverin SUPER hadisəsini götürür — ikinci
+## dəfə oynanmasın (atəşdəki [method ShotPrediction.take_unseen_fire] kimi).
+## Proqnoz görməyibsə (məşqdə yerli dünya superi ondan ƏVVƏL emal edir, bax
+## [method _reconcile]) `false` qaytarır və effekti serverin hadisəsi oynadır.
+func _take_own_super() -> bool:
+	while not _own_supers.is_empty() and _clock - _own_supers[0] > OWN_SUPER_GRACE:
+		_own_supers.pop_front()
+	if _own_supers.is_empty():
+		return false
+	_own_supers.pop_front()
+	return true
 
 
 func _spawn_fx(kind: String, pos: Vector2, scale: float, color: Color) -> void:

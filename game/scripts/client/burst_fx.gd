@@ -60,6 +60,7 @@ func setup(p_color: Color, p_radius: float, p_balls := -1, p_big := false,
 	_radius = maxf(p_radius, 12.0)
 	_scale = 1.45 if p_big else 1.0
 	z_index = 3                          # hər mikrobun üstündə
+	BatchDraw.use_mipmaps(self)          # damcılar disk teksturasıdır
 
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
@@ -156,22 +157,27 @@ func _draw_flash(r: float) -> void:
 	if _age > 0.075:
 		return
 	var k := 1.0 - _age / 0.075
-	draw_circle(Vector2.ZERO, r * (0.40 + 0.55 * (1.0 - k)), Color(Palette.TEXT, k))
+	BatchDraw.disc(self, Vector2.ZERO, r * (0.40 + 0.55 * (1.0 - k)), Color(Palette.TEXT, k))
 
 
 ## Səpilən damcılar. Hər biri arxasında qısa iz buraxır — sürətli damcının
 ## izi uzun, dayanmışın isə yoxdur, ona görə hərəkət tək kadrda da oxunur.
 func _draw_drops(u: float) -> void:
 	var fade := 1.0 - u * u
+	# Əvvəl BÜTÜN izlər, sonra damcılar: damcı öz izinin üstündə qalır, xətt və
+	# disk növbələşmədiyi üçün də hər biri bir çəkiliş çağırışıdır. Əvvəl hər damcı
+	# ayrıca `draw_circle` poliqonu idi — partlayış 1 s ərzində kadrda 10–28 əlavə
+	# çağırış edirdi (bax [BatchDraw]).
 	for i in _drop_pos.size():
-		var p := _drop_pos[i]
 		var size := _drop_size[i] * (1.0 - 0.55 * u)
-		if size < 0.6:
-			continue
-		draw_circle(p, size, Color(_color.lerp(Palette.TEXT, 0.45), 0.95 * fade))
 		var trail := _drop_vel[i] * 0.03
-		if trail.length_squared() > 4.0:
-			draw_line(p, p - trail, Color(_color, 0.45 * fade), size * 0.7)
+		if size >= 0.6 and trail.length_squared() > 4.0:
+			draw_line(_drop_pos[i], _drop_pos[i] - trail, Color(_color, 0.45 * fade), size * 0.7)
+	var drop := Color(_color.lerp(Palette.TEXT, 0.45), 0.95 * fade)
+	for i in _drop_pos.size():
+		var size := _drop_size[i] * (1.0 - 0.55 * u)
+		if size >= 0.6:
+			BatchDraw.disc(self, _drop_pos[i], size, drop)
 
 
 ## Membran parçaları — qopan qabığın qövsləri. Kənara uçur, öz oxu ətrafında

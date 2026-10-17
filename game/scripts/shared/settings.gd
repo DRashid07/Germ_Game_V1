@@ -238,8 +238,79 @@ func apply() -> void:
 		return
 	_apply_audio()
 	if not _fps_locked:
-		Engine.max_fps = effective_fps_cap()
+		_apply_frame_cap(effective_fps_cap())
 	_apply_render_scale()
+
+
+## Kadr həddini tətbiq edir. Brauzerdə Godot-un öz həddi İŞLƏDİLMİR.
+##
+## Godot 4.7-nin thread-siz veb build-ində (bizimki, `variant/thread_support=false`)
+## `Engine.max_fps` kadrlar arasındakı boşluğu `OS::add_frame_delay` → `usleep` ilə
+## doldurur, emscripten-də isə əsas axında `usleep` gözləmə deyil, BOŞ DÖVRDÜR.
+## Ölçülüb (masaüstü Chrome, MİNİMUM, 30 kadr): kadrın işi 4.4 ms, brauzerin kadr
+## çağırışı isə 32.8 ms çəkirdi — renderer prosesi kadr başına 33.8 ms CPU yeyirdi,
+## yəni bir nüvə oyun boyu 100% fırlanırdı. Telefonda bu, istilik və batareyadır,
+## həm də brauzerin öz işinə (GPU prosesi, kompozitor, şəbəkə) vaxt qalmır.
+##
+## Ona görə brauzerdə `Engine.max_fps = 0` qalır, hədd isə `web/shell.html`-də
+## (`germSetFrameCap`) brauzerin kadr ritmindən — requestAnimationFrame-dən —
+## kadr buraxmaqla tətbiq olunur: arada əsas axın BOŞDUR.
+##
+## Köhnə səhifə (funksiyası olmayan qabıq) gəlsə, köhnə yol işləyir.
+func _apply_frame_cap(cap: int) -> void:
+	if OS.has_feature("web") and _web_pacing():
+		Engine.max_fps = 0
+		JavaScriptBridge.eval("window.germSetFrameCap(%d)" % cap)
+		_web_cap = cap
+		return
+	Engine.max_fps = cap
+
+
+## Oyunun HƏQİQƏTƏN işlədiyi kadr həddi (0 = həddsiz) — kadr büdcəsini hesablayan
+## kod `Engine.max_fps`-i yox, bunu oxumalıdır: brauzerdə orada 0 durur (bax
+## [method _apply_frame_cap]).
+func frame_cap() -> int:
+	if OS.has_feature("web") and _web_cap >= 0:
+		return _web_cap
+	return Engine.max_fps
+
+
+## Səhifə kadr həddini özü tətbiq edə bilirmi — bir dəfə soruşulur.
+##
+## Cavab ədəd kimi alınır: Godot 4.7-də `JavaScriptBridge.eval` JS-in `true`-sunu
+## bool yox, int 1 qaytarır və `== true` müqayisəsi xəta verib funksiyanı
+## dayandırırdı — hədd səssizcə köhnə (boş dövrlü) yola düşürdü.
+func _web_pacing() -> bool:
+	if _web_paced < 0:
+		var ok = JavaScriptBridge.eval(
+			"typeof window.germSetFrameCap === 'function' ? 1 : 0", true)
+		_web_paced = 1 if (ok is int or ok is float or ok is bool) and float(ok) >= 1.0 else 0
+	return _web_paced == 1
+
+
+var _web_paced := -1
+var _web_cap := -1
+
+
+## Brauzerdə yükləmə örtüyünü götürür — oyunun ilk ekranı ÇƏKİLƏNDƏN sonra.
+##
+## Menyu və arena `_ready`-nin sonunda çağırır; ikinci çağırış heç nə etmir.
+## Örtük ("Oyun hazırlanır…", bax `web/shell.html`) əvvəl mühərrik işə düşən kimi
+## götürülürdü, zəif telefonda isə menyunun qurulması ondan sonra da 15+ saniyə
+## çəkir (ölçülüb: 13× yavaş CPU-da yükləmə 2 s-də bitir, menyu 24 s-də çıxır) —
+## bu arada ekranda donmuş kətan qalırdı və oyun "dondu" sanılırdı.
+func web_page_ready() -> void:
+	if not OS.has_feature("web") or _page_shown:
+		return
+	_page_shown = true
+	RenderingServer.frame_post_draw.connect(_hide_web_status, CONNECT_ONE_SHOT)
+
+
+func _hide_web_status() -> void:
+	JavaScriptBridge.eval("window.germHideStatus && window.germHideStatus()", true)
+
+
+var _page_shown := false
 
 
 ## İşlək kadr həddi. MİNİMUM-da oyunçu özü seçməyibsə 30: simulyasiya onsuz

@@ -688,6 +688,8 @@ func _ready() -> void:
 	_hud.show_message("DÜNYAYA GİRDİN", "Qida ye, rəqibi doldur, partlat")
 	get_tree().create_timer(2.0).timeout.connect(_hud.hide_message)
 	Sfx.play("spawn")
+	# Menyusuz açılışda (məşq, test client-i) brauzerin yükləmə örtüyü buradan götürülür.
+	Settings.web_page_ready()
 
 
 ## Bioluminessensiya — parlaq piksellər ətrafa işıq saçır.
@@ -2576,7 +2578,10 @@ func _pop_text(at: Vector2, text: String, color: Color, size: int) -> void:
 func _remote_redraw_step() -> int:
 	if not Const.is_light(int(Net.quality)):
 		return 1
-	var fps := Engine.max_fps if Engine.max_fps > 0 else 60
+	# Godot-un öz həddi yox: brauzerdə hədd səhifədədir və mühərrikdə 0 durur
+	# (bax [method Settings._apply_frame_cap]).
+	var cap := Settings.frame_cap()
+	var fps := cap if cap > 0 else 60
 	return maxi(1, int(round(float(fps) / 30.0)))
 
 
@@ -2608,7 +2613,7 @@ func _watch_performance(delta: float) -> void:
 	_perf_time += delta
 	if _perf_time < PERF_WINDOW:
 		return
-	var slow := too_slow(_perf_frames, Engine.max_fps)
+	var slow := too_slow(_perf_frames, Settings.frame_cap())
 	_perf_frames.clear()
 	_perf_time = 0.0
 	if not slow:
@@ -2700,7 +2705,7 @@ func _watch_resolution(delta: float) -> void:
 	_res_report -= delta
 	if _res_time < RES_WINDOW:
 		return
-	var budget := maxf(_frame_budget(Engine.max_fps), 1.0 / float(RES_FPS))
+	var budget := maxf(_frame_budget(Settings.frame_cap()), 1.0 / float(RES_FPS))
 	var verdict := resolution_verdict(_res_frames, _res_cpu, budget)
 	res_stats = frame_stats(_res_frames, _res_cpu)
 	_res_frames.clear()
@@ -2824,7 +2829,7 @@ static func frame_stats(frames: PackedFloat32Array, cpu: PackedFloat32Array) -> 
 func perf_line(dpr: float) -> String:
 	return "[perf] %s · kətan %.2f · kadr p50 %.1f / p90 %.1f ms (orta %.0f FPS) · CPU %.1f ms · hədd %d FPS · GPU %s" % [
 		Const.quality_name(int(Net.quality)), dpr, res_stats.x, res_stats.y,
-		1000.0 / maxf(res_stats.w, 0.001), res_stats.z, Engine.max_fps, Const.gpu_label()]
+		1000.0 / maxf(res_stats.w, 0.001), res_stats.z, Settings.frame_cap(), Const.gpu_label()]
 
 
 ## Minixəritə saniyədə [constant MINIMAP_HZ] dəfə yenilənir, hər kadr yox.

@@ -207,16 +207,20 @@ func _draw() -> void:
 	var accent := _color if _has_ammo else Palette.DANGER
 
 	# Kölgə — düymə səthdən qalxıq görünsün.
-	draw_circle(c + Vector2(0, 5), r, Color(Palette.OUTLINE, 0.45))
+	#
+	# Üç disk ardıcıl çəkilir — bir çəkiliş çağırışıdır (bax [BatchDraw]). Daxili
+	# disk (0.72 r) halqaya (r ± 2.5) toxunmur, ona görə halqadan ƏVVƏL çəkilməsi
+	# görüntünü dəyişmir.
+	BatchDraw.disc(self, c + Vector2(0, 5), r, Color(Palette.OUTLINE, 0.45))
 
 	# Baza: joystick sprite-ı ilə eyni məntiq — tünd disk, canlı halqa.
-	draw_circle(c, r, Color(Palette.BG_OUTER, 0.72))
+	BatchDraw.disc(self, c, r, Color(Palette.BG_OUTER, 0.72))
+	BatchDraw.disc(self, c, r * 0.72, Color(Palette.PANEL, 0.62 if held else 0.45))
+
 	# Ləğv halında halqa da solur — yalnız baş solanda QA onu gözdən qaçırdı.
 	var rim := Color(Palette.TEXT_MUTED, 0.5) if is_cancelling() \
 		else Color(accent, 0.95 if held else 0.6)
 	draw_arc(c, r, 0, TAU, 48, rim, 5.0, true)
-
-	draw_circle(c, r * 0.72, Color(Palette.PANEL, 0.62 if held else 0.45))
 
 	if held:
 		_draw_knob(c, r, accent, ready)

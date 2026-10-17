@@ -655,6 +655,8 @@ func _ready() -> void:
 	# `setup` node ağaca salınmazdan əvvəl çağırılır. Pop-u burada başlatmaq həm
 	# həqiqi doğuşu tutur, həm də ağacsız həndəsə testlərini dəyişməz saxlayır.
 	_birth_t = 0.0
+	# İçindəki toplar və dairələr disk teksturası ilə çəkilir (bax [BatchDraw]).
+	BatchDraw.use_mipmaps(self)
 	queue_redraw()
 
 
@@ -877,12 +879,12 @@ func _draw_emerging_ball() -> void:
 	# eyni açıq rəngdədir və eyni ölçüdədir, ona görə hərəkət edən ləkə sadəcə
 	# "bir top da var" kimi oxunurdu. Kontur onu qabağa çıxarır və gözün
 	# izlədiyi TƏK hərəkətli obyekt edir.
-	draw_circle(at, Const.SHOT_RADIUS * 1.35, Color(Palette.OUTLINE, 0.30 + 0.45 * lit))
-	draw_circle(at, Const.SHOT_RADIUS, Color(_light, 0.45 + 0.5 * lit))
+	BatchDraw.disc(self, at, Const.SHOT_RADIUS * 1.35, Color(Palette.OUTLINE, 0.30 + 0.45 * lit))
+	BatchDraw.disc(self, at, Const.SHOT_RADIUS, Color(_light, 0.45 + 0.5 * lit))
 	# Divara çatmaqda olan top ağarır — "indi çıxır" işarəsi.
 	if lit > 0.45:
 		var k := (lit - 0.45) / 0.55
-		draw_circle(at, Const.SHOT_RADIUS * 0.55, Color(Palette.TEXT, 0.75 * k))
+		BatchDraw.disc(self, at, Const.SHOT_RADIUS * 0.55, Color(Palette.TEXT, 0.75 * k))
 
 
 ## Gövdənin SON konturu — atəş dartılması da daxil olmaqla.
@@ -1392,11 +1394,12 @@ func _draw_legs(r: float) -> void:
 		var tip := _leg_tip(i, r)
 		if tip == Vector2.ZERO:
 			continue
+		# Disklər ardıcıldır — bütün pəncələr bir çağırışa yığılır (bax [BatchDraw]).
 		if _step[i] >= 1.0:
-			draw_circle(tip, maxf(r * 0.14, 4.6), Color(Palette.OUTLINE, 0.78))
-			draw_circle(tip, maxf(r * 0.065, 2.0), Color(_light, 0.82))
+			BatchDraw.disc(self, tip, maxf(r * 0.14, 4.6), Color(Palette.OUTLINE, 0.78))
+			BatchDraw.disc(self, tip, maxf(r * 0.065, 2.0), Color(_light, 0.82))
 		else:
-			draw_circle(tip, maxf(r * 0.06, 2.0), Color(_light, 0.45))
+			BatchDraw.disc(self, tip, maxf(r * 0.06, 2.0), Color(_light, 0.45))
 
 
 ## İki qatlı kontakt kölgəsi. Dairə əvəzinə gövdənin hadisəsiz silueti işlənir:
@@ -2298,7 +2301,7 @@ func _draw_cilia_lite(r: float, rush: float, heading: float) -> void:
 
 
 func _draw_core(r: float, strain: float) -> void:
-	draw_circle(_core, r * 0.62, Color(_shadow.lerp(Palette.DANGER, strain * 0.35), 0.45))
+	BatchDraw.disc(self, _core, r * 0.62, Color(_shadow.lerp(Palette.DANGER, strain * 0.35), 0.45))
 
 
 ## Orqanellalar — mikrobun içindəki toplar. Oyunun ƏSAS oxunma vasitəsi:
@@ -2362,12 +2365,15 @@ func _draw_inner_balls(r: float) -> void:
 			# İşıq nöqtəsi dairələrdəki ilə eyni səbəbdəndir: forma yox, PARLAQ
 			# NÖQTƏ sayılır. Ulduzda yoxdur idi.
 			if lit:
-				draw_circle(p - Vector2(dot * 0.26, dot * 0.26), dot * 0.30,
+				BatchDraw.disc(self, p - Vector2(dot * 0.26, dot * 0.26), dot * 0.30,
 					Color(Palette.TEXT, 0.75))
 			continue
-		draw_circle(p, dot, Color(_light, 0.95))
+		# Toplar disk teksturası ilə çəkilir: hamısı (nüvə ilə birlikdə) BİR
+		# çəkiliş çağırışıdır. Əvvəl hər top ayrıca `draw_circle` poliqonu idi və
+		# 15 toplu mikrob kadrda 15–30 çağırış edirdi (bax [BatchDraw]).
+		BatchDraw.disc(self, p, dot, Color(_light, 0.95))
 		if lit and lod < 1:
-			draw_circle(p - Vector2(dot * 0.3, dot * 0.3), dot * 0.35, Color(Palette.TEXT, 0.8))
+			BatchDraw.disc(self, p - Vector2(dot * 0.3, dot * 0.3), dot * 0.35, Color(Palette.TEXT, 0.8))
 
 
 ## Amöbün superi — bağlı qabıq görüntüsü.
@@ -2384,7 +2390,7 @@ func _draw_cyst(r: float, fade := 1.0) -> void:
 	# Qabıq həm SOLUR, həm də QAPANIR: açılan sist gövdəyə yaxınlaşıb itir.
 	# Tək alfa ilə o, sadəcə şəffaflaşardı və "açıldı" hissi verməzdi.
 	var shell := r + SHIELD_GAP * 0.5 * fade
-	draw_circle(Vector2.ZERO, shell + 3.0, Color(Palette.OUTLINE, 0.55 * fade))
+	BatchDraw.disc(self, Vector2.ZERO, shell + 3.0, Color(Palette.OUTLINE, 0.55 * fade))
 	# Qabıq qalınlaşdırılıb (7 → 10) və işıq tərəfində parıltı alıb: yeni
 	# qalın konturlu gövdənin yanında köhnə qabıq gövdənin öz haşiyəsi kimi
 	# oxunurdu, "üstünə bağlanmış zireh" kimi yox.
@@ -2441,7 +2447,7 @@ func _draw_net(r: float, fade := 1.0) -> void:
 	# çox sönük DOLDURULUR — içəridəki hər şey oxunur, amma sahənin özü
 	# "yer" kimi görünür — və sərhədin altında tünd altlıq var.
 	var pulse := 0.5 + 0.5 * sin(_t * 3.4)
-	draw_circle(Vector2.ZERO, reach, Color(_light, 0.07 * fade))
+	BatchDraw.disc(self, Vector2.ZERO, reach, Color(_light, 0.07 * fade))
 	draw_arc(Vector2.ZERO, reach, 0.0, TAU, 72,
 		Color(Palette.OUTLINE, 0.35 * fade), 8.0, true)
 	draw_arc(Vector2.ZERO, reach, 0.0, TAU, 72,
@@ -2451,15 +2457,24 @@ func _draw_net(r: float, fade := 1.0) -> void:
 
 	# Uzanan şüalar. Ayaqların ÖZÜ deyil — onlar yerdə qalır; bunlar tordur.
 	# Yığılanda şüalar da GERİ ÇƏKİLİR: tor sadəcə şəffaflaşmır, bağlanır.
+	#
+	# Əvvəl BÜTÜN şüalar, sonra uclar: xətt və disk növbələşsəydi, hər şüa iki
+	# ayrı çəkiliş çağırışı olardı (bax [BatchDraw]).
 	var n := 16
+	var rays := PackedVector2Array()
+	var tips := PackedVector2Array()
 	for i in n:
 		var ang := TAU * float(i) / float(n) + _t * 0.20
 		var dir := Vector2.from_angle(ang)
 		# Uzunluq növbə ilə dəyişir: bərabər uzunluqlu şüalar çarx kimi görünür.
 		var len := reach * (0.72 + 0.28 * sin(_t * 2.2 + float(i) * 1.3))
 		len = lerpf(r * 0.98, len, fade)
-		draw_line(dir * (r * 0.98), dir * len, Color(_light, 0.62 * fade), 2.6)
-		draw_circle(dir * len, 3.8, Color(Palette.TEXT, 0.75 * fade))
+		rays.push_back(dir * (r * 0.98))
+		rays.push_back(dir * len)
+		tips.push_back(dir * len)
+	draw_multiline(rays, Color(_light, 0.62 * fade), 2.6)
+	for tip in tips:
+		BatchDraw.disc(self, tip, 3.8, Color(Palette.TEXT, 0.75 * fade))
 
 
 ## Sivri uclu orqanella. Uc sayı tək deyil, CÜTDÜR (14 nöqtə = 7 uc) və

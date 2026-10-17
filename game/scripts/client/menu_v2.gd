@@ -365,6 +365,8 @@ func _ready() -> void:
 	var link := Friends.take_friend_link()
 	if not link.is_empty():
 		_open_friends.call_deferred(false, link)
+	# Brauzerdə "Oyun hazırlanır…" örtüyü menyu çəkiləndən sonra götürülür.
+	Settings.web_page_ready()
 
 
 func _process(delta: float) -> void:

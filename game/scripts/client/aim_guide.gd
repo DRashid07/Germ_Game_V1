@@ -121,7 +121,8 @@ func _draw_path() -> void:
 			continue
 		var s := fposmod(phase - walked, DOT_GAP)
 		while s < seg:
-			draw_circle(a.lerp(b, s / seg), 3.5, dot)
+			# Disk — nöqtələr bir çəkiliş çağırışına yığılır (bax [BatchDraw]).
+			BatchDraw.disc(self, a.lerp(b, s / seg), 3.5, dot)
 			s += DOT_GAP
 		walked += seg
 		# Səkmə nöqtəsi — kiçik halqa: "top burada döndü".

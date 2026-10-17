@@ -821,6 +821,7 @@ game/                    Godot layihəsi
       shot_prediction.gd Öz topunun proqnozu — serveri gözləmədən uçur və dəyir
       water_motes.gd     Suda asılı zərrəciklər — axını gözlə görünən edir
       minimap.gd         Petri qabının kiçik xəritəsi
+      batch_draw.gd      Dairə və nazik halqa — bir çəkiliş çağırışına yığılan variant
       touch_stick.gd     Üzən virtual joystick (hərəkət)
       fire_button.gd     Top atma düyməsi (basılı saxlananda davamlı atəş)
       super_button.gd    Super düyməsi — maye dolumu, hazır nəbzi və işıq zolağı
@@ -832,7 +833,7 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        593 headless test (`--simtest`)
+      sim_test.gd        604 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -912,7 +913,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (593 test)
+# Simulyasiya + World + dostluq/komanda testləri (604 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1252,6 +1253,83 @@ bir və sıxlıq dəyişəndə bir sətir düşür:
 
 Ölçü serverə göndərilmir: yeni RPC köhnə APK-ların RPC nömrələrini sürüşdürərdi
 (Godot onları metod adına görə sıralayır).
+
+**8. Galaxy A04s sinfi — brauzer, yoxsa APK?** (2026-10-17)
+
+Şikayət: A04s kimi telefonlarda brauzerdə oyun donur. Sual: səbəb brauzerdirmi,
+yoxsa APK da bu telefonlarda donacaq?
+
+Cihaz: Exynos 850 — **səkkiz kiçik Cortex-A55** nüvə (2.0 GHz, böyük nüvə yoxdur),
+Mali-G52 MP1, 3/4 GB, 720×1600 90 Hz ekran. Geekbench 6 tək nüvə **216** — bu
+kompüterdən (Ryzen AI 7 350) ~13 dəfə, MİNİMUM-un hesablandığı Helio G85-dən
+(~420, 4-cü bənd) iki dəfə zəif. Oyun onu düzgün tanıyır: `deviceMemory` 2 və ya 4,
+GPU adı Mali-G52 → MİNİMUM, 30 kadr, kətan 1.25.
+
+Masaüstü Chrome, telefon emulyasiyası, MİNİMUM, onlayn oyun, **13× yavaş CPU**
+(A04s-in modeli), 45 s:
+
+| | Əvvəl | İndi |
+|---|---:|---:|
+| FPS | 5.7 | **7.0** |
+| Kadrın işi, orta / p90 | 149 / 233 ms | **118 / 177 ms** |
+| Kadrda WebGL əmri | 5 874 | **3 929** |
+| Kadrda çəkiliş çağırışı | 145 | **97** |
+
+Üstəlik açılış: fayllar 2 s-də gəlir, menyu isə **24–28 s**-də çıxır (mühərrik,
+shader-lər, menyunun qurulması); matça girişdə ekran **~3.2 s** donur (arena
+skriptləri yüklənir).
+
+Eyni **Android** cihazında (emulyator: Android 14, Chrome 113, `-gpu host`) eyni
+onlayn ssenari, MİNİMUM, 30 kadr — APK ilə brauzer yan-yana:
+
+| | APK | Brauzer, əvvəl | Brauzer, indi |
+|---|---:|---:|---:|
+| Əsas axının kadr işi | 8–12 ms | 23–27 ms | **16 ms** |
+| Bütün CPU kadr başına | 10–14 ms | 42–43 ms | **34 ms** |
+| Bunun GPU prosesi (Chrome) | — | 22–24 ms | 18 ms |
+| 30 kadr tutulurmu | bəli | yox (28.8–29.3) | bəli |
+
+**Nəticə: donmanın əsas səbəbi brauzerdir.** Eyni oyun brauzerdə təxminən **üç dəfə
+çox CPU** yeyir: WebGL hər GL əmrini yoxlayıb ayrıca GPU prosesinə ötürür (Chrome-un
+GPU prosesi tək başına APK-nın bütün işindən çoxdur), oyunun özü isə tək axında
+WebAssembly-dir. A04s-də bu, ~7–13 FPS deməkdir — donma hissi. Masaüstündə native
+build kadrı 3.2 ms işləyir; ×13 ilə APK A04s-də təxminən **20–25 FPS** verir: donmur,
+amma sıx döyüşdə 30-u tam tutmur. Bu sinif telefon üçün tövsiyə APK-dır. Rəqəmlər
+emulyasiyadır — A04s əlimizdə yoxdur; real telefonda 7-ci bənddəki `[perf]` sətri ilə
+yoxlanmalıdır.
+
+Brauzerdə düzəldilənlər:
+
+- **Kadr həddi boş dövrsüz.** Godot 4.7-nin thread-siz veb build-ində `Engine.max_fps`
+  kadrlar arasını `usleep` ilə doldurur, emscripten-də isə əsas axında `usleep` BOŞ
+  DÖVRDÜR. Ölçülüb: kadrın işi 4.4 ms, requestAnimationFrame çağırışı isə 32.8 ms —
+  bir nüvə oyun boyu 100% fırlanırdı (istilik, batareya, brauzerin GPU prosesinə
+  qalmayan vaxt). İndi brauzerdə `Engine.max_fps = 0`, hədd isə `web/shell.html`-də
+  kadr buraxmaqla tətbiq olunur ([`Settings._apply_frame_cap`](game/scripts/shared/settings.gd),
+  `germSetFrameCap`). Kadr çağırışı 32.8 → **4.0 ms**, renderer prosesinin CPU-su kadr
+  başına 33.8 → **7.5 ms**. Kadr büdcəsini hesablayan kod indi `Settings.frame_cap()`-i oxuyur.
+- **Dairələr bir çağırışda** ([`BatchDraw`](game/scripts/client/batch_draw.gd)).
+  `draw_circle` və `draw_arc` hər biri ayrıca poliqondur — öz GPU buferi, öz çəkiliş
+  çağırışı; yenidən çəkiləndə bufer silinib təzədən yaradılır (antialias-lı qövs üç
+  poliqondur). Bir sessiyada qatları növbə ilə gizlədib ölçüləndə kadrın ~150
+  çağırışından ~61-i HUD idi, onun da çoxu minimap: 26 maneənin hər biri ayrı
+  `draw_circle`. İndi dairə mipmap-lı ağ disk teksturasıdır, nazik halqa isə xətt
+  seqmentləri — ikisi də ardıcıl gələndə bir çağırışa yığılır. HUD 61 → ~10 çağırış,
+  kadr 146 → 87, kadrda yaradılan poliqon 41 → 17. Mikrobun topları, nüvəsi, ayaq
+  ucları, partlayış damcıları və nişan nöqtələri də belədir. Görüntü eynidir, kiçik
+  nöqtələrin kənarı hətta hamarlaşıb (əvvəl 3 piksellik dairə kvadrat çıxırdı).
+- **"Oyun hazırlanır…"** Yükləmə bitəndən menyunun ilk kadrına qədər (A04s-də 20+ s)
+  ekranda dolu tərəqqi zolağı donub qalırdı. İndi yazı və üç nöqtə görünür; nöqtələr
+  yalnız `transform`/`opacity` ilə oynayır, yəni əsas axın məşğul olanda da hərəkət
+  edir (13× yavaş CPU-da pəncərə şəkilləri ilə yoxlanıb). Örtük oyunun ilk ekranı
+  çəkiləndə götürülür ([`Settings.web_page_ready`](game/scripts/shared/settings.gd)),
+  oyun xəbər verməsə 60 s sonra özü.
+
+APK-da çəkiliş dəyişikliyinin təsiri kiçikdir (masaüstü native: kadr 3.24 → 3.21 ms) —
+orada GL çağırışı onsuz da ucuzdur. Növbəti addımlar ölçüyə görə: açılışın böyük
+hissəsi mühərrikin özüdür (wasm, 3D shader-lər) — 3D-siz xüsusi veb şablonu onu
+qısaldardı (Emscripten ilə build tələb edir); A04s-də brauzerin kadrını isə əsasən
+Godot-un kanvas render-i (hər batch ~25 WebGL əmri) və GDScript məntiqi təyin edir.
 
 ### Telefon uyğunluğu — ölçülmüş vəziyyət
 
@@ -2015,6 +2093,32 @@ UDP 27015 portu açıq olmalıdır.
 > Telefon brauzerində yeni `LineEdit` əlavə edəndə onu [`WebText.attach`](game/scripts/client/web_text.gd)
 > ilə bağla (bax «Telefon brauzerində yazı»). Yoxlamaq üçün emulyator kifayət
 > deyil: masaüstü Chrome-un telefon rejimi fokusu həmişə qəbul edir.
+
+> ⚠️ **Brauzerdə `Engine.max_fps` qoyma — o, BOŞ DÖVRDÜR.**
+>
+> Godot 4.7-nin thread-siz veb build-ində kadr həddi kadrlar arasını `usleep` ilə
+> doldurur, emscripten-də isə əsas axında `usleep` fırlanmadır: 30 kadrlıq hədd ilə
+> bir nüvə oyun boyu 100% yüklü qalırdı və bu, heç bir ölçüdə "yavaşlıq" kimi
+> görünmürdü — kadr vaxtı düz 33.3 ms çıxırdı. Hədd brauzerdə səhifədədir
+> (`germSetFrameCap`, bax [`Settings._apply_frame_cap`](game/scripts/shared/settings.gd)),
+> kadr büdcəsini hesablayan kod isə `Settings.frame_cap()`-i oxuyur — `Engine.max_fps`
+> orada 0-dır. `sim_test` arena kodunda `Engine.max_fps` yazılmasına icazə vermir.
+
+> ⚠️ **`JavaScriptBridge.eval` JS-in `true`-sunu bool yox, int 1 qaytarır.**
+>
+> `JavaScriptBridge.eval("... === 'function'") == true` müqayisəsi int ilə bool
+> olduğu üçün xəta verir və funksiya səssizcə dayanır — release build-də heç nə
+> yazılmır. Kadr həddi elə buna görə ilk sınaqda köhnə yola düşmüşdü. JS-dən ədəd
+> qaytar (`? 1 : 0`) və `float(...)` ilə müqayisə et.
+
+> ⚠️ **İsti çəkilişdə `draw_circle` / `draw_arc` işlətmə — hər biri ayrıca poliqondur.**
+>
+> Godot 4.7-nin GLES3 render-ində (brauzerdə WebGL2) hər dairə öz GPU buferi və öz
+> çəkiliş çağırışıdır, yenidən çəkiləndə bufer silinib təzədən yaradılır;
+> antialias-lı qövs üç poliqondur. Kadrda çəkilən yerlərdə [`BatchDraw`](game/scripts/client/batch_draw.gd)
+> işlət: disk və nazik halqa ardıcıl gələndə bir çağırışdır. Disk və xətti NÖVBƏLƏŞDİRMƏ
+> — hər keçid yeni çağırışdır: əvvəl bütün disklər, sonra bütün xətlər. `sim_test`
+> mikrob, minimap, partlayış və nişan xəttində `draw_circle` qalmadığını yoxlayır.
 
 ## Assetlər — bir vacib məhdudiyyət
 

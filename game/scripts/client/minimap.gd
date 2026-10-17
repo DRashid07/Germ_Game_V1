@@ -35,6 +35,9 @@ func _init() -> void:
 	_dots_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_dots_layer.draw.connect(_draw_dots)
 	add_child(_dots_layer)
+	# Dairələr disk teksturası ilə çəkilir (bax [BatchDraw]); nöqtələr qatı süzgəci
+	# valideyndən götürür.
+	BatchDraw.use_mipmaps(self)
 
 
 func _ready() -> void:
@@ -61,8 +64,11 @@ func _draw() -> void:
 	var r := minf(size.x, size.y) * 0.5 - 2.0
 	var k := r / Const.WORLD_RADIUS
 
-	draw_circle(c, r, Color(Palette.DISH, 0.85))
-	draw_arc(c, r, 0.0, TAU, 48, Color(Palette.DISH_EDGE, 0.9), 2.0, true)
+	# Dairələr [BatchDraw] ilə çəkilir. Əvvəl hər `draw_circle` ayrıca poliqon və
+	# ayrıca çəkiliş çağırışı idi: 26 maneə ilə minimap kadrda ~45 çağırış edirdi —
+	# brauzerdə HUD-un ən bahalı hissəsi (bax README, «Zəif telefonda donma»).
+	BatchDraw.disc(self, c, r, Color(Palette.DISH, 0.85))
+	BatchDraw.ring(self, c, r, 0.0, TAU, 48, Color(Palette.DISH_EDGE, 0.9), 2.0)
 
 	# YAŞ ZONA — TƏK QALAN-da qab quruyub daralır.
 	#
@@ -77,9 +83,9 @@ func _draw() -> void:
 		# içi ilə çölü demək olar eyni rəngdə qalırdı və sərhəd yalnız 2 px-lik
 		# xətt idi. Halbuki xəritənin bu hissəsi "hara qaçım" sualına cavab
 		# verir: TƏHLÜKƏLİ sahə seçilməlidir, təhlükəsiz olan yox.
-		draw_circle(c, r, Color(Palette.DANGER, 0.20))
-		draw_circle(c, wr, Color(Palette.DISH, 0.95))
-		draw_arc(c, wr, 0.0, TAU, 40, Color(Palette.WARNING, 0.95), 2.5, true)
+		BatchDraw.disc(self, c, r, Color(Palette.DANGER, 0.20))
+		BatchDraw.disc(self, c, wr, Color(Palette.DISH, 0.95))
+		BatchDraw.ring(self, c, wr, 0.0, TAU, 40, Color(Palette.WARNING, 0.95), 2.5)
 
 	# Maneələr — oriyentir üçün sönük ləkələr.
 	#
@@ -94,31 +100,33 @@ func _draw() -> void:
 		if i < broken.size() and DishMap.wall_gone(broken[i]):
 			continue
 		var o := list[i]
-		draw_circle(c + Vector2(o.x, o.y) * k, maxf(o.z * k, 1.5), _kind_color(int(o.w)))
+		BatchDraw.disc(self, c + Vector2(o.x, o.y) * k, maxf(o.z * k, 1.5), _kind_color(int(o.w)))
 
 
 ## Mikroblar — qabın üstündəki ayrı qatda (bax [member _dots_layer]).
 func _draw_dots() -> void:
 	var c := size * 0.5
 	var k := (minf(size.x, size.y) * 0.5 - 2.0) / Const.WORLD_RADIUS
+	# Əvvəl BÜTÜN nöqtələr, sonra halqalar: disk və xətt fərqli çəkiliş növüdür,
+	# növbələşsəydilər hər nöqtə ayrıca çağırış olardı (bax [BatchDraw]).
+	for dot in _dots:
+		BatchDraw.disc(_dots_layer, c + Vector2(dot[0]) * k, 4.5 if bool(dot[2]) else 3.0, dot[1])
 	for dot in _dots:
 		var p: Vector2 = c + Vector2(dot[0]) * k
-		var col: Color = dot[1]
 		var mine: bool = dot[2]
 		var ally: bool = dot.size() > 3 and bool(dot[3])
-		_dots_layer.draw_circle(p, 4.5 if mine else 3.0, col)
 		if mine:
 			# Halqa AĞDIR, kəhrəba deyil.
 			#
 			# Əvvəl `Palette.FOCUS` idi və yaş zonanın sərhədi `Palette.WARNING` —
 			# ikisi də kəhrəba, yəni matçın sonunda öz nöqtən daralan sərhədə
 			# qarışırdı. Xəritədə oyunçunun ƏN ÇOX axtardığı şey özüdür.
-			_dots_layer.draw_arc(p, 7.0, 0.0, TAU, 16, Color(Palette.TEXT, 0.95), 1.8, true)
+			BatchDraw.ring(_dots_layer, p, 7.0, 0.0, TAU, 16, Color(Palette.TEXT, 0.95), 1.8)
 		elif ally:
 			# YOLDAŞ halqası — komanda rejimlərinin ikinci tanıma kanalı
 			# (birincisi ad rəngi, üçüncüsü membrandakı halqadır).
 			# Onsuz xəritədə yoldaş rəqibdən heç cür seçilmirdi.
-			_dots_layer.draw_arc(p, 6.0, 0.0, TAU, 16, Color(Palette.ALLY, 0.95), 1.8, true)
+			BatchDraw.ring(_dots_layer, p, 6.0, 0.0, TAU, 16, Color(Palette.ALLY, 0.95), 1.8)
 
 
 ## Maneə növünün xəritə rəngi.

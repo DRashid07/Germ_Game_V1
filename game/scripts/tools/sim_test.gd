@@ -118,6 +118,8 @@ static func run() -> int:
 	_test_web_dpr_limits()
 	_test_germ_shape_reuse()
 	_test_germ_redraw_rate()
+	_test_batch_draw()
+	_test_frame_cap()
 	_test_map_layouts()
 	_test_arena_core_is_free()
 	_test_bush_hides()
@@ -2140,6 +2142,55 @@ static func _test_germ_redraw_rate() -> void:
 			due += 1
 	_check(due == 6, "öz mikrobun həmişə hər kadr çəkilir (%d / 6)" % due)
 	me.free()
+
+
+## Dairələr bir çəkiliş çağırışına yığılır (bax [BatchDraw]).
+##
+## Zəif telefonda brauzerin ən böyük xərci çəkiliş çağırışlarıdır: hər
+## `draw_circle` ayrıca poliqon, buferi və çağırışıdır. Kadrda ən çox çəkilən
+## yerlərə (mikrob, minimap, partlayış damcıları, nişan nöqtələri) yenidən
+## `draw_circle` yazılsa, bu test xəbər verir.
+static func _test_batch_draw() -> void:
+	var pts := BatchDraw.ring_points(Vector2(10, -4), 7.0, 0.0, TAU, 16)
+	_check(pts.size() == 30, "halqa: 16 nöqtə = 15 seqment (%d nöqtə)" % pts.size())
+	var on_circle := true
+	var joined := true
+	for i in pts.size():
+		on_circle = on_circle and absf(pts[i].distance_to(Vector2(10, -4)) - 7.0) < 0.001
+		if i % 2 == 1 and i + 1 < pts.size():
+			joined = joined and pts[i].is_equal_approx(pts[i + 1])
+	_check(on_circle and joined and pts[0].is_equal_approx(pts[pts.size() - 1]),
+		"halqa: seqmentlər dairənin üstündədir, bitişikdir və qapanır")
+	var arc := BatchDraw.ring_points(Vector2.ZERO, 5.0, 0.0, PI * 0.5, 3)
+	_check(arc.size() == 4 and arc[3].is_equal_approx(Vector2(0, 5)),
+		"qövs: son nöqtə bucağın sonundadır")
+
+	var imp := ConfigFile.new()
+	_check(imp.load("res://assets/sprites/disc.png.import") == OK
+		and bool(imp.get_value("params", "mipmaps/generate", false)),
+		"disk teksturası mipmap ilə idxal olunur — 3 piksellik nöqtə pilləsiz çıxsın")
+
+	for path in ["res://scripts/client/germ_visual.gd", "res://scripts/client/minimap.gd",
+			"res://scripts/client/burst_fx.gd", "res://scripts/client/aim_guide.gd"]:
+		var src := FileAccess.get_file_as_string(path)
+		_check(not src.is_empty() and not src.contains("draw_circle("),
+			"%s: kadrda çəkilən dairələr BatchDraw ilədir, `draw_circle` yoxdur" % path.get_file())
+
+
+## Kadr həddi: kadr büdcəsini hesablayan kod `Engine.max_fps`-i yox,
+## [method Settings.frame_cap]-i oxuyur — brauzerdə `Engine.max_fps` 0-dır və
+## hədd səhifədədir (bax [method Settings._apply_frame_cap]).
+static func _test_frame_cap() -> void:
+	var keep := Engine.max_fps
+	Settings._apply_frame_cap(30)
+	_check(Engine.max_fps == 30 and Settings.frame_cap() == 30,
+		"brauzer deyil: hədd Godot-un özündədir (%d / %d)" % [Engine.max_fps, Settings.frame_cap()])
+	Settings._apply_frame_cap(0)
+	_check(Settings.frame_cap() == 0, "həddsiz: 0")
+	Engine.max_fps = keep
+	var src := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	_check(not src.is_empty() and not src.contains("Engine.max_fps"),
+		"arena kadr büdcəsini Settings.frame_cap()-dan oxuyur, Engine.max_fps-dən yox")
 
 
 ## Zərbə donması: animasiya dayanır, parıltının ömrü isə uzanmır.

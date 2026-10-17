@@ -62,6 +62,8 @@ var _icon: Texture2D = null
 func _ready() -> void:
 	custom_minimum_size = Vector2(radius * 2.0, radius * 2.0)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# Disklər (bax [BatchDraw]) və ikon kiçildiləndə pilləsiz qalsın.
+	BatchDraw.use_mipmaps(self)
 
 
 func _process(delta: float) -> void:
@@ -173,7 +175,7 @@ func _draw() -> void:
 	r *= scale
 
 	# Fon — atəş düyməsi ilə eyni material, bir az kiçik.
-	draw_circle(c, r, Color(Palette.PANEL, 0.72))
+	BatchDraw.disc(self, c, r, Color(Palette.PANEL, 0.72))
 
 	# Rədd cavabı — kilidli düyməyə basanda qırmızı halqa sönür.
 	# Basılışın CAVABSIZ qalmaması üçündür: səbəb yazısı HUD-da çıxır, amma
@@ -189,7 +191,7 @@ func _draw() -> void:
 		var pulse := 0.5 + 0.5 * sin(_t * 4.2)
 		draw_arc(c, r + 9.0, 0.0, TAU, 44, Color(gold, 0.10 + 0.20 * pulse), 6.0, true)
 		draw_arc(c, r + 4.0, 0.0, TAU, 44, Color(gold, 0.30 + 0.35 * pulse), 3.0, true)
-		draw_circle(c, r - 3.0, Color(gold, 0.88 + 0.12 * pulse))
+		BatchDraw.disc(self, c, r - 3.0, Color(gold, 0.88 + 0.12 * pulse))
 		draw_arc(c, r, 0.0, TAU, 44, gold.lerp(Color.WHITE, 0.25), 5.0, true)
 		# İşıq zolağı halqa boyunca qaçır — "hazırdır" siqnalının ikinci kanalı.
 		var sweep := _t * 3.2
@@ -204,7 +206,7 @@ func _draw() -> void:
 		draw_arc(c, r, 0.0, TAU, 44, Color(Palette.TEXT_MUTED, 0.75), 5.0, true)
 		# Üstündən kilid xətti — atəş düyməsindəki "sursat yoxdur" xətti ilə
 		# eyni dildir, oyunçu onu artıq tanıyır (bax [method FireButton._draw]).
-		draw_circle(c, r - 3.0, Color(Palette.TEXT_MUTED, 0.14))
+		BatchDraw.disc(self, c, r - 3.0, Color(Palette.TEXT_MUTED, 0.14))
 		_draw_face(c, r, Color(Palette.TEXT_MUTED, 0.55), true)
 		var d := Vector2(r * 0.42, r * 0.42)
 		draw_line(c - d, c + d, Color(Palette.TEXT_MUTED, 0.85), 5.0, true)
@@ -250,7 +252,7 @@ func _draw_level(c: Vector2, r: float, level: float, col: Color) -> void:
 	if level <= 0.001:
 		return
 	if level >= 0.999:
-		draw_circle(c, r, col)
+		BatchDraw.disc(self, c, r, col)
 		return
 	# Səviyyə xəttinin bucağı: y = r - 2r·level ⇒ sin(a) = 1 - 2·level.
 	var a := asin(clampf(1.0 - 2.0 * level, -1.0, 1.0))

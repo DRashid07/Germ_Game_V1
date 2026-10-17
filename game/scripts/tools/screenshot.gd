@@ -32,6 +32,13 @@ func _process(_delta: float) -> void:
 	if _frames < delay_frames + _taken * every:
 		return
 	set_process(false)
+	# Pəncərə bəzən MİNİMALLAŞDIRILMIŞ açılır (başqa pəncərə fokusdadırsa). Onda
+	# Godot heç nə çəkmir və aşağıdakı `frame_post_draw` heç vaxt gəlmir.
+	if get_window().mode == Window.MODE_MINIMIZED:
+		print("[shot] pəncərə minimallaşdırılıb — bərpa edilir")
+		get_window().mode = Window.MODE_WINDOWED
+		get_window().move_to_foreground()
+		await get_tree().create_timer(0.5).timeout
 	# Kadrın tam çəkilməsini gözləyirik, yoxsa boş şəkil alınır.
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()

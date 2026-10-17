@@ -1791,6 +1791,9 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	var flags := int(entry[Const.GF.FLAGS])
 	me.charge = (flags & Const.GFlag.CHARGE_MASK) >> Const.GFlag.CHARGE_SHIFT
 	var super_on := (flags & Const.GFlag.SUPER) != 0
+	# Super əvvəlki snapshot-da da işləyirdi — sayğac aşağıda, yenidən oynatmadan
+	# ƏVVƏL geri çəkilir (bax həmin yer).
+	var super_cont := super_on and _super_on_srv
 	if not super_on:
 		me.super_t = 0.0
 	elif not _super_on_srv:
@@ -1853,6 +1856,20 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	# Yaxın rəqiblərin kölgəsi də eyni snapshot-dan qurulur və girişlərlə birlikdə
 	# irəli aparılır (bax [method _sync_proxies]).
 	_sync_proxies()
+	# Davam edən superin sayğacı oynatmanın BAŞLANĞICINA qaytarılır.
+	#
+	# Gözləyən girişlərin hər biri canlı proqnozda bir dəfə addımlanıb və sayğacı
+	# artıq azaldıb; aşağıdakı oynatma onu İKİNCİ dəfə azaldırdı. Gecikmə ilə
+	# (~200 ms, 6 gözləyən giriş) hər snapshot 0.2 s yeyirdi: ayaqlının 4
+	# saniyəlik toru və amöbün kisti öz ekranında ~0.7 s sonra sönürdü, server
+	# isə superi tam müddət işlədirdi — oyunçu "ulti işləmir" görürdü. Kist üstəlik
+	# proqnozda vaxtından əvvəl açılır, mikrob yeriyib geri dartılırdı. Məşqdə
+	# gözləyən giriş olmadığı üçün görünmürdü. Kirpiklinin superi anidir.
+	#
+	# Bayrağın QALXDIĞI snapshot-da bu lazım deyil: orada sayğac serverin
+	# başlanğıc anından qurulur və oynatma onu düz bugünə çatdırır.
+	if super_cont:
+		me.super_t += pending.size() * Const.TICK_DELTA
 	# Hadisələr saxlanmır: eyni atəş səsi hər düzəlişdə təkrar çalınmamalıdır.
 	for inp in pending:
 		pred.step_movement(_pred_inputs(inp), Const.TICK_DELTA, false)

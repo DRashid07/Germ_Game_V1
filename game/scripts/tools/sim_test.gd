@@ -39,6 +39,7 @@ static func run() -> int:
 	_test_duo_revive_disconnect()
 	_test_duo_revive_cancel_result()
 	_test_super_survives_packet_pileup()
+	_test_super_timer_survives_reconcile()
 	_test_spawn_inside_wet_zone()
 	_test_trio_rounds()
 	_test_ranking_matches_board()
@@ -3535,6 +3536,94 @@ static func _test_super_survives_packet_pileup() -> void:
 	once.tick(Const.TICK_DELTA)
 	_check(o.charge == Const.SUPER_MAX,
 		"bir basılış YALNIZ bir dəfə işləyir (doluluq %d)" % o.charge)
+
+
+## Ayaqlının toru və amöbün kisti ÖZ ekranında superin bütün müddəti qalır —
+## gecikmə ilə də.
+##
+## [method Arena._reconcile] hər snapshot-da təsdiqlənməmiş girişləri yenidən
+## oynadır. Canlı proqnoz həmin tick-lərin super sayğacını artıq azaltmışdı,
+## yenidən oynatma isə onu İKİNCİ dəfə azaldırdı: ~200 ms gediş-gəlişdə hər
+## snapshot sayğacdan 0.2 s yeyirdi və 4 saniyəlik tor ekranda ~0.7 s yaşayırdı
+## (onlayn ölçülüb, bax `tools/super_probe.gd`). Server superi tam müddət
+## işlədirdi, oyunçu isə effektin dərhal sönməsini görürdü — "ulti işləmir".
+## Kist üstəlik proqnozda vaxtından əvvəl açılırdı: mikrob ekranda yeriyib geri
+## dartılırdı. Kirpiklinin superi anidir, ona görə ona toxunmurdu.
+static func _test_super_timer_survives_reconcile() -> void:
+	# Gecikmə tick-lə, bir istiqamətdə: gediş-gəliş ~200 və ~530 ms.
+	for lag in [3, 8]:
+		for kind in [Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+			_check_super_timer_online(kind, lag)
+
+
+static func _check_super_timer_online(kind: Const.Species, lag: int) -> void:
+	const PRESS := 30
+	var saved := Net.species
+	var world := World.new(81, Const.Mode.ENDLESS)
+	var g := world.add_player(A_ID, "A", kind)
+	g.balls = Const.START_BALLS
+	g.charge = Const.SUPER_MAX
+	Net.species = kind
+	var a := Arena.new()
+	a.my_id = A_ID
+	a._init_prediction()
+	var up := []          # [çatma tick-i, giriş]
+	var down := []        # [çatma tick-i, snapshot]
+	var srv_on := 0
+	var cli_on := 0
+	var cli_gaps := 0
+	var was_on := false
+	for t in 300:
+		g.safe_t = 5.0    # botların topu testi pozmasın
+		# Əvvəl çatan snapshot-lar — client kadrın əvvəlində barışır.
+		var newest: Array = []
+		while not down.is_empty() and int(down[0][0]) <= t:
+			newest = down.pop_front()[1]
+		if not newest.is_empty():
+			newest[Const.Snap.GERMS] = Const.unpack_germs(newest[Const.Snap.GERMS])
+			var me_self: Array = newest[Const.Snap.SELF]
+			a._srv_rep = int(me_self[2]) if me_self.size() > 2 else -1
+			a._anchor = Vector4(float(me_self[3]), float(me_self[4]),
+				float(me_self[5]), float(me_self[6])) if me_self.size() > 6 else Vector4.INF
+			a._last_snap = newest
+			a._snap_tick = int(newest[Const.Snap.TICK])
+			if int(me_self[Const.SelfF.ACK]) != a._ack_seen:
+				a._ack_seen = int(me_self[Const.SelfF.ACK])
+				a._ack_tick = a._snap_tick
+			for row in newest[Const.Snap.GERMS]:
+				if int(row[Const.GF.ID]) == A_ID:
+					a._reconcile(row, me_self)
+		# Client-in tick-i ([method Arena._do_tick]): giriş, proqnoz, göndəriş.
+		a._seq += 1
+		var inp := Sim.PlayerInput.make(a._seq, Vector2.RIGHT, 0.0, false, t == PRESS)
+		a.pending.append(inp)
+		a.pred.step_movement(a._pred_inputs(inp), Const.TICK_DELTA, true)
+		up.append([t + lag, inp.to_array()])
+		# Serverin tick-i.
+		while not up.is_empty() and int(up[0][0]) <= t:
+			world.accept_input(A_ID, up.pop_front()[1])
+		world.tick(Const.TICK_DELTA)
+		down.append([t + lag, world.snapshot_for(A_ID)])
+		if g.super_t > 0.0:
+			srv_on += 1
+		var on := a.me.super_t > 0.0
+		if was_on and not on and g.super_t > 0.0:
+			cli_gaps += 1
+		was_on = on
+		if on:
+			cli_on += 1
+	var name := "ayaqlının toru" if kind == Const.Species.HELIOZOAN else "amöbün kisti"
+	var need := roundi(Const.super_time(int(kind)) / Const.TICK_DELTA)
+	var rtt := roundi(2.0 * lag * Const.TICK_DELTA * 1000.0)
+	_check(srv_on >= need - 1, "%s serverdə tam müddət işləyir, %d ms (%d / %d tick)"
+		% [name, rtt, srv_on, need])
+	# Yuxarı hədd də var: görüntü serverin bayrağı sönənə qədər qalır, yəni ən
+	# çoxu bir gediş-gəliş və quyruq qədər uzun (bax [constant Arena.SUPER_TAIL]).
+	_check(cli_on >= need - 1 and cli_on <= need + 2 * lag + 4 and cli_gaps == 0,
+		"%s ÖZ ekranında da tam müddət qalır, %d ms gecikmə ilə (%d / %d tick, %d qırılma)"
+			% [name, rtt, cli_on, need, cli_gaps])
+	a.free()
+	Net.species = saved
 
 
 ## Oyunçu QURU zonada doğulmur — qabın kənarı ilk tick-i gözləmir.

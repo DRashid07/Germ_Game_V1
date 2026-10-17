@@ -1960,6 +1960,25 @@ UDP 27015 portu açıq olmalıdır.
 
 ## Assetlər — bir vacib məhdudiyyət
 
+> ⚠️ **Yenidən oynatma sayğacı İKİNCİ dəfə azaldır — onlayn ulti "işləmirdi".**
+>
+> [`Arena._reconcile`](game/scripts/client/arena.gd) hər snapshot-da mikrobu
+> serverin halına qaytarır və təsdiqlənməmiş girişləri yenidən oynadır. Atəşin
+> soyuması bunu düzgün keçirdi, çünki server onu göndərir və oynatma serverin
+> dəyərindən başlayır. Superin qalan vaxtı isə GÖNDƏRİLMİR (yalnız "işləyir"
+> biti) — oynatma CANLI sayğacdan başlayırdı, canlı proqnoz isə həmin tick-ləri
+> artıq saymışdı. ~200 ms gediş-gəlişdə hər snapshot sayğacdan 0.2 s yeyirdi:
+> ayaqlının 4 saniyəlik toru və amöbün kisti öz ekranında ~0.7 s sonra sönürdü,
+> kist üstəlik proqnozda tez açılır, mikrob yeriyib geri dartılırdı. Server
+> superi tam müddət işlədirdi və rəqiblər onu düzgün görürdü — səhv yalnız
+> oyunçunun ÖZ ekranında idi. Kirpiklinin superi anidir, ona toxunmurdu; məşqdə
+> gözləyən giriş olmadığı üçün görünmürdü.
+>
+> Qayda: canlı proqnozun saydığı hər sayğac oynatmadan ƏVVƏL oynatmanın
+> başlanğıcına qaytarılmalıdır — ya serverin dəyəri ilə, ya da gözləyən
+> girişlərin sayı qədər geri çəkilərək. `_test_super_timer_survives_reconcile`
+> bunu 200 və 530 ms gecikmə ilə qoruyur.
+
 > ⚠️ **SVG-də `<text>` elementi işlətmə.** Godot SVG-ni ThorVG ilə rasterləşdirir,
 > ThorVG isə mətn elementlərini **sükutla atır** — heç bir xəta vermir, sadəcə
 > yazı görünmür.

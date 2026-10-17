@@ -832,13 +832,14 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        584 headless test (`--simtest`)
+      sim_test.gd        593 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
       hit_probe.gd       Vuruşu EKRANDA ölçür: toxunuş → parıltı, topun rəqibdən keçməsi
       net_probe.gd       Şəbəkəni ölçür: snapshot boşluğu, gecikmə, ACK donması (`--net-probe`)
       stall_probe.gd     Donmanı kadr-kadr ölçür: bufer boşluğu, geri sıçrayış (`--stall-probe`)
+      super_probe.gd     Superi həqiqi düymə ilə basır: server, proqnoz, görüntü (`--super-probe`)
       screenshot.gd      Redaktorsuz ekran görüntüsü
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
@@ -911,7 +912,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (584 test)
+# Simulyasiya + World + dostluq/komanda testləri (593 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1365,6 +1366,63 @@ matçın içində — açılır, bağlananda matç davam edir), mühərrik xəta
 > başlanğıcda saxlayıb sonda geri yazır. Xarici `timeout` agenti öldürsə, bu
 > addım icra olunmur, ona görə `--agent-limit` həmişə `timeout`-dan qısa olmalıdır.
 > Pəncərəni kiçiltmə: Godot kiçildilmiş pəncərəni çəkmir və kadr çəkilmir.
+
+### Superi düymə ilə yoxlamaq
+
+[`super_probe.gd`](game/scripts/tools/super_probe.gd) super düyməsinə həqiqi
+toxunuşla basır və zəncirin hər halqasını ayrıca yazır: düymə yandımı, server
+superi işə saldımı, "super işləyir" biti, proqnozun sayğacı və mikrobun öz
+görüntüsü nə qədər qaldı, görüntü yanıb-söndümü, açılış effekti çıxdımı.
+Çıxış kodu 3 = ən azı bir cəhd alınmadı.
+
+```bash
+# Məşq: doluluğu yerli dünyada özü doldurur, hər növü təkrarlana bilən şəkildə sınayır
+GODOT --path game --resolution 1280x720 --max-fps 60 \
+      -- --practice --species 1 --super-probe 5 [--super-probe-shots C:/yol/qovluq]
+
+# Onlayn: avtomatik oyunçu oynayır, superi isə YALNIZ probe düymə ilə basır
+GODOT --headless --max-fps 60 --path game -- --autoclient \
+      --host ws://127.0.0.1:27015 --species 1 --super-probe 6 --quit-after 170
+```
+
+Onlayn rejimdə cavab serverin snapshot-undan ölçülür, proqnozdan yox — proqnoz
+superi həmişə "işlədir". Lokal server gecikməsizdir və bəzi xətaları göstərmir:
+telefon bağlantısını yoxlamaq üçün client-i gecikmə əlavə edən TCP proksidən
+keçir (hər istiqamətdə 70±30 ms bəs edir; proksi baytların SIRASINI
+saxlamalıdır, yoxsa WebSocket axını pozulur).
+
+Probe məhz belə bir xəta tapdı — aşağıdakı tələyə bax ([«Yenidən oynatma
+sayğacı ikinci dəfə azaldır»](#tələlər--səssiz-uğursuzluqlar)). 70±30 ms
+gecikmə ilə, öz ekranında:
+
+| Növ | Server | Əvvəl | İndi |
+|---|---|---|---|
+| Kirpikli (ani) | işləyir | işləyir | işləyir |
+| Ayaqlı — tor | 4.0 s | 0.95 s | 4.2 s |
+| Amöb — kist | 2.5 s | 0.65–1.13 s, yanıb-sönür | 2.65 s |
+
+Məşqdə hər şey düzgün görünürdü: orada gözləyən giriş yoxdur.
+
+Probe ikinci xətanı da tapdı: öz superinin açılış effekti (`fx_t`) serverin
+hadisəsini interpolyasiya anında gözləyirdi. Kirpiklinin superinin yeganə
+görüntüsü trixosist partlayışıdır — o, məşqdə 130 ms, onlayn bir gediş-gəliş
+üstəgəl bufer qədər gec çıxırdı, mikrob isə proqnozda dərhal geri sıçrayırdı və
+partlayış onun arxasında, köhnə yerdə yanırdı. İndi öz superin effekti atəş
+kimi proqnozdan, basılan tick-də oynanır ([`Arena._play_super`](game/scripts/client/arena.gd));
+serverin hadisəsi onu yalnız təsdiqləyir və ikinci dəfə oynatmır
+([`Arena._take_own_super`](game/scripts/client/arena.gd)), proqnoz görməyəndə
+isə gecikmədən oynadır. Probe effektin sayını da yoxlayır (`fx_n` = 1):
+70±30 ms gecikmə ilə üç növdə `fx_t` 33 ms-dir — bir tick.
+
+Amöbün superində probe atəş düyməsinə də basır və topları iki yerdə sayır:
+ekranda uçan (proqnoz) və serverin həqiqətən atdığı. Köhnə kodda super
+toxunulmaz qabıq (kist) idi və atəş qadağan idi, amma kist öz ekranında ~0.7
+s-də "bitirdi" və proqnoz atəşə icazə verirdi — bir superdə 6–7 top ekranda
+uçurdu, serverdə isə SIFIR idi (oyunçu "vuruşlar rəqibə dəymir" görürdü).
+Oyunçu məhz bu hissi superin özü kimi istədi: indi amöbün superi MİNİQANDIR —
+qalxan yoxdur, amöb yerində donur, düymə basılı qaldıqca 0.25 s-də bir PULSUZ
+top atır (bax [`Sim._step_germs`](game/scripts/shared/sim.gd)). Probe superdə
+topların atıldığını və ekrandakı hər topun serverdə də olduğunu yoxlayır.
 
 ### Xəritənin bir yerini gözlə yoxlamaq
 

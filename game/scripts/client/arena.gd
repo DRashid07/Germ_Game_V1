@@ -148,6 +148,10 @@ var _super_on_srv := false
 
 ## Şəbəkə testi üçün: joystick əvəzinə avtomatik giriş üretilir.
 var auto_input := false
+## Avtomatik giriş superi özü işlətsinmi. `false` — superi DÜYMƏ ilə basan
+## sınaq üçündür (bax `tools/super_probe.gd`): yoxsa avtomatik oyunçu onu
+## düymə yanan tick-də özü xərcləyirdi.
+var auto_super := true
 
 var _seq := 0
 var _tick_accum := 0.0
@@ -1560,7 +1564,7 @@ func _auto_sample() -> Sim.PlayerInput:
 	# tor, kist) avtomatik testlə HEÇ VAXT ekrana düşmürdü — onları yalnız
 	# botlarda, təsadüfən tutmaq olurdu. İndi `--practice --shot` ilə hər növün
 	# superi təkrarlana bilən şəkildə çəkilir.
-	var use_super := me.super_ready()
+	var use_super := _super_requested() if not auto_super else me.super_ready()
 	return Sim.PlayerInput.make(_seq, move, aim, fire, use_super, _view_tick())
 
 

@@ -108,6 +108,7 @@ func _start_practice(args: PackedStringArray) -> void:
 
 	_setup_screenshot(args)
 	_setup_perf(args)
+	_setup_super_probe(args)
 
 
 ## Pəncərə portret olanda kadrı YATAY saxlayır.
@@ -214,6 +215,17 @@ func _setup_perf(args: PackedStringArray) -> void:
 	get_tree().root.add_child.call_deferred(probe)
 
 
+## `--super-probe N` — superi həqiqi düymə ilə N dəfə basıb yoxlayır (bax `tools/super_probe.gd`).
+func _setup_super_probe(args: PackedStringArray) -> void:
+	var n := _arg_value(args, "--super-probe", "")
+	if n.is_empty():
+		return
+	var probe = _tool("super_probe").new()
+	probe.trials = maxi(1, int(n))
+	probe.shots_dir = _arg_value(args, "--super-probe-shots", "")
+	get_tree().root.add_child.call_deferred(probe)
+
+
 ## `--shot <yol>` verilibsə, bir neçə kadr sonra görüntü çəkib çıxır.
 ## Səhnə dəyişimindən sağ çıxsın deyə node kökə əlavə olunur.
 func _setup_screenshot(args: PackedStringArray) -> void:
@@ -250,6 +262,7 @@ func _start_auto_client(args: PackedStringArray) -> void:
 	client.net_probe = args.has("--net-probe")
 	client.net_probe_csv = _arg_value(args, "--net-probe-csv", "")
 	get_tree().root.add_child.call_deferred(client)
+	_setup_super_probe(args)
 
 	# `--shot` burada da işləməlidir: onsuz ONLAYN oyunun görüntüsünü çəkmək
 	# mümkün deyildi və adların, rənglərin, geri sıçramanın şəbəkə üzərindən

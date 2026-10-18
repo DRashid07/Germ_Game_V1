@@ -367,6 +367,11 @@ func _ready() -> void:
 		_open_friends.call_deferred(false, link)
 	# Brauzerdə "Oyun hazırlanır…" örtüyü menyu çəkiləndən sonra götürülür.
 	Settings.web_page_ready()
+	# Mikrobun shader-ləri menyu göründükdən SONRA kompilyasiya olunur, arenanın ilk
+	# anında yox (bax [method GermGPU.warm_up]). `load` ilə: tipli istinad
+	# GermVisual-ı da menyunun açılışında kompilyasiya etdirərdi.
+	get_tree().create_timer(0.4).timeout.connect(func() -> void:
+		load("res://scripts/client/germ_gpu.gd").warm_up(self))
 
 
 func _process(delta: float) -> void:

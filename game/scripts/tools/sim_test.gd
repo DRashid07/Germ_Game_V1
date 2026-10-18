@@ -120,6 +120,11 @@ static func run() -> int:
 	_test_germ_redraw_rate()
 	_test_batch_draw()
 	_test_frame_cap()
+	_test_germ_gpu_contract()
+	_test_germ_gpu_rows()
+	_test_germ_gpu_shape_sync()
+	_test_germ_gpu_mesh()
+	_test_germ_gpu_fans()
 	_test_map_layouts()
 	_test_arena_core_is_free()
 	_test_bush_hides()
@@ -2191,6 +2196,412 @@ static func _test_frame_cap() -> void:
 	var src := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
 	_check(not src.is_empty() and not src.contains("Engine.max_fps"),
 		"arena kadr büdcəsini Settings.frame_cap()-dan oxuyur, Engine.max_fps-dən yox")
+
+
+## Mikrobun GPU yolu (bax [GermGPU]): shader və skript EYNİ sətir quruluşunu,
+## eyni qat nömrələrini və eyni uniform adlarını işlədir. Biri dəyişib o biri
+## unudulsa, shader səhv texeli oxuyur və ya uniform sıfır qalır — xəta yox,
+## sadəcə yanlış şəkil çıxır, ona görə tutmaq lazımdır.
+static func _test_germ_gpu_contract() -> void:
+	var src := FileAccess.get_file_as_string("res://shaders/germ.gdshader")
+	var shape := FileAccess.get_file_as_string("res://shaders/germ_shape.gdshader")
+	var consts := (GermGPU as Script).get_script_constant_map()
+	var differ := []
+	for key: String in consts:
+		if key.begins_with("L_") or key in ["RING0", "SRING0", "LEGS0", "COL_MID", "COL_SMID"]:
+			if not src.contains("const int %s = %d;" % [key, consts[key]]):
+				differ.append(key)
+	# Kontur keçidi eyni sütunlara yazır və eyni sabit nöqtə kodunu işlədir.
+	for pair in [["COL_SHADOW", GermGPU.SRING0], ["COL_MID", GermGPU.COL_MID],
+			["COL_SMID", GermGPU.COL_SMID]]:
+		if not shape.contains("const int %s = %d;" % pair):
+			differ.append("germ_shape:" + str(pair[0]))
+	for line in ["const float RANGE = 256.0;", "const float STEPS = 128.0;"]:
+		if not src.contains(line) or not shape.contains(line):
+			differ.append(line)
+	_check(not src.is_empty() and not shape.is_empty() and differ.is_empty(),
+		"shader-lər və GermGPU eyni sütunları, qat nömrələrini və kodu işlədir (fərqli: %s)" % str(differ))
+
+	var gd := FileAccess.get_file_as_string("res://scripts/client/germ_gpu.gd")
+	var written := {}
+	for m in RegEx.create_from_string("set_shader_parameter\\(\"(\\w+)\"").search_all(gd):
+		written[m.get_string(1)] = true
+	var unset := []
+	for code: String in [src, shape]:
+		for m in RegEx.create_from_string("\\nuniform \\w+ (\\w+)").search_all(code):
+			if not written.has(m.get_string(1)):
+				unset.append(m.get_string(1))
+	var unknown := []
+	for name: String in written:
+		var known := false
+		for code: String in [src, shape]:
+			known = known or code.contains(" %s;" % name) or code.contains(" %s :" % name)
+		if not known:
+			unknown.append(name)
+	_check(unset.is_empty() and unknown.is_empty() and written.size() > 20,
+		"hər uniform yazılır və yazılan hər ad shader-də var (yazılmayan %s, naməlum %s)"
+			% [str(unset), str(unknown)])
+	# Kontur keçidinin öz dünyası olmalıdır: yoxsa arenanın WorldEnvironment-i (glow,
+	# tonemap) onun kodlanmış baytlarına tətbiq olunur və bütün konturlar zibilə dönür.
+	_check(gd.contains("_shape_pass.own_world_3d = true") and gd.contains("_shape_pass.use_hdr_2d = false"),
+		"kontur keçidi öz dünyasındadır və 8 bitlik hədəfdir (mühit ona sızmır)")
+
+	# Sığır: kontur ən çox 44 nöqtə (hədəfdə bir texel bir nöqtə), ayaqlar ən çox 13.
+	_check(GermVisual.CRAWL_POINTS <= GermGPU.SRING0 - GermGPU.RING0
+		and GermVisual.MEMBRANE_POINTS <= GermGPU.SRING0 - GermGPU.RING0
+		and GermGPU.SRING0 + GermVisual.CRAWL_POINTS <= GermGPU.COL_MID
+		and GermGPU.COL_SMID < GermGPU.OUT_WIDTH
+		and GermGPU.LEGS0 + GermVisual.LEGS_MAX <= GermGPU.WIDTH,
+		"kontur, kölgə konturu, mərkəzlər və ayaqlar yerinə sığır")
+
+
+## Sətir GDScript yolunun EYNİ vəziyyətidir: konturun ədədləri köhnə yolun öz
+## funksiyalarından gəlir (_membrane_args, _crawl_scalars, _event_params,
+## Sim.hit_shape, _eject_strain), ayaqların ucları eyni addımdan. Konturun özünü
+## GPU qurur — onun GDScript konturu ilə fərqi `--germ-bench --bench-verify` ilə
+## ölçülür (2026-10-18: hər növdə ≤ 0.006 px, yəni sabit nöqtə addımının yarısı).
+static func _test_germ_gpu_rows() -> void:
+	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		var g := GermVisual.new()
+		g.setup(3, "A", false, kind)
+		g.hit_fit = true
+		var cap := 30
+		var r := Const.germ_radius(cap)
+		for i in 50:
+			g.net_vel = Vector2(Const.germ_speed(cap), 0.0)
+			g.apply(Vector2(float(i) * 2.5, 0.0), 0.4, 9, cap, false, true)
+			g._process(1.0 / 60.0)
+		# Atəşin ilk kadrı: həm membranın dartılması, həm gövdənin sıxılması işləyir.
+		g.eject(0.4)
+		g._process(1.0 / 60.0)
+		g.is_ally = true
+
+		var bytes := g.gpu_row_bytes()
+		var f := bytes.to_float32_array()
+		var amoeba: bool = kind == Const.Species.AMOEBA
+		var e := g._event_params(r)
+		var hit := Sim.hit_shape(int(kind), cap, g.net_vel)
+		var push := r * GermVisual.EJECT_DEPTH * g._eject_strain()
+		var head := bytes.size() == GermGPU.WIDTH * GermGPU.TEXEL and is_equal_approx(f[0], r) \
+			and int(f[8]) == (GermVisual.CRAWL_POINTS if amoeba else GermVisual.MEMBRANE_POINTS) \
+			and _near(f[14], g.aim) and int(f[15]) == int(kind) and f[43] == 1.0 and f[46] == 1.0 \
+			and _near(f[47], g._super_fade)
+		_check(head, "növ %d: sətir — radius, nöqtə sayı, nişan, növ, yoldaş və ellips bayrağı" % int(kind))
+		var events: bool = _near(f[48], hit.x) and _near(f[49], hit.y) and _near(f[50], hit.z) \
+			and push != 0.0 and _near(f[51], push) \
+			and e[0] != Vector2.ZERO and _near(f[52], e[0].x) and _near(f[53], e[0].y) \
+			and _near(f[54], e[1]) and _near(f[55], e[2]) \
+			and _near(f[56], e[3].x) and _near(f[57], e[3].y) and _near(f[58], e[4]) \
+			and _near(f[59], e[5]) and _near(f[60], e[6].x) and _near(f[61], e[6].y)
+		_check(events, "növ %d: sətir — toqquşma ellipsi, atəş dartılması, hadisə deformasiyası" % int(kind))
+		var form := false
+		if amoeba:
+			var c := g._crawl_scalars(r, g._heading(), g._rush(), 1.0, g._accel_bonus(), g._base_stretch_cap())
+			var plain := g._crawl_scalars(r, g._heading(), g._rush(), 1.0, 0.0, GermVisual.TOTAL_STRETCH_MAX)
+			var head_c: Vector2 = c["head_c"]
+			var tail_c: Vector2 = c["tail_c"]
+			form = _near(f[62], c["pull"]) and _near(f[63], plain["pull"]) \
+				and _near(f[64], head_c.x) and _near(f[65], head_c.y) \
+				and _near(f[66], tail_c.x) and _near(f[67], tail_c.y) \
+				and _near(f[68], c["head_r"]) and _near(f[69], c["body_r"]) \
+				and _near(f[70], c["tail_r"]) and _near(f[71], c["spread"]) \
+				and _near(f[75], c["flow"]) and _near(f[76], c["flow_mean"])
+		else:
+			var m := g._membrane_args()
+			form = _near(f[62], GermVisual._stretch(m[2], g._accel_bonus(), g._base_stretch_cap())) \
+				and _near(f[63], GermVisual._stretch(m[2], 0.0, GermVisual.TOTAL_STRETCH_MAX)) \
+				and _near(f[64], m[0]) and _near(f[65], fposmod(g._t * m[1], TAU)) \
+				and _near(f[66], fposmod(g._t * m[1] * 0.7, TAU)) and _near(f[67], m[3])
+		_check(form, "növ %d: sətir — formanın ədədləri köhnə yolun funksiyalarındandır" % int(kind))
+		if kind == Const.Species.HELIOZOAN:
+			var legs := int(f[44])
+			var feet := legs == g._legs and legs >= GermVisual.LEGS_MIN
+			for i in legs:
+				var o := GermGPU.LEGS0 * 4 + i * 4
+				feet = feet and Vector2(f[o], f[o + 1]).distance_to(g._leg_tip(i, r)) < 0.001 \
+					and (f[o + 2] == 1.0) == (g._step[i] >= 1.0)
+			_check(feet, "ayaqlı: %d ayağın ucu və addım vəziyyəti sətirdədir" % legs)
+		g.free()
+
+
+static func _near(a: float, b: float) -> bool:
+	return absf(a - b) <= 0.0001 * maxf(1.0, absf(b))
+
+
+## Konturun GDScript riyaziyyatı dəyişsə, GPU onu özü bilmir — shaders/germ_shape.gdshader
+## həmin formulların əl ilə yazılmış surətidir və səssizcə KÖHNƏ formanı çəkərdi.
+## Test həmin funksiyaların mətninin (şərhsiz) izini saxlayır: iz dəyişəndə düşür.
+## Onda: shader-i də uyğunlaşdır, `--germ-bench --bench-verify` ilə fərqin 0.01 px-dən
+## az olduğunu yoxla, sonra buradakı izi yenilə.
+const GPU_SHAPE_SOURCE_MD5 := "e194d36be89bdb4148fe9cb72d341fed"
+## Superin görünüşü də eyni qaydadadır: _draw_cyst / _draw_net dəyişsə, shaders/germ.gdshader-in
+## L_CYST_* / L_NET_* qatlarını da uyğunlaşdır, `--bench-render pair` ilə yan-yana yoxla.
+const GPU_SUPER_SOURCE_MD5 := "83921676b8ed134913734599216fe666"
+
+
+static func _test_germ_gpu_shape_sync() -> void:
+	var shape := _source_md5(["_membrane_args", "_membrane", "_stretch", "_crawl_body",
+		"_crawl_scalars", "_smooth_ring", "_reach", "_fit_hit", "_strain", "_eject_strain",
+		"_eject_cross", "_event_deform", "_event_params", "_axis_transform",
+		"_uniform_transform", "_shift", "_ring_centre", "_ring_area", "_birth_scale",
+		"_shape_ring", "_accel_bonus", "_base_stretch_cap"])
+	_check(shape[1].is_empty() and shape[0] == GPU_SHAPE_SOURCE_MD5,
+		"konturun GDScript kodu GPU surəti ilə uyğundur (iz %s; tapılmayan %s) — dəyişibsə germ_shape.gdshader-i yenilə, --bench-verify ilə yoxla, izi dəyiş"
+			% [shape[0], str(shape[1])])
+	var sup := _source_md5(["_draw_super", "_draw_cyst", "_draw_net"])
+	_check(sup[1].is_empty() and sup[0] == GPU_SUPER_SOURCE_MD5,
+		"superin GDScript görünüşü GPU surəti ilə uyğundur (iz %s; tapılmayan %s) — dəyişibsə germ.gdshader-in super qatlarını yenilə, --bench-render pair ilə yoxla, izi dəyiş"
+			% [sup[0], str(sup[1])])
+
+
+## germ_visual.gd-dəki funksiyaların şərhsiz mətninin izi: `[md5, tapılmayanlar]`.
+static func _source_md5(names: Array) -> Array:
+	var lines := FileAccess.get_file_as_string("res://scripts/client/germ_visual.gd").split("\n")
+	var code := ""
+	var missing := []
+	for name: String in names:
+		var start := -1
+		for i in lines.size():
+			if lines[i].begins_with("func %s(" % name) or lines[i].begins_with("static func %s(" % name):
+				start = i
+				break
+		if start < 0:
+			missing.append(name)
+			continue
+		var i := start
+		while i < lines.size():
+			var line := lines[i].strip_edges(false, true)
+			if i > start and not line.is_empty() and not line.begins_with("\t") \
+					and not line.begins_with("#"):
+				break
+			var bare := line.strip_edges()
+			if not bare.is_empty() and not bare.begins_with("#"):
+				code += line + "\n"
+			i += 1
+	return [code.md5_text(), missing]
+
+
+## Mesh-lərin üçbucaqları düzgündür: indekslər hədd daxilində, hər üçbucaq TƏK
+## qatdadır və qatlar artan sırada gəlir — GPU üçbucaqları sıra ilə çəkir, yəni
+## bu, GDScript yolundakı çəkiliş sırasının özüdür.
+static func _test_germ_gpu_mesh() -> void:
+	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		for front in [false, true]:
+			var arrays: Array = GermGPU.front_arrays(kind) if front else GermGPU.body_arrays(kind)
+			var verts: PackedVector2Array = arrays[Mesh.ARRAY_VERTEX]
+			var tris: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var valid := tris.size() > 0 and tris.size() % 3 == 0 and verts.size() < 65536
+			var single := true
+			var ordered := true
+			var layers := {}
+			var last := 0
+			for t in tris.size() / 3:
+				var a := tris[t * 3]
+				var b := tris[t * 3 + 1]
+				var c := tris[t * 3 + 2]
+				if mini(a, mini(b, c)) < 0 or maxi(a, maxi(b, c)) >= verts.size():
+					valid = false
+					break
+				var layer := int(verts[a].x)
+				single = single and int(verts[b].x) == layer and int(verts[c].x) == layer
+				ordered = ordered and layer >= last
+				last = layer
+				layers[layer] = true
+			_check(valid and single and ordered,
+				"növ %d, %s mesh: %d təpə, üçbucaqlar tək qatda və çəkiliş sırası ilə"
+					% [int(kind), "ön" if front else "gövdə", verts.size()])
+			if not front:
+				var cilia := layers.has(GermGPU.L_CILIA)
+				var legs := layers.has(GermGPU.L_LEG_DARK) and layers.has(GermGPU.L_SKELETON)
+				var gel := layers.has(GermGPU.L_SKIN2) and layers.has(GermGPU.L_OUTLINE2)
+				_check(cilia == (kind == Const.Species.CILIATE)
+					and legs == (kind == Const.Species.HELIOZOAN)
+					and gel == (kind == Const.Species.AMOEBA)
+					and layers.has(GermGPU.L_CORE) != (kind == Const.Species.AMOEBA),
+					"növ %d: hərəkət orqanı və qatlar yalnız öz növündədir" % int(kind))
+			else:
+				var cyst := layers.has(GermGPU.L_CYST_SHELL) and layers.has(GermGPU.L_CYST_SEAM)
+				var net := layers.has(GermGPU.L_NET_EDGE) and layers.has(GermGPU.L_NET_TIP)
+				_check(cyst == (kind == Const.Species.AMOEBA)
+					and net == (kind == Const.Species.HELIOZOAN)
+					and layers.has(GermGPU.L_ALLY) and layers.has(GermGPU.L_FLASH),
+					"növ %d: ön qatda super yalnız öz növündədir (qabıq / tor)" % int(kind))
+
+
+## GPU gövdəni öz mərkəzindən YELPİKLƏ doldurur, Godot isə çoxbucaqlını
+## üçbucaqlara bölürdü. İkisi yalnız forma o mərkəzə görə ULDUZVARİ olanda eynidir:
+## yoxsa yelpiyin bəzi üçbucaqları tərsinə çevrilir və siluetdən bayıra rəng
+## tökülür. Hər üç növ sürətlənmə, döngə, dayanma, zərbə, atəş, doluluq və doğuş
+## zamanı yoxlanılır — gövdə, kölgə, amöbün iç qatı və işıq qatı.
+static func _test_germ_gpu_fans() -> void:
+	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		for cap in [10, 30, 60]:
+			var g := GermVisual.new()
+			g.setup(2, "A", false, kind)
+			g.hit_fit = true
+			g._birth_t = 0.0
+			var r := Const.germ_radius(cap)
+			var top := Const.germ_speed(cap)
+			var dt := 1.0 / 60.0
+			var pos := Vector2.ZERO
+			var heading := 0.0
+			var bad := 0
+			var first := ""
+			var frames := 420
+			for i in frames:
+				# Dayanma → sürətlənmə → döngələr → tam sürət → yavaş geri dönüş.
+				var pace := clampf(float(i) * dt - 0.5, 0.0, 1.0) if i < 300 else 0.25
+				heading += 0.09 if i % 90 < 30 else -0.025
+				var vel := Vector2.from_angle(heading) * top * pace
+				pos += vel * dt
+				g.net_vel = vel
+				var fill := 0.1 + 0.9 * float(i % 140) / 139.0
+				g.apply(pos, heading + 1.1, int(round(fill * float(cap))), cap, false, true)
+				if i % 23 == 7:
+					g.flash(heading + 2.0)
+				if i % 31 == 11:
+					g.eject(heading + 0.6)
+				g._process(dt)
+				var broken := _gpu_fans_broken(g, r)
+				if not broken.is_empty():
+					bad += 1
+					if first.is_empty():
+						first = " — ilki kadr %d: %s (doğuş %.2f, zərbə %.2f, atəş %.2f, sürət %.2f)" % [
+							i, broken, g._birth_t, g._hit_squash_t, g._eject_t, g._rush()]
+			_check(bad == 0, "GPU yelpiyi: növ %d, tutum %d — gövdə hər kadr öz mərkəzinə görə ulduzvaridir (%d / %d kadr pozuldu%s)"
+				% [int(kind), cap, bad, frames, first])
+			g.free()
+
+
+## Yelpiyi pozulan qatların adları; boşdursa hamısı düzgündür.
+static func _gpu_fans_broken(g: GermVisual, r: float) -> String:
+	var shape := g._shape_ring(r, true)
+	var shadow := shape if g._shape_steady() else g._shape_ring(r, false)
+	var ring := g._fit_hit(g._event_deform(g._strain(shape), r))
+	var mid := GermVisual._ring_centre(ring)
+	var out := []
+	if not _star_shaped(ring, mid):
+		out.append("gövdə")
+	if not _star_shaped(shadow, GermVisual._ring_centre(shadow)):
+		out.append("kölgə")
+	var lit := _lit_fan_broken(ring, mid, r)
+	if not lit.is_empty():
+		out.append("işıq " + lit)
+	if g.species == Const.Species.AMOEBA:
+		var inner := GermVisual._inset(ring,
+			maxf(r * GermVisual.CRAWL_BAND, GermVisual.CRAWL_BAND_MIN))
+		if not _star_shaped(inner, mid):
+			out.append("iç qat")
+		lit = _lit_fan_broken(inner, GermVisual._ring_centre(inner), r)
+		if not lit.is_empty():
+			out.append("iç işıq " + lit)
+	return ", ".join(out)
+
+
+## İşıq qatı: shader hər sürüşdürülmüş nöqtəni yelpiyin mərkəzindən çıxan şüa
+## boyunca gövdəyə sıxır, ona görə mərkəz HƏR İKİ konturun içində olmalı, iki
+## kontur da ona görə ulduzvari olmalıdır. Mərkəz konturlardan birinin xaricinə
+## düşəndə shader qatı çəkmir — onda CPU-nun kəsişməsi də boş (və ya bir-iki
+## piksel) olmalıdır.
+## shader-dəki `lit_centre`: namizədlər arasından iki konturun da bütöv göründüyü
+## ilk nöqtə (z = 1), yoxsa ikisinin də içində olan ilk nöqtə (z = 0.5), yoxsa heç
+## nə (z = 0). Namizədlər shader-in öz mətnindən oxunur — iki siyahı ayrıla bilməz.
+static func _gpu_lit_centre(ring: PackedVector2Array, shifted: PackedVector2Array,
+		cen: Vector2, r: float) -> Vector3:
+	var side := Vector2(-Palette.LIGHT_DIR.y, Palette.LIGHT_DIR.x)
+	var lens := cen + Palette.LIGHT_DIR * (r * (GermVisual.LIT_SHIFT + GermVisual.LIT_INSET) * 0.5)
+	var fallback := Vector3(lens.x, lens.y, 0.0)
+	for off: Vector2 in _lit_candidates():
+		var c := lens + (Palette.LIGHT_DIR * off.x + side * off.y) * r
+		if not Geometry2D.is_point_in_polygon(c, ring) or not Geometry2D.is_point_in_polygon(c, shifted):
+			continue
+		if _star_shaped(ring, c) and _star_shaped(shifted, c):
+			return Vector3(c.x, c.y, 1.0)
+		if fallback.z == 0.0:
+			fallback = Vector3(c.x, c.y, 0.5)
+	return fallback
+
+
+static var _candidates := PackedVector2Array()
+
+
+static func _lit_candidates() -> PackedVector2Array:
+	if _candidates.is_empty():
+		var src := FileAccess.get_file_as_string("res://shaders/germ.gdshader")
+		var from := src.find("LIT_CANDIDATES[")
+		var block := src.substr(from, src.find(");", from) - from)
+		for m in RegEx.create_from_string("vec2\\((-?[0-9.]+), (-?[0-9.]+)\\)").search_all(block):
+			_candidates.append(Vector2(float(m.get_string(1)), float(m.get_string(2))))
+	return _candidates
+
+
+static func _lit_fan_broken(ring: PackedVector2Array, cen: Vector2, r: float) -> String:
+	var shift := Palette.LIGHT_DIR * (r * GermVisual.LIT_SHIFT)
+	var shifted := GermVisual._shift(GermVisual._inset(ring, r * GermVisual.LIT_INSET), shift)
+	var c0 := _gpu_lit_centre(ring, shifted, cen, r)
+	var cpu := GermVisual._lit_polygon(ring, r)
+	var cpu_area := GermVisual._ring_area(cpu) if cpu.size() >= 3 else 0.0
+	if c0.z == 0.0:
+		# shader qatı çəkmir — CPU-nun kəsişməsi də boş (və ya bir-iki piksel) olmalıdır.
+		return "" if cpu_area < 3.0 else "(linza tapılmadı, CPU %.0f px² çəkir)" % cpu_area
+	if c0.z == 1.0:
+		return ""
+	# Ehtiyat mərkəz: şüa gövdədən ilk çıxışda kəsilir, yəni GPU çökəkliyin
+	# arxasını bir az az örtür. Fərq CPU-nun dəqiq kəsişməsi ilə ölçülür.
+	var gpu := _gpu_lit_emulated(ring, shifted, Vector2(c0.x, c0.y))
+	var miss := 0.0
+	for p in Geometry2D.clip_polygons(cpu, gpu):
+		miss += GermVisual._ring_area(p)
+	var spill := 0.0
+	for p in Geometry2D.clip_polygons(gpu, cpu):
+		spill += GermVisual._ring_area(p)
+	return "" if miss < 2.0 and spill < 2.0 \
+		else "(heç bir namizəd bütöv görmür: GPU %.1f px² az, %.1f px² artıq örtür)" % [miss, spill]
+
+
+## shader-dəki `lit_pt`-in GDScript surəti: hər sürüşdürülmüş nöqtə c0-dan çıxan
+## şüa boyunca gövdədən İLK çıxışa sıxılır.
+static func _gpu_lit_emulated(ring: PackedVector2Array, shifted: PackedVector2Array,
+		c0: Vector2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var n := ring.size()
+	for s in shifted:
+		var d := s - c0
+		var ds := d.length()
+		if ds < 0.0001:
+			out.append(s)
+			continue
+		d /= ds
+		var best := INF
+		for j in n:
+			var a := ring[j]
+			var e := ring[(j + 1) % n] - a
+			var den := d.cross(e)
+			if absf(den) <= 0.000001:
+				continue
+			var w := a - c0
+			var tt := w.cross(e) / den
+			var u := w.cross(d) / den
+			if tt > 0.0 and u >= 0.0 and u <= 1.0:
+				best = minf(best, tt)
+		out.append(c0 + d * minf(ds, best))
+	return out
+
+
+## Bütün (c, p_i, p_i+1) üçbucaqları eyni istiqamətdə fırlanır — yelpik
+## çoxbucaqlını dəqiq örtür, heç yerdə ikiqat və ya bayıra çıxmır.
+static func _star_shaped(pts: PackedVector2Array, c: Vector2) -> bool:
+	var n := pts.size()
+	var turn := 0.0
+	for i in n:
+		var cr := (pts[i] - c).cross(pts[(i + 1) % n] - c)
+		if absf(cr) < 0.0001:
+			continue
+		if turn == 0.0:
+			turn = signf(cr)
+		elif signf(cr) != turn:
+			return false
+	return true
 
 
 ## Zərbə donması: animasiya dayanır, parıltının ömrü isə uzanmır.

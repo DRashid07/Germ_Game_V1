@@ -13,7 +13,14 @@ func _ready() -> void:
 	get_window().size_changed.connect(_keep_landscape)
 	var args := OS.get_cmdline_user_args()
 	if args.has("--simtest"):
-		get_tree().quit(_tool("sim_test").run())
+		# Test skripti açılmasa (sintaksis xətası), `run()` çağırışı uğursuz olur və
+		# `quit` heç vaxt gəlmir — başsız proses əbədi ilişib qalırdı.
+		var tests := _tool("sim_test")
+		if tests == null or not tests.can_instantiate():
+			printerr("[simtest] sim_test.gd açılmadı — yuxarıdakı xətaya bax")
+			get_tree().quit(2)
+			return
+		get_tree().quit(tests.run())
 	elif args.has("--server"):
 		_start_server(args)
 	elif args.has("--practice"):
@@ -22,6 +29,8 @@ func _ready() -> void:
 		_start_auto_client(args)
 	elif args.has("--preview"):
 		_start_preview(args)
+	elif args.has("--germ-bench"):
+		_start_germ_bench(args)
 	elif args.has("--menu1"):
 		_start_old_menu(args)
 	elif args.has("--map"):
@@ -101,7 +110,11 @@ func _start_practice(args: PackedStringArray) -> void:
 	# Görüntü üçün mikrob hərəkətdə olsun. `--idle` bunu söndürür: avtomatik
 	# oyunçu superi hazır olan kimi işlədir, yəni HAZIR vəziyyətin (düymə,
 	# aura) şəklini başqa yolla çəkmək olmur.
-	arena.auto_input = args.has("--shot") and not args.has("--idle")
+	#
+	# `--auto` — kadr çəkmədən də avtomatik oyunçu: performans ssenarisində
+	# mikrob döyüşməlidir (qaçır, atəş açır, super işlədir), dayanmış oyunçunu
+	# botlar tez yeyir və ölçmənin qalanı başqa səhnə olur (bax PERF_PLAN, A04s).
+	arena.auto_input = (args.has("--shot") or args.has("--auto")) and not args.has("--idle")
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(arena)
 	tree.set_deferred("current_scene", arena)
@@ -159,6 +172,21 @@ func _start_preview(args: PackedStringArray) -> void:
 	_setup_screenshot(args)
 
 
+## Mikrob stendi — çəkilişin qiyməti və görüntü müqayisəsi (bax `tools/germ_bench.gd`).
+func _start_germ_bench(args: PackedStringArray) -> void:
+	var stand = _tool("germ_bench").new()
+	stand.species_arg = _arg_value(args, "--bench-species", "mix")
+	stand.count = maxi(1, int(_arg_value(args, "--bench-count", "10")))
+	stand.lod = int(_arg_value(args, "--bench-lod", "0"))
+	stand.secs = float(_arg_value(args, "--bench-secs", "8"))
+	stand.render_mode = _arg_value(args, "--bench-render", "gpu")
+	stand.verify = args.has("--bench-verify")
+	stand.delay = float(_arg_value(args, "--bench-delay", "0"))
+	stand.warm = args.has("--bench-warm")
+	var tree := get_tree()
+	tree.root.add_child.call_deferred(stand)
+	tree.set_deferred("current_scene", stand)
+	_setup_screenshot(args)
 
 
 ## Köhnə şaquli menyu — ehtiyat (bax [MainMenu]).

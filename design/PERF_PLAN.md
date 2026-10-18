@@ -155,6 +155,50 @@ Supercell kimi studiyalar performansı real zəif cihazda, büdcə ilə idarə e
 
 ### F1 — Mikrob tamamilə GPU-da, TAM detalla (2–3 həftə) — ən böyük qazanc
 
+> **Vəziyyət (2026-10-18): A, B və C addımları hazırdır, işləkdir.** Oyunun öz
+> yoludur; `--germ-cpu` köhnə yola qaytarır. Bax README «Mikrob GPU-da çəkilir».
+> C: super (amöbün qabığı, ayaqlının toru) ön mesh-in qatlarıdır — node-un öz
+> `_draw`-ı GPU yolunda heç nə çəkmir, super açıq olanda da hər kadr yenidən
+> çəkiliş yoxdur. F6-dan shader isinməsi də edilib (`GermGPU.warm_up`, menyuda).
+>
+> Aşağıdakı ilkin plandan fərqi: SDF düzbucaqlısı və ayrıca MultiMesh əvəzinə hər
+> növün **iki sabit mesh-i** var (təpələrdə kod: qat, indeks, rol), vəziyyət isə
+> float teksturasında mikrob başına bir sətirdir (~80 ədəd) — beləliklə GDScript
+> yolunun HƏR qatı (antialias-lı xətlər Godot-un öz həndəsəsi ilə) eyni sırada
+> qaldı və görüntü yan-yana stenddə bərabər çıxdı.
+>
+> **B (kontur GPU-da):** membranın konturu kiçik RGBA8 render hədəfində ayrıca
+> keçiddə qurulur (shaders/germ_shape.gdshader) — GDScript-in konturu ilə fərq
+> ≤ 0.006 px (`--germ-bench --bench-verify`). Koordinatlar 16 bitlik sabit nöqtə
+> ədədidir: float render hədəfi hər GPU-da yoxdur. Keçid öz World3D-sindədir —
+> yoxsa arenanın glow mühiti onun baytlarına tətbiq olunur. Ayaqların addımı və
+> super hələ GDScript-dədir.
+>
+> Ölçülüb (release, 10 mikrob): masaüstü stend 4.58 → **0.80 ms** kadr işi (A-dan
+> sonra 0.98 idi), 344 → **38** çağırış; emulyator APK stend 87.2 ms (MİNİMUM
+> 38.2) → **2.9 ms**; emulyator APK TƏK QALAN YÜKSƏK 35 → **57 FPS** orta,
+> 16 → **36 FPS** 1% ən pis. M1-in emulyator hədəfi (≤ 10 ms CPU/kadr) mikrob
+> üçün keçildi. B-nin emulyatordakı xalis qazancı kiçikdir: məntiq −0.6 ms, kontur
+> keçidinin sabit render xərci +0.3–0.5 ms (emulyatorda GL çağırışı bahadır);
+> mikrob başına CPU isə ~0.13 → ~0.025 ms-ə düşüb, yəni mikrob artdıqca qazanc
+> böyüyür. Zəif telefonda B-nin real qazancı ölçülməlidir.
+>
+> **A04s ssenarisi (2026-10-18, README «A04s ssenarisi»):** 1600×720, TƏK QALAN,
+> YÜKSƏK, avtomatik oyunçu (`--auto`), A, B, C və isinmə birlikdə. Emulyator
+> matçı 49 / 30 → **59 / 58 FPS** (orta / 1% ən pis), 16.7 ms-i aşan kadr 43% →
+> **1.4%**, prosessor vaxtı kadr başına 15.4 → **8.0 ms**. Ekranda 10 mikrob:
+> kompüter 4.2 → **0.86 ms**, emulyator 63 → **1.75 ms**; A04s-ə çevrilmiş təxmin
+> (×13) ~55 → ~11 ms. Mali GPU-su ölçülməyib — dövrlərə görə təxmin 10 mikroba
+> +~1 ms. Görüntü: mikrob piksellərinin 1.1–1.5%-i fərqlənir, hamısı kənar
+> antialiası. Ayrıca tapıntı: hər iki yolda matçda bəzən bir dəfə iki kadrlıq
+> 67–76 ms ilişmə olur (kompüterdə, 6 qaçışın 4-ündə, hadisədən asılı; F1-dən
+> deyil) — F6-nın növbəti işi onun mənbəyini tapmaqdır.
+>
+> Növbəti addımlar:
+> - Real Mali-də shader-lərin qiymətini ölçmək (F0): ən bahalıları kontur keçidi,
+>   rim və işıq qatıdır — konturu gəzən dövrlər.
+> - Ayaqların addımı (`_walk`) hələ GDScript-dədir — ayaqlı növün CPU işinin çoxu.
+
 **Necə edirlər:** Brawl Stars-ın personajı hazır modeldir, CPU hər kadr yalnız
 onun yerini və animasiya vaxtını ötürür. Bizim mikrob hazır şəkil ola bilməz
 (ART_BIBLE «Niyə sprite deyil»: ölçü, top sayı və addım ritmi oyunda dəyişir).

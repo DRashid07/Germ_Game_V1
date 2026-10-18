@@ -690,6 +690,9 @@ func _ready() -> void:
 	Sfx.play("spawn")
 	# Menyusuz açılışda (məşq, test client-i) brauzerin yükləmə örtüyü buradan götürülür.
 	Settings.web_page_ready()
+	# Menyudan gəlməyibsə, mikrobun shader-ləri hələ kompilyasiya olunmayıb (bax
+	# [method GermGPU.warm_up]); menyudan gəlibsə bu çağırış heç nə etmir.
+	GermGPU.warm_up(self)
 
 
 ## Bioluminessensiya — parlaq piksellər ətrafa işıq saçır.

@@ -815,6 +815,7 @@ game/                    Godot layihəsi
       main_menu.gd       KÖHNƏ şaquli menyu — ehtiyat (`--menu1`), sonra silinir
       hud.gd             Doluluq göstəricisi, liderlər, xəbərdarlıqlar, nəticə
       germ_visual.gd     Bir mikrobun görüntüsü — ÜÇ NÖV (üzür, yeriyir, sürünür)
+      germ_gpu.gd        Mikrobun GPU çəkilişi: sabit mesh-lər, vəziyyət teksturası (bax aşağıda)
       burst_fx.gd        Partlayaraq ölmə effekti (dalğa, damcı, membran parçaları)
       juice_fx.gd        Qısa VFX-lər — bütün hadisələr bir node-da, ən çox 3 batch
       shot_trails.gd     Uçan topların izi — hamısı BİR çəkiliş çağırışında
@@ -833,7 +834,7 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        604 headless test (`--simtest`)
+      sim_test.gd        641 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -845,6 +846,9 @@ game/                    Godot layihəsi
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
       perf_probe.gd      Kadr vaxtı və çəkiliş çağırışı ölçmə
+      germ_bench.gd      Mikrob stendi: çəkilişin qiyməti, köhnə və GPU yolu yan-yana (`--germ-bench`)
+  shaders/germ.gdshader  Mikrobun bütün qatları — GDScript çəkilişinin bir-bir surəti
+  shaders/germ_shape.gdshader  Mikrobun konturu — GPU-da, kadrda bir dəfə (kontur keçidi)
   assets/                SVG sprite-lar, UI, şriftlər, WAV səslər
     fonts/               Baloo 2 (başlıq) + Nunito (mətn) — bax «Şriftlər»
     ui/theme.tres        Şrift rolları; bütün Control-lar bunu oxuyur
@@ -913,7 +917,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (604 test)
+# Simulyasiya + World + dostluq/komanda testləri (641 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1000,6 +1004,153 @@ cədvəldə ayrıca ölçülməlidir.
 > qatları növlərə bölündü (bütün qida bir qatda, bütün toplar başqasında) və
 > maneələr sprite-a keçirildi. Godot yalnız ARDICIL və eyni teksturalı elementləri
 > bir çağırışa yığır — qarışıq düzülsə, hər qida topu ayrıca çağırış olur.
+
+### Mikrob GPU-da çəkilir
+
+Mikrob əvvəl hər kadr GDScript-də çəkilirdi: kölgə, iki tonlu dəri, işıq qatı,
+40-a qədər top, kontur, 30 kirpik, ayaqlar, rim, çatlar — onlarla `draw_*`
+çağırışı və onların hər nöqtəsi GDScript-də hesablanırdı. Android-də bu, kadrın
+ən böyük xərci idi: emulyatorda mikrob başına **8.7 ms** (tam detal), MİNİMUM-da
+belə 3.8 ms. Hər kadr yüzlərlə massiv yaradılırdı və Android-in yaddaş ayırıcısı
+bunu masaüstündən xeyli baha ödəyir.
+
+İndi müasir oyunlardakı kimi: **həndəsə sabit mesh-dir, hər kadr GPU-ya yalnız
+vəziyyət gedir, formanı shader qurur.** Hər növün iki sabit mesh-i var
+([`GermGPU`](game/scripts/client/germ_gpu.gd)) — təpələrində mövqe yox, kod var
+(qat, indeks, rol). Mikrobun bütün vəziyyəti ümumi float teksturasında BİR
+SƏTİRDİR — ~80 ədəd: radius, saatlar, rənglər, formanın ədədləri, ayaqların ucları
+([`GermVisual.gpu_row_bytes`](game/scripts/client/germ_visual.gd)). Tekstura kadrın
+sonunda BİR dəfə yüklənir (`frame_pre_draw`), sonra iki GPU keçidi işləyir:
+
+1. **Kontur keçidi** ([`shaders/germ_shape.gdshader`](game/shaders/germ_shape.gdshader)) —
+   kiçik RGBA8 render hədəfində (90 × mikrob sayı) hər mikrobun membranını, kölgə
+   konturunu və iki mərkəzini qurur: forma (`_membrane` / `_crawl_body`), toqquşma
+   ellipsinə sıxma, atəş dartılması, hadisə deformasiyası — GDScript yolunun eyni
+   mərhələləri, eyni sırada. Bu, GPU skinning-in məntiqidir: CPU yalnız parametr
+   verir. Nöqtədən asılı olmayan ədədləri CPU köhnə yolun ÖZ funksiyalarından alır
+   (`_membrane_args`, `_crawl_scalars`, `_event_params`) — qayda bir yerdədir.
+   Koordinat 16 bitlik sabit nöqtə ədədidir (±256 px, 1/128 px addım) və iki bayta
+   bölünür: float render hədəfi hər yerdə yoxdur (ANGLE-də "HDR" hədəf də 8 bitlik
+   çıxır), RGBA8 isə hər GPU-da var.
+2. **Əsas keçid** ([`shaders/germ.gdshader`](game/shaders/germ.gdshader)) — o
+   konturdan kirpik, top, ulduz, ayaq, rim, çat, işıq qatı, halo — hamısını çəkir.
+
+CPU-da mikrob başına qalan iş: sətrin ədədləri + iki mesh çağırışı — superdə də.
+Çəkiliş sırası dəyişməyib: gövdə qatı node-un ARXASINDA (`show_behind_parent`) →
+ön qat (super — amöbün qabığı, ayaqlının toru; yoldaş və doğuş halqaları,
+qığılcımlar, zərbə parıltısı) → ad. Node-un öz `_draw`-ı GPU yolunda heç nə çəkmir.
+
+Shader-lər ilk çəkilişdə kompilyasiya olunur; zəif telefonda bu, arenanın ilk
+anında donma olardı. Müasir oyunlardakı kimi (shader / PSO precache) bu iş qabağa
+çəkilib: menyu göründükdən 0.4 saniyə sonra üç kadr boyunca demək olar şəffaf iki
+qat və kontur keçidi çəkilir ([`GermGPU.warm_up`](game/scripts/client/germ_gpu.gd));
+menyusuz açılışda bunu arena edir. Sürücü kompilyasiya olunmuş shader-i diskdə
+saxladığı üçün bu, əsasən quraşdırmadan sonrakı ilk açılışda hiss olunur.
+
+**Görüntü itmir.** Shader-lər GDScript formullarının bir-bir surətidir; antialias-lı
+xətlər Godot-un öz `canvas_item_add_polyline` həndəsəsidir (en kompensasiyası,
+miter, 1.25 px yumşaq kənar, uc qapaqları, künc kvadratları və "özək → sol → sağ"
+sırası). Rim GDScript-dəki kimi yalnız ƏN UZUN uyğun qövsü çəkir. İşıq qatı
+Clipper kəsişməsi əvəzinə mərkəzdən yelpikdir — testlər yelpiyin hər üç növdə,
+hər ölçüdə və hər hadisədə (doğuş, zərbə, atəş, tam sürət) kəsişməni dəqiq
+örtdüyünü yoxlayır. GPU-nun konturu GDScript-in konturu ilə **0.0055 px**
+dəqiqliklə üst-üstə düşür (sabit nöqtə addımının yarısı) — hər növdə, hərəkətdə,
+atəşdə, zərbədə, toqquşma ellipsinə sıxılmada. İki fərq qəsdəndir və hər ikisi
+yaxşılaşmadır: top, pəncə və ulduz SDF ilə 1 piksellik antialias alır (CPU-nun
+ulduzları antialiassız çoxbucaqlı idi və ~6 px ölçüdə səpələnmiş piksellərə
+dönürdü), böyük halqalarda isə Godot-un açıq qalan birləşməsi yoxdur (bax «Tələlər»).
+
+Yoxlamaq:
+
+```bash
+# Yan-yana: solda köhnə yol, sağda GPU, eyni vəziyyətdə
+GODOT --path game --resolution 1280x720 --fixed-fps 60 --disable-vsync -- \
+    --germ-bench --bench-species 2 --bench-count 6 --bench-render pair \
+    --bench-secs 0 --shot C:/yol/pair.png --shot-delay 150
+# Konturların nöqtə-nöqtə müqayisəsi (GPU-dan geri oxuyur — yavaşdır)
+GODOT --path game --fixed-fps 60 -- --germ-bench --bench-species mix --bench-verify
+# Qiymət: --bench-render gpu | cpu, --bench-secs 8 (release build ilə)
+# İlk kompilyasiya: --bench-delay 0.5 [--bench-warm] — mikroblar gec yaranır,
+#   hesabat onların ilk 10 kadrının ən pisini yazır
+```
+
+Stenddə arenanın glow mühiti də var — mühit kontur keçidinə sızsa (bir dəfə
+sızmışdı, bax «Tələlər»), `--bench-verify` yüzlərlə piksel fərq göstərir. Hər
+dördüncü mikrobda super növbə ilə açılıb-bağlanır (qabıq, tor və onların keçidi).
+`--germ-cpu` bütün oyunu köhnə yola qaytarır (müqayisə və ehtiyat).
+
+Ölçülüb (2026-10-18, release, 10 mikrob):
+
+| | köhnə yol | GPU yolu |
+|---|---:|---:|
+| Masaüstü stend, kirpikli / ayaqlı / amöb — kadrın işi | 5.15 / 3.00 / 5.44 ms | **0.74 / 0.79 / 0.83 ms** |
+| Masaüstü stend, qarışıq — kadrın işi (məntiq hissəsi) | 4.58 ms (2.95) | **0.80 ms (0.21)** |
+| Masaüstü stend — çəkiliş çağırışı | 344 | **38** |
+| Emulyator APK stend, qarışıq — kadrın işi | 87.2 ms (MİNİMUM: 38.2) | **2.9 ms** |
+| Emulyator APK, TƏK QALAN, YÜKSƏK — orta / 1% ən pis | 35 / 16 FPS | **57 / 36 FPS** |
+
+Kontur keçidi (F1-B) GDScript-in qalan işini daha da azaldıb: emulyator stendində
+məntiq 1.43 → 0.85 ms, mikrob başına isə ~0.13 → ~0.025 ms. Amma keçidin özünün
+sabit render xərci var (emulyatorda ~0.3–0.5 ms, çünki orada hər GL çağırışı
+host-a ötürülür) və emulyatorun real oyun ssenarisində F1-A ilə F1-B fərqi səs-küy
+içindədir. Zəif telefonda (A55 nüvələri) GDScript emulyatordan xeyli yavaş
+işlədiyi üçün qazanc kadr başına bir neçə ms olmalıdır — bunu real cihazda ölçmək
+lazımdır.
+
+#### A04s ssenarisi
+
+Hədəf zəif telefon Galaxy A04s-dir: ekran 1600×720, Exynos 850 (8 × Cortex-A55,
+Geekbench 6 tək nüvə ~215), Mali-G52 MP1. Bu kompüterin nüvəsi (Ryzen AI 7 350,
+~2 900) ondan ~13 dəfə sürətlidir. Ssenari: məşq, TƏK QALAN, YÜKSƏK, avtomatik
+oyunçu döyüşür (`--auto`), ekran A04s ölçüsündədir.
+
+```bash
+# Kompüter, release build, kadr həddi yoxdur — orta kadr = kadrın bütün işi
+GermArena.console.exe --resolution 1600x720 --disable-vsync --max-fps 0 \
+    -- --practice --mode 1 --quality 0 --auto --perf 25 [--germ-cpu]
+# Ən pis hal — ekranda 10 mikrob:
+#   -- --germ-bench --bench-render gpu|cpu --bench-secs 10
+# Emulyator: eyni sətir APK-nın command_line/extra_args-ında (PERF_PLAN, F0),
+#   ekran A04s kimi: adb shell wm size 720x1600 && adb shell wm density 280
+```
+
+Ölçülüb (2026-10-18, hər variant növbə ilə 2–3 dəfə):
+
+| | köhnə yol | GPU yolu |
+|---|---:|---:|
+| Kompüter stend, 10 mikrob — kadrın işi / çağırış | 4.2 ms / 366 | **0.86 ms / 40** |
+| Kompüter matç — orta kadr | 1.56 ms | **1.04 ms** |
+| Emulyator stend, 10 mikrob — kadrın işi | 63 ms | **1.75 ms** |
+| Emulyator matç — orta / 1% ən pis | 49 / 30 FPS | **59 / 58 FPS** |
+| Emulyator matç — 16.7 ms-i aşan kadr | 43% | **1.4%** |
+| Emulyator matç — prosessor vaxtı kadr başına | 15.4 ms | **8.0 ms** |
+
+A04s-də (prosessor tərəfi, kompüter × 13): ekranda 10 mikrob olanda köhnə yol
+~55 ms (≤ 18 FPS), GPU yolu ~11 ms; adi matçda ~20 ms əvəzinə ~13.5 ms — 60 kadrın
+16.7 ms-lik büdcəsinə sığır. Videokartın vaxtı kompüterdə 10 mikrobda 0.30 → 0.35 ms
+artır (kontur keçidinin sabit xərci), amma mikrob başına 0.078 → 0.009 ms azalır:
+40 mikrobda 2.19 → 0.63 ms. Mali-də ölçülməyib; şeyderlərin dövrlərinə görə təxmin
+10 mikroba ~1 ms əlavə GPU işidir (ən bahası işıq qatıdır — hər təpəsi yelpiyin
+mərkəzini konturu gəzərək yenidən axtarır). Görüntü: yan-yana kadrlarda mikrobun
+piksellərinin 1.1–1.5%-i 16/255-dən çox fərqlənir — hamısı top, ulduz və uc
+kənarlarının antialiasıdır.
+
+GPU yolunda keyfiyyət səviyyəsi mikroba təsir etmir — hər səviyyədə tam detal
+çəkilir. Emulyatorun GPU-su kompüterin öz videokartıdır, yəni orada yalnız CPU
+tərəfi telefona bənzəyir; shader-lərin zəif Mali-dəki qiyməti ayrıca ölçülməlidir
+(ən bahalıları kontur keçidi, rim və işıq qatıdır — konturu gəzən dövrlər).
+Qoruyucular: `_test_germ_gpu_contract` (shader-lər və skript eyni sütunları, qat
+nömrələrini, sabit nöqtə kodunu və uniform adlarını işlədir, keçid öz
+dünyasındadır), `_test_germ_gpu_rows` (sətrin hər ədədi köhnə yolun
+funksiyalarındandır), `_test_germ_gpu_shape_sync` (konturun və ya superin GDScript
+kodu dəyişsə düşür — shader-i də yenilə, `--bench-verify` / `--bench-render pair`
+ilə yoxla, izi dəyiş), `_test_germ_gpu_mesh` (super qatları yalnız öz növündədir),
+`_test_germ_gpu_fans`.
+
+> ⚠️ **Superin görünüşünü dəyişirsənsə:** `_draw_cyst` / `_draw_net` yalnız köhnə
+> yoldur (`--germ-cpu`). Oyunda super `shaders/germ.gdshader`-in `L_CYST_*` /
+> `L_NET_*` qatlarıdır — dəyişikliyi orada da et, yoxsa ekranda heç nə dəyişmir.
+> `_test_germ_gpu_shape_sync` bunu xatırladır.
 
 ### Brauzerdə (Android) donma və kəsilmə
 
@@ -1405,7 +1556,8 @@ GODOT --path game --resolution 1280x720 --max-fps 60 \
 
 Ani hadisələr (super, partlayış, doğuş) tək kadra düşmür — ardıcıllıq çək.
 `--charge` superi dolu başladır, `--idle` avtomatik oyunçunu söndürür (HAZIR
-vəziyyətin şəkli üçün):
+vəziyyətin şəkli üçün). Avtomatik oyunçu `--shot` ilə özü qoşulur; kadr
+çəkmədən lazımdırsa (performans ssenarisi), `--auto` ver:
 ```bash
 GODOT --path game --resolution 1280x720 --max-fps 60 \
       -- --practice --species 0 --charge --shot C:/yol/s.png \
@@ -2119,6 +2271,51 @@ UDP 27015 portu açıq olmalıdır.
 > işlət: disk və nazik halqa ardıcıl gələndə bir çağırışdır. Disk və xətti NÖVBƏLƏŞDİRMƏ
 > — hər keçid yeni çağırışdır: əvvəl bütün disklər, sonra bütün xətlər. `sim_test`
 > mikrob, minimap, partlayış və nişan xəttində `draw_circle` qalmadığını yoxlayır.
+
+> ⚠️ **Godot pəncərəsi bəzən MİNİMALLAŞDIRILMIŞ açılır — onda heç nə çəkilmir.**
+>
+> Başqa pəncərə fokusdadırsa, əmr sətrindən açılan oyun pəncərəsi aşağı yığılmış
+> qala bilir. Godot onda kadr ÇƏKMİR: `frame_post_draw` gəlmir, ekran görüntüsü
+> və stend əbədi gözləyir, `--print-fps` isə düz **145 FPS** göstərir — bu,
+> oyunun sürəti deyil, mühərrikin "heç bir pəncərə çəkilə bilmir" gözləməsidir
+> (`low_processor_usage_mode_sleep_usec` = 6.9 ms). Səhv təsadüfi görünür, çünki
+> hər açılışda baş vermir. `--shot` aləti və `--germ-bench` pəncərəni özləri bərpa
+> edir (`Window.MODE_WINDOWED` + `move_to_foreground()`); yeni ölçmə aləti yazanda
+> eyni yoxlamanı qoy.
+
+> ⚠️ **`draw_arc` ilə tam dairə radius ~57 pikseldən böyük olanda QAPANMIR.**
+>
+> Godot polyline-ı yalnız ilk və son nöqtə `is_equal_approx` olanda qapalı sayır.
+> Tam dairənin son nöqtəsi `sin(TAU)·r`-dir və float-da `TAU` 2π-dən 1.7·10⁻⁷
+> böyükdür, ona görə r > 57 olanda fərq `CMP_EPSILON`-u keçir: xətt AÇIQ çəkilir,
+> iki ucunun qapaqları saat 3 istiqamətində üst-üstə düşür və yarımşəffaf
+> halqada parlaq nöqtə görünür (böyük mikrobun yoldaş halqası). GPU yolunda
+> ([`GermGPU`](game/scripts/client/germ_gpu.gd)) halqalar həmişə qapalıdır.
+
+> ⚠️ **`--script` ilə işlədilən skript layihənin `class_name` siniflərini görmür.**
+>
+> `godot --path game --script x.gd` rejimində `Const`, `GermVisual` və s.
+> "Identifier not found" verir. Layihənin kodunu sınayan yardımçı alət ya
+> `scripts/tools/`-a qoyulub boot.gd-dən çağırılmalı (`--germ-bench` kimi), ya da
+> `--simtest`-in içində test olmalıdır.
+
+> ⚠️ **SubViewport kökün dünyasını bölüşür — arenanın glow-u ona da tətbiq olunur.**
+>
+> `own_world_3d` standart olaraq `false`-dur, yəni SubViewport kökün World3D-sini
+> və onunla `WorldEnvironment`-i götürür. Arena canvas fonlu mühitlə glow qurur
+> ([`Arena._build_glow`](game/scripts/client/arena.gd)) və o, mikrobun kontur
+> keçidinin ([`GermGPU`](game/scripts/client/germ_gpu.gd)) baytlarına da tətbiq
+> olunurdu: kodlanmış koordinatlar tonemap-dan keçib zibilə dönürdü, gövdələr
+> itir, ekranda iynələr çıxırdı. Stenddə mühit olmadığı üçün hər şey dəqiq
+> görünürdü. Hesablama üçün işlədilən hər SubViewport-a `own_world_3d = true`
+> ver; stendə də arenanın mühiti əlavə olunub ki, `--bench-verify` belə sızmanı tutsun.
+
+> ⚠️ **`--simtest`-də sintaksis xətası prosesi ƏBƏDİ ilişdirirdi.**
+>
+> `sim_test.gd` açılmayanda `run()` çağırışı uğursuz olur və `quit` heç vaxt
+> gəlmirdi — başsız Godot boş dövrdə qalırdı, ölçü/test skriptləri isə vaxt
+> limitinə qədər gözləyirdi. İndi boot.gd skriptin açıldığını yoxlayır və
+> açılmayanda xəta kodu 2 ilə çıxır.
 
 ## Assetlər — bir vacib məhdudiyyət
 

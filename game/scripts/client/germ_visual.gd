@@ -579,6 +579,18 @@ var net_vel := Vector2.ZERO
 ## Yalnız oyunda açılır ([method Arena._ensure_germ]): menyu və stendlərdə
 ## server qaydası yoxdur və [member net_vel] də yazılmır.
 var hit_fit := false
+## GPU yolu (bax [GermGPU]) — mikrob ağaca girəndə açılır, əgər mümkündürsə.
+##
+## Müqayisə stendi bir nüsxəni qəsdən GDScript yolunda saxlayır (`false`), ikisi
+## yan-yana çəkilir. `--germ-cpu` isə hamısını GDScript yoluna qaytarır.
+var gpu_allowed := true
+## Mikrobun GPU sətri; −1 = GDScript yolu (testlər, başsız rejim, `--germ-cpu`).
+var _gpu_row := -1
+## Gövdə qatı node-un ARXASINDA, ön qat (halqalar, qığılcım, parıltı) adın
+## arxasında; aralarında node-un öz `_draw`-ı — super.
+var _gpu_body: Node2D
+var _gpu_front: Node2D
+var _gpu_cap := -1
 var _redraw_phase := 0
 ## Doluluq göstəricisi ani sıçramır — göz üçün yumşaq keçid.
 var _shown_fill := 0.0
@@ -657,7 +669,47 @@ func _ready() -> void:
 	_birth_t = 0.0
 	# İçindəki toplar və dairələr disk teksturası ilə çəkilir (bax [BatchDraw]).
 	BatchDraw.use_mipmaps(self)
-	queue_redraw()
+	if gpu_allowed and GermGPU.supported():
+		_gpu_attach()
+	_refresh()
+
+
+## Gövdə GPU-da çəkilir (bax [GermGPU]): iki sabit mesh qatı və mikrobun sətri.
+func _gpu_attach() -> void:
+	_gpu_row = GermGPU.acquire(self)
+	_gpu_body = GermGPU.layer(GermGPU.body_mesh(species), true, _gpu_row)
+	_gpu_front = GermGPU.layer(GermGPU.front_mesh(species), false, _gpu_row)
+	add_child(_gpu_body)
+	add_child(_gpu_front)
+	# Ad hər şeyin ÜSTÜNDƏ qalır — GDScript yolunda olduğu kimi.
+	if _label != null:
+		move_child(_gpu_front, _label.get_index())
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE and _gpu_row >= 0:
+		GermGPU.release(_gpu_row)
+		_gpu_row = -1
+
+
+## Gövdəni bu kadr yeniləyir. GDScript yolunda `_draw` növbəyə düşür; GPU yolunda
+## yalnız mikrobun sətri kadrın sonunda yazılır ([method gpu_row_bytes]) — superdə də.
+func _refresh() -> void:
+	if _gpu_row < 0:
+		queue_redraw()
+		return
+	GermGPU.submit(_gpu_row)
+	# Ön qat yalnız işi olanda çəkilir — boş mesh-in də öz çağırışı var.
+	_gpu_front.visible = is_ally or safe or _ready_fade > 0.004 or _flash > 0.0 \
+		or _super_fade > 0.004
+	if capacity != _gpu_cap:
+		_gpu_cap = capacity
+		var r := Const.germ_radius(capacity)
+		# Ən uzaq çıxan şey qamçı (2.4 r) və ayaqlardır; aura 1.25 × halo. Ayaqlının
+		# toru isə 4 r-ə qədər uzanır (bax [method _draw_net]).
+		GermGPU.set_extent(_gpu_body, r * 3.2 + 30.0)
+		GermGPU.set_extent(_gpu_front, r * (Const.NET_RADIUS
+			if species == Const.Species.HELIOZOAN else 3.2) + 30.0)
 
 
 ## [param p_species] snapshot-dan gəlir ([constant Const.GFlag.HELIOZOAN]),
@@ -680,7 +732,7 @@ var is_ally := false:
 		if _label != null and not is_local:
 			_label.add_theme_color_override("font_color",
 				Palette.ALLY if value else Palette.TEXT_MUTED)
-		queue_redraw()
+		_refresh()
 
 
 func set_identity(p_name: String, p_color: int) -> void:
@@ -695,7 +747,7 @@ func set_identity(p_name: String, p_color: int) -> void:
 	_base = Palette.germ_color(p_color)
 	_light = Palette.germ_light(p_color)
 	_shadow = Palette.germ_shadow(p_color)
-	queue_redraw()
+	_refresh()
 
 
 func setup(p_color: int, p_name: String, p_is_local: bool,
@@ -910,19 +962,26 @@ func _body_ring(r: float) -> PackedVector2Array:
 ## squash & stretch yalnız membranda qalsın; Node2D miqyası işlədilsəydi kölgə
 ## də eyni istiqamətdə uzanıb yerə təmas oxunuşunu itirərdi.
 func _shape_ring(r: float, transient: bool) -> PackedVector2Array:
-	var tension := clampf((_shown_fill - 0.6) / 0.4, 0.0, 1.0)
-	var rush := _rush()
-	var heading := _heading()
-	var rigid := species == Const.Species.HELIOZOAN
 	var bonus := _accel_bonus() if transient else 0.0
 	var cap := _base_stretch_cap() if transient else TOTAL_STRETCH_MAX
 	if species == Const.Species.AMOEBA:
-		return _fit_hit(_crawl_body(r, heading, rush, 1.0, bonus, cap))
-	return _fit_hit(_membrane(r,
-			(0.018 if rigid else 0.030) + (0.030 if rigid else 0.055) * tension,
-			(1.6 if rigid else 2.2) + (2.4 if rigid else 3.4) * tension,
-			heading, rush * (0.3 if rigid else 1.0),
-			0.0 if rigid else SOFT_AIM_BULGE, bonus, cap))
+		return _fit_hit(_crawl_body(r, _heading(), _rush(), 1.0, bonus, cap))
+	var m := _membrane_args()
+	return _fit_hit(_membrane(r, m[0], m[1], _heading(), m[2], m[3], bonus, cap))
+
+
+## Membranın titrəmə və dartılma ədədləri: `[titrəmə, tezlik, sürət payı, nişan
+## qabarığı]`. Ayaqlının gövdəsi bərkdir — az və yavaş titrəyir, sürətdə demək olar
+## dartılmır. GPU sətri də EYNİ ədədləri işlədir ([method gpu_row_bytes]).
+func _membrane_args() -> Array:
+	var tension := clampf((_shown_fill - 0.6) / 0.4, 0.0, 1.0)
+	var rigid := species == Const.Species.HELIOZOAN
+	return [
+		(0.018 if rigid else 0.030) + (0.030 if rigid else 0.055) * tension,
+		(1.6 if rigid else 2.2) + (2.4 if rigid else 3.4) * tension,
+		_rush() * (0.3 if rigid else 1.0),
+		0.0 if rigid else SOFT_AIM_BULGE,
+	]
 
 
 ## Görünən gövdə toqquşma ellipsinin İÇİNDƏ qalır ([method Sim.hit_shape]).
@@ -985,41 +1044,57 @@ func _base_stretch_cap() -> float:
 ## kontur, sel-shading və təhlükə çatları həmişə eyni son çoxbucaqlını izləyir;
 ## kölgə, ad və hərəkət orqanları isə qəsdən bu transformdan kənarda qalır.
 func _event_deform(source: PackedVector2Array, r: float) -> PackedVector2Array:
+	var e := _event_params(r)
 	var ring := PackedVector2Array(source)
-	var busy := false
+	if e[0] != Vector2.ZERO:
+		ring = _axis_transform(ring, e[0], e[1], e[2], e[3])
+	if e[4] != 1.0 or e[5] != 0.0:
+		ring = _uniform_transform(ring, e[4], e[5])
+	if e[6] != Vector2.ZERO:
+		ring = _shift(ring, e[6])
+	return ring
+
+
+## [method _event_deform]-in ədədləri: `[ox, boyuna, eninə, sürüşmə, miqyas,
+## dönmə, titrəyiş]`. Ox sıfırdırsa ox transformu yoxdur. GPU sətri də EYNİ
+## ədədləri işlədir ([method gpu_row_bytes]) — hadisə qaydası bir yerdədir.
+func _event_params(r: float) -> Array:
+	var axis := Vector2.ZERO
+	var along := 1.0
+	var across := 1.0
+	var shift := Vector2.ZERO
 	if _hit_squash_t > 0.0:
 		var left := _hit_squash_t / HIT_SQUASH_TIME
 		# İlk kadrda tam əzilir, sonra kiçik əks salınma ilə sönür — elastic-out.
 		var wave := left * left * cos((1.0 - left) * PI * 2.5)
-		ring = _axis_transform(ring, Vector2.from_angle(_hit_dir),
-			lerpf(1.0, 1.0 - HIT_SQUASH, wave),
-			lerpf(1.0, 1.0 + HIT_STRETCH, wave))
-		busy = true
+		axis = Vector2.from_angle(_hit_dir)
+		along = lerpf(1.0, 1.0 - HIT_SQUASH, wave)
+		across = lerpf(1.0, 1.0 + HIT_STRETCH, wave)
 	elif _fire_squash_t > 0.0:
 		var left := _fire_squash_t / FIRE_SQUASH_TIME
 		var k := left * left                 # ease-out: güc tez itir
-		var axis := Vector2.from_angle(_eject_dir)
-		ring = _axis_transform(ring, axis, 1.0 - FIRE_SQUASH * k,
-			1.0 + FIRE_SQUASH * k, -axis * (r * FIRE_RECOIL * k))
-		busy = true
+		axis = Vector2.from_angle(_eject_dir)
+		along = 1.0 - FIRE_SQUASH * k
+		across = 1.0 + FIRE_SQUASH * k
+		shift = -axis * (r * FIRE_RECOIL * k)
 
 	# Boşdayanma yalnız həqiqətən sakit gövdədə işləyir. İstiqamətli hadisə ilə
-	# üst-üstə düşsəydi, zərbə oxu yellənmə içində itib gedərdi.
-	if not busy and _birth_t >= BIRTH_TIME and _rush() < 0.05:
-		var breathe := 1.0 + IDLE_BREATH * sin(_t * 2.1)
-		var turn := IDLE_TURN * sin(_t * 1.7)
-		ring = _uniform_transform(ring, breathe, turn)
-
+	# üst-üstə düşsəydi, zərbə oxu yellənmə içində itib gedərdi. Doğuş pop-u ilə
+	# heç vaxt üst-üstə düşmür (biri doğuşdan SONRA, o biri doğuşda işləyir).
+	var scale := 1.0
+	var turn := 0.0
+	if axis == Vector2.ZERO and _birth_t >= BIRTH_TIME and _rush() < 0.05:
+		scale = 1.0 + IDLE_BREATH * sin(_t * 2.1)
+		turn = IDLE_TURN * sin(_t * 1.7)
 	if _birth_t < BIRTH_TIME:
-		ring = _uniform_transform(ring, _birth_scale(), 0.0)
+		scale = _birth_scale()
 
 	# Təhlükə titrəyişi rush-dan ASILI DEYİL. Sürətə bağlanan əvvəlki titrəmə
 	# dayanan dolu rəqibi sakit göstərirdi; iki qeyri-bərabər sinus bunu pozur.
-	var danger := clampf((_shown_fill - 0.6) / 0.4, 0.0, 1.0)
-	if danger >= 0.75:
-		var jitter := Vector2(sin(_t * 31.0), sin(_t * 37.0 + 1.4)) * (r * 0.015)
-		ring = _shift(ring, jitter)
-	return ring
+	var jitter := Vector2.ZERO
+	if clampf((_shown_fill - 0.6) / 0.4, 0.0, 1.0) >= 0.75:
+		jitter = Vector2(sin(_t * 31.0), sin(_t * 37.0 + 1.4)) * (r * 0.015)
+	return [axis, along, across, shift, scale, turn, jitter]
 
 
 ## Back-out əyrisi 0 → 1.12 → 1. Standart 1.70 əmsalı cəmi ~1.10 verirdi;
@@ -1085,7 +1160,7 @@ func _process(delta: float) -> void:
 			_last_pos = position
 		if delta <= 0.0:
 			if on_screen:
-				queue_redraw()
+				_refresh()
 			return
 	_t += delta
 	_accel_t = maxf(0.0, _accel_t - delta)
@@ -1130,7 +1205,7 @@ func _process(delta: float) -> void:
 	var target := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
 	_shown_fill = move_toward(_shown_fill, target, delta * 2.5)
 	if on_screen and _redraw_due():
-		queue_redraw()
+		_refresh()
 
 
 ## Bu kadr gövdə yenidən çəkilməlidirmi (bax [member redraw_step]).
@@ -1591,7 +1666,8 @@ func _draw_danger_cracks(ring: PackedVector2Array, r: float, pulse: float) -> vo
 ## yığır — sıra qarışsa, hər mikrob 15-20 ayrıca çağırış olur və mobil GPU-da
 ## əsas məhdudiyyət məhz çağırış sayıdır.
 func _draw() -> void:
-	if not alive:
+	# GPU yolunda hər şey — super də — iki mesh qatındadır (bax [GermGPU]).
+	if not alive or _gpu_row >= 0:
 		return
 
 	var r := Const.germ_radius(capacity)
@@ -1735,13 +1811,7 @@ func _draw() -> void:
 
 	# ---- super ----
 	if _super_fade > 0.004:
-		match species:
-			Const.Species.AMOEBA:
-				_draw_cyst(r, _super_fade)
-			Const.Species.HELIOZOAN:
-				_draw_net(r, _super_fade)
-			_:
-				pass
+		_draw_super(r)
 
 	# ---- yoldaş nişanı ----
 	#
@@ -1771,6 +1841,113 @@ func _draw() -> void:
 	if _flash > 0.0:
 		var f := 1.0 if _hitstop > 0.0 else _flash / FLASH_TIME
 		draw_colored_polygon(ring, Color(Palette.HIT_FLASH, 0.92 * f * f))
+
+
+## Super İŞLƏYƏRKƏN: amöbdə qabıq, ayaqlıda tor. Hər iki yol (GDScript və GPU)
+## onu buradan çəkir.
+func _draw_super(r: float) -> void:
+	match species:
+		Const.Species.AMOEBA:
+			_draw_cyst(r, _super_fade)
+		Const.Species.HELIOZOAN:
+			_draw_net(r, _super_fade)
+		_:
+			pass
+
+
+## Mikrobun GPU sətri — shader-in oxuduğu hər şey (bax [GermGPU], shaders/germ.gdshader).
+##
+## Dəyərlər [method _draw]-dakı ilə EYNİDİR və eyni funksiyalardan gəlir: kontur
+## və kölgə konturu, mərkəzlər, rənglər, saatlar, ayaqların ucları. Kirpik, top,
+## rim, çat, işıq qatı isə bu ədədlərdən shader-də qurulur.
+func gpu_row_bytes() -> PackedByteArray:
+	var r := Const.germ_radius(capacity)
+	var strain := clampf((_shown_fill - 0.6) / 0.4, 0.0, 1.0)
+	var rush := _rush()
+	var heading := _heading()
+	var danger_on := strain >= 0.75
+	var pulse := 0.5 + 0.5 * sin(_t * TAU * 6.0)
+	var tint := Palette.OUTLINE
+	if danger_on:
+		tint = Palette.OUTLINE.lerp(Palette.DANGER, 0.45 + 0.50 * pulse)
+	var born := _birth_t >= BIRTH_TIME or _birth_scale() > 0.42
+	var flash := 0.0
+	if _flash > 0.0:
+		flash = 1.0 if _hitstop > 0.0 else _flash / FLASH_TIME
+	var legs := _legs if species == Const.Species.HELIOZOAN and born else 0
+	var n := CRAWL_POINTS if species == Const.Species.AMOEBA else MEMBRANE_POINTS
+
+	# ---- konturun ədədləri — konturun özü GPU-da qurulur (germ_shape.gdshader) ----
+	# Hamısı köhnə yolun ÖZ funksiyalarından gəlir: forma (_membrane_args,
+	# _crawl_scalars), toqquşma ellipsi, atəş dartılması (_eject_strain) və
+	# hadisə deformasiyası (_event_params). Kölgə hadisəsiz formadır: dartılma
+	# əlavəsi və hədd onda "transient = false" ilə hesablanır.
+	var bonus := _accel_bonus()
+	var cap := _base_stretch_cap()
+	var hit := Sim.hit_shape(int(species), capacity, net_vel) if hit_fit else Vector3.ONE
+	var amp := _eject_strain()
+	var push := r * EJECT_DEPTH * amp if absf(amp) >= 0.002 else 0.0
+	var e := _event_params(r)
+	var axis: Vector2 = e[0]
+	var shift: Vector2 = e[3]
+	var jitter: Vector2 = e[6]
+	var stretch := Vector2.ONE
+	var shape: PackedFloat32Array
+	if species == Const.Species.AMOEBA:
+		var c := _crawl_scalars(r, heading, rush, 1.0, bonus, cap)
+		var plain := _crawl_scalars(r, heading, rush, 1.0, 0.0, TOTAL_STRETCH_MAX)
+		stretch = Vector2(c["pull"], plain["pull"])
+		var head_c: Vector2 = c["head_c"]
+		var tail_c: Vector2 = c["tail_c"]
+		shape = PackedFloat32Array([
+			head_c.x, head_c.y, tail_c.x, tail_c.y,
+			c["head_r"], c["body_r"], c["tail_r"], c["spread"],
+			fposmod(_crawl_t * 4.7, TAU), fposmod(_crawl_t * 3.1, TAU),
+			fposmod(c["phase"], TAU), c["flow"],
+			c["flow_mean"], CRAWL_CONE * rush, 0.0, 0.0,
+		])
+	else:
+		var m := _membrane_args()
+		stretch = Vector2(_stretch(m[2], bonus, cap), _stretch(m[2], 0.0, TOTAL_STRETCH_MAX))
+		# Fazalar 2π-yə endirilir: GPU float32-dir, vaxt isə matç boyu böyüyür.
+		shape = PackedFloat32Array([m[0], fposmod(_t * m[1], TAU),
+			fposmod(_t * m[1] * 0.7, TAU), m[3]])
+
+	var head := PackedFloat32Array([
+		r, _t, rush, heading,
+		strain, 1.0 if danger_on else 0.0, pulse, 1.0 if born else 0.0,
+		float(n), 0.0, 0.0, clampf(r * 0.10, 2.4, 6.0),
+		0.0, 0.0, aim, float(species),
+		_base.r, _base.g, _base.b, 1.0,
+		_light.r, _light.g, _light.b, 1.0,
+		_shadow.r, _shadow.g, _shadow.b, 1.0,
+		tint.r, tint.g, tint.b, 1.0,
+		_core.x, _core.y, float(clampi(balls, 0, GermGPU.MAX_BALLS)), _ready_fade,
+		_eject_t, _eject_span, _eject_dir, _eject_cross(),
+		flash, 1.0 if _birth_t >= BIRTH_TIME else _birth_t / BIRTH_TIME,
+		1.0 if safe else 0.0, 1.0 if is_ally else 0.0,
+		float(legs), float(color_index), 1.0 if hit_fit else 0.0, _super_fade,
+		hit.x, hit.y, hit.z, push,
+		axis.x, axis.y, e[1], e[2],
+		shift.x, shift.y, e[4], e[5],
+		jitter.x, jitter.y, stretch.x, stretch.y,
+	])
+	head.append_array(shape)
+	var out := head.to_byte_array()
+	out.resize(GermGPU.LEGS0 * GermGPU.TEXEL)
+	if legs > 0:
+		# Ucun yeri, basılıbmı, varmı — [method _draw_legs]-in oxuduğu üç şey.
+		var feet := PackedFloat32Array()
+		feet.resize(legs * 4)
+		for i in legs:
+			var tip := _leg_tip(i, r)
+			feet[i * 4] = tip.x
+			feet[i * 4 + 1] = tip.y
+			feet[i * 4 + 2] = 1.0 if _step[i] >= 1.0 else 0.0
+			feet[i * 4 + 3] = 0.0 if tip == Vector2.ZERO else 1.0
+		out.append_array(feet.to_byte_array())
+	out.resize(GermGPU.WIDTH * GermGPU.TEXEL)
+	return out
 
 
 ## Konturu qapayır — [method CanvasItem.draw_polyline] halqanı özü bağlamır.
@@ -1900,55 +2077,20 @@ func _crawl(delta: float) -> void:
 
 func _crawl_body(r: float, heading: float, rush: float, scale: float,
 		extra_stretch := 0.0, stretch_cap := TOTAL_STRETCH_MAX) -> PackedVector2Array:
-	var axis := Vector2.from_angle(heading)
-	# Addımın harasındayıq — cavab [method _crawl]-dan, yəni HƏNDƏSƏDƏN gəlir.
-	# Uzanma həm də sürətlə süzülür: dayanan amöb yerində addımlamamalıdır,
-	# onu canlı saxlayan şey aşağıdakı ləçəklər və axın dalğasıdır.
-	# ── Fazalar ƏKSDİR və bu, məcburidir ────────────────────────────────────
-	# Psevdopodiya addımın ƏVVƏLİNDƏ atılır, sonra gövdə ona doğru axdıqca
-	# yerli koordinatda kiçilir — yəni ucu dünyada demək olar YERİNDƏ QALIR,
-	# gövdə isə ona çatır. Arxa uc bunun tam əksidir: dövr boyu dala dartılır,
-	# buraxılanda önə qovuşur.
-	#
-	# Əvvəl ikisi də EYNİ fazada idi (uzanma sonda, yığılma buraxılışda) və
-	# nəticə görünən qüsur verirdi: buraxılış anında gövdə bir kadrda GERİ
-	# sıçrayırdı (böyük mikrobda kadr başına −5.6 piksel). Sürünən heç bir şey
-	# geri sıçramır. İndi hər iki uc buraxılışda ÖNƏ gedir, ona görə sıçrayış
-	# irəlidir — sürünmənin özü elə odur.
-	# Qoruyucu: `SimTest._check_crawl` (geri sıçrayışı ayrıca yoxlayır).
-	var thrown := (1.0 - _reach_out) * _flow   # psevdopodiya nə qədər öndədir
-	var hauled := _reach_out * _flow           # arxa uc nə qədər dala dartılıb
-
-	var lead := r * CRAWL_REACH * thrown
-	var drag := r * CRAWL_DRAG * hauled
-	# Ümumi uzanma — həm gövdənin nazilməsini, həm dartılmasını sürür.
-	# Keçid anında hər ikisi kiçik olur və gövdə yumrulanır: siluetin
-	# "uzanır → yumrulanır → uzanır" dövrü elə buradan çıxır.
-	var spread := (lead + drag) / r
-	var rad := r * scale * (1.0 - CRAWL_SLIM * spread)
-	# Sürünmənin öz dartılması ilə sürətlənmə eyni oxdadır və birlikdə 0.26-dan
-	# yuxarı çıxmır. Zərbə/atəş vaxtı `stretch_cap` onlara yer saxlayır.
-	var pull := 1.0 + minf(CRAWL_STRETCH * spread + extra_stretch, stretch_cap)
-	var squash := 1.0 / pull
+	var c := _crawl_scalars(r, heading, rush, scale, extra_stretch, stretch_cap)
+	var axis: Vector2 = c["axis"]
 	var side := Vector2(-axis.y, axis.x)
-	# Sitoplazmanın axını — atılan psevdopodiya əvvəlcə nazikdir, sonra dolur.
-	var mass := CRAWL_MASS * hauled
-
-	var head_c := axis * lead
-	# Orta disk MƏRKƏZDƏ DEYİL, bir az öndədir.
-	#
-	# Səbəb ölçüldü: mərkəzdə duranda o, arxanı da doldururdu və nazik quyruq
-	# diski heç vaxt siluetə çıxmırdı — "enli baş, nazik quyruq" cəhdi buna
-	# görə alınmırdı (ölçü: ön/arxa en 19 / 18 px, yəni konus yoxdur).
-	# Sıfır nöqtəsi yenə diskin İÇİNDƏ qalır, yəni kontur bucaq sırası ilə
-	# çəkilə bilir.
-	var body_c := Vector2.ZERO
-	# Arxa uc yerə basılmış nöqtəyə DOĞRU dartılır — istiqamət dünyadan gəlir,
-	# uzunluq isə gövdənin sərhədləri daxilində saxlanılır.
-	var tail_c := _tail_dir * drag
-	var head_r := rad * (CRAWL_HEAD + mass)
-	var body_r := rad * CRAWL_BODY
-	var tail_r := rad * (CRAWL_TAIL - mass)
+	var pull: float = c["pull"]
+	var squash := 1.0 / pull
+	var spread: float = c["spread"]
+	var head_c: Vector2 = c["head_c"]
+	var tail_c: Vector2 = c["tail_c"]
+	var head_r: float = c["head_r"]
+	var body_r: float = c["body_r"]
+	var tail_r: float = c["tail_r"]
+	var phase: float = c["phase"]
+	var flow: float = c["flow"]
+	var flow_mean: float = c["flow_mean"]
 
 	# ---- disklərin birləşməsi ----
 	# Orta disk mərkəzdə olduğu üçün onun çıxış məsafəsi elə öz radiusudur;
@@ -1958,19 +2100,11 @@ func _crawl_body(r: float, heading: float, rush: float, scale: float,
 	rays.resize(CRAWL_POINTS)
 	for i in CRAWL_POINTS:
 		var dir := Vector2.from_angle(TAU * float(i) / float(CRAWL_POINTS))
-		rays[i] = maxf(_reach(dir, body_c, body_r), maxf(_reach(dir, head_c, head_r),
+		rays[i] = maxf(_reach(dir, Vector2.ZERO, body_r), maxf(_reach(dir, head_c, head_r),
 			_reach(dir, tail_c, tail_r)))
 	# İki dairənin kəsişməsi kəskin künc verir, canlı hüceyrədə isə belə künc
 	# olmur — tikiş hamarlanır.
 	rays = _smooth_ring(rays, CRAWL_SMOOTH)
-
-	# ---- kənarın öz həyatı ----
-	# Perimetr dalğasının ORTA dəyəri fazadan asılıdır və çıxarılmasa gövdə
-	# dövr boyu bütövlükdə şişib-büzülür. Aşağıdakı ifadə həmin ortanın dəqiq
-	# həllidir: (1/PI)·∫₀^PI sin(u·k + p) du = [cos(p) − cos(PI·k + p)] / (PI·k)
-	var phase := _crawl_t * TAU * 1.4
-	var flow := CRAWL_FLOW_DEPTH * (0.35 + 0.65 * rush)
-	var flow_mean := (cos(phase) - cos(PI * CRAWL_WAVES + phase)) / (PI * CRAWL_WAVES)
 
 	var pts := PackedVector2Array()
 	pts.resize(CRAWL_POINTS)
@@ -2034,6 +2168,66 @@ func _crawl_body(r: float, heading: float, rush: float, scale: float,
 	return pts
 
 
+## Amöb gövdəsinin nöqtədən asılı OLMAYAN ədədləri — addımın vəziyyətindən çıxır:
+## disklərin yeri və ölçüsü, dartılma, axın dalğası. [method _crawl_body] və GPU
+## sətri ([method gpu_row_bytes]) eyni ədədləri işlədir — qayda bir yerdədir.
+func _crawl_scalars(r: float, heading: float, rush: float, scale: float,
+		extra_stretch: float, stretch_cap: float) -> Dictionary:
+	var axis := Vector2.from_angle(heading)
+	# Addımın harasındayıq — cavab [method _crawl]-dan, yəni HƏNDƏSƏDƏN gəlir.
+	# Uzanma həm də sürətlə süzülür: dayanan amöb yerində addımlamamalıdır,
+	# onu canlı saxlayan şey aşağıdakı ləçəklər və axın dalğasıdır.
+	# ── Fazalar ƏKSDİR və bu, məcburidir ────────────────────────────────────
+	# Psevdopodiya addımın ƏVVƏLİNDƏ atılır, sonra gövdə ona doğru axdıqca
+	# yerli koordinatda kiçilir — yəni ucu dünyada demək olar YERİNDƏ QALIR,
+	# gövdə isə ona çatır. Arxa uc bunun tam əksidir: dövr boyu dala dartılır,
+	# buraxılanda önə qovuşur.
+	#
+	# Əvvəl ikisi də EYNİ fazada idi (uzanma sonda, yığılma buraxılışda) və
+	# nəticə görünən qüsur verirdi: buraxılış anında gövdə bir kadrda GERİ
+	# sıçrayırdı (böyük mikrobda kadr başına −5.6 piksel). Sürünən heç bir şey
+	# geri sıçramır. İndi hər iki uc buraxılışda ÖNƏ gedir, ona görə sıçrayış
+	# irəlidir — sürünmənin özü elə odur.
+	# Qoruyucu: `SimTest._check_crawl` (geri sıçrayışı ayrıca yoxlayır).
+	var thrown := (1.0 - _reach_out) * _flow   # psevdopodiya nə qədər öndədir
+	var hauled := _reach_out * _flow           # arxa uc nə qədər dala dartılıb
+
+	var lead := r * CRAWL_REACH * thrown
+	var drag := r * CRAWL_DRAG * hauled
+	# Ümumi uzanma — həm gövdənin nazilməsini, həm dartılmasını sürür.
+	# Keçid anında hər ikisi kiçik olur və gövdə yumrulanır: siluetin
+	# "uzanır → yumrulanır → uzanır" dövrü elə buradan çıxır.
+	var spread := (lead + drag) / r
+	var rad := r * scale * (1.0 - CRAWL_SLIM * spread)
+	# Sürünmənin öz dartılması ilə sürətlənmə eyni oxdadır və birlikdə 0.26-dan
+	# yuxarı çıxmır. Zərbə/atəş vaxtı `stretch_cap` onlara yer saxlayır.
+	var pull := 1.0 + minf(CRAWL_STRETCH * spread + extra_stretch, stretch_cap)
+	# Sitoplazmanın axını — atılan psevdopodiya əvvəlcə nazikdir, sonra dolur.
+	var mass := CRAWL_MASS * hauled
+	# ---- kənarın öz həyatı ----
+	# Perimetr dalğasının ORTA dəyəri fazadan asılıdır və çıxarılmasa gövdə
+	# dövr boyu bütövlükdə şişib-büzülür. Aşağıdakı ifadə həmin ortanın dəqiq
+	# həllidir: (1/PI)·∫₀^PI sin(u·k + p) du = [cos(p) − cos(PI·k + p)] / (PI·k)
+	var phase := _crawl_t * TAU * 1.4
+	return {
+		"axis": axis,
+		"spread": spread,
+		"pull": pull,
+		# Ön disk — psevdopodiya. Orta disk node-un üstündədir (sıfır nöqtəsi
+		# həmişə gövdənin içində qalır, yəni kontur bucaq sırası ilə çəkilə bilir).
+		"head_c": axis * lead,
+		# Arxa uc yerə basılmış nöqtəyə DOĞRU dartılır — istiqamət dünyadan gəlir,
+		# uzunluq isə gövdənin sərhədləri daxilində saxlanılır.
+		"tail_c": _tail_dir * drag,
+		"head_r": rad * (CRAWL_HEAD + mass),
+		"body_r": rad * CRAWL_BODY,
+		"tail_r": rad * (CRAWL_TAIL - mass),
+		"phase": phase,
+		"flow": CRAWL_FLOW_DEPTH * (0.35 + 0.65 * rush),
+		"flow_mean": (cos(phase) - cos(PI * CRAWL_WAVES + phase)) / (PI * CRAWL_WAVES),
+	}
+
+
 ## Çoxbucaqlının sahəsi (ayaqqabı bağı düsturu).
 static func _ring_area(pts: PackedVector2Array) -> float:
 	var sum := 0.0
@@ -2092,9 +2286,7 @@ static func _smooth_ring(rays: PackedFloat32Array, passes: int) -> PackedFloat32
 func _membrane(r: float, wobble: float, speed: float, heading: float,
 		rush: float, bulge := 0.0, extra_stretch := 0.0,
 		stretch_cap := TOTAL_STRETCH_MAX) -> PackedVector2Array:
-	# Sürətlənmə mövcud dartılmanın üstünə gəlir, amma cəmi heç vaxt 0.26-nı
-	# keçmir. `stretch_cap` zərbə və atəş kimi istiqamətli hadisələrə yer saxlayır.
-	var stretch := 1.0 + minf(STRETCH_MAX * rush + extra_stretch, stretch_cap)
+	var stretch := _stretch(rush, extra_stretch, stretch_cap)
 	var squash := 1.0 / stretch
 	var axis := Vector2.from_angle(heading)
 	var side := Vector2(-axis.y, axis.x)
@@ -2114,6 +2306,13 @@ func _membrane(r: float, wobble: float, speed: float, heading: float,
 		var v := Vector2.from_angle(a) * r * m
 		pts.push_back(axis * (v.dot(axis) * stretch) + side * (v.dot(side) * squash))
 	return pts
+
+
+## Membranın ox boyunca dartılması. Sürətlənmə mövcud dartılmanın üstünə gəlir,
+## amma cəmi heç vaxt 0.26-nı keçmir; `cap` zərbə və atəş kimi istiqamətli
+## hadisələrə yer saxlayır. GPU sətri də bunu işlədir ([method gpu_row_bytes]).
+static func _stretch(rush: float, extra: float, cap: float) -> float:
+	return 1.0 + minf(STRETCH_MAX * rush + extra, cap)
 
 
 ## Kirpiklər — perimetr boyu döyünən tüklər (paramesium modeli).

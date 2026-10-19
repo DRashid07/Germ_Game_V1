@@ -148,8 +148,13 @@ static func supported() -> bool:
 ## şəffaf iki qat və kontur keçidi çəkilir, sonra silinir. Tam şəffaf olmur, çünki
 ## Godot `modulate.a < 0.007` olan elementi heç çəkmir (deməli kompilyasiya da olmaz).
 ## Sətir boşdur (radius 0), yəni həndəsə də demək olar yoxdur.
-static func warm_up(host: CanvasItem) -> void:
+##
+## [param done] isinmə bitəndə (lazım deyilsə — dərhal) çağırılır; sahibi bu arada
+## silinibsə, çağırılmır (menyu arenanın fon yükləməsini ondan sonra başladır).
+static func warm_up(host: CanvasItem, done := Callable()) -> void:
 	if _warmed or not supported() or not host.is_inside_tree():
+		if done.is_valid():
+			done.call()
 		return
 	_warmed = true
 	var row := acquire(null)
@@ -169,6 +174,29 @@ static func warm_up(host: CanvasItem) -> void:
 		if is_instance_valid(l):
 			l.queue_free()
 	release(row)
+	# Superin açılış effektinin shader-i də (bax [SuperFx]) — matçın ilk superində
+	# kompilyasiya olunmasın (emulyatorda o kadr 40–46 ms idi, isinmə ilə 5 ms).
+	# Öz kadrında: mikrobun shader-ləri ilə eyni kadrda menyunun o donmasını
+	# uzadırdı (emulyatorda ~160 → ~190 ms). Effekt 0.85 saniyədən sonra özü silinir.
+	if SuperFx.gpu and is_instance_valid(host) and host.is_inside_tree():
+		var fx := SuperFx.new()
+		fx.setup(Const.Species.CILIATE, Color.WHITE, 8.0, 16.0, false)
+		fx.modulate = Color(1.0, 1.0, 1.0, 0.01)
+		host.add_child(fx)
+		# Effekt [param host]-un (0, 0) nöqtəsindədir — arenada bu, dünyanın mərkəzidir
+		# və adətən ekrandan kənardır. Kəsilən element çəkilmir, deməli kompilyasiya
+		# da olmurdu: menyusuz açılan matçda ilk super brauzerdə 177 ms donurdu.
+		set_extent(fx, 100000.0)
+		# Qalan mesh-lər də (hər növün öz mesh-i var, kirpiklinin hər keyfiyyətin
+		# iynə sayı ilə) — matçda hər növün ilk superi onu qurmasın (masaüstündə
+		# 0.4–2.8 ms, telefonda ~10 dəfə çox). Hər biri öz kadrında.
+		for m in [[Const.Species.CILIATE, SuperFx.NEEDLES_LOW], [Const.Species.HELIOZOAN, 0],
+				[Const.Species.AMOEBA, 0]]:
+			await tree.process_frame
+			SuperFx._mesh_for(m[0], m[1])
+	await tree.process_frame
+	if done.is_valid():
+		done.call()
 
 
 ## Kontur keçidinin bu kadrkı nəticəsi (GPU-dan geri oxunur — YAVAŞDIR, yalnız

@@ -313,6 +313,13 @@ var _joining := false
 ## Yoxlama növbəsinin nömrəsi — köhnə vaxt həddi yenisini pozmasın deyə
 ## (ünvan dəyişəndə yoxlama yenidən başlayır).
 var _probe_token := 0
+## Arena səhnəsi fonda yüklənirmi (bax [method _arena_scene]).
+var _arena_requested := false
+## Xəritənin fonda yüklənən teksturaları (bax [method _preload_map]): sorğusu
+## verilmiş yollar və arenaya keçəndə götürülən resurslar.
+var _map_paths := PackedStringArray()
+var _map_hold: Array[Resource] = []
+var _map_requested := false
 
 const _ICONS := {
 	Const.Species.CILIATE: "res://assets/ui/species_ciliate.svg",
@@ -371,11 +378,49 @@ func _ready() -> void:
 	# anında yox (bax [method GermGPU.warm_up]). `load` ilə: tipli istinad
 	# GermVisual-ı da menyunun açılışında kompilyasiya etdirərdi.
 	get_tree().create_timer(0.4).timeout.connect(func() -> void:
-		load("res://scripts/client/germ_gpu.gd").warm_up(self))
+		load("res://scripts/client/germ_gpu.gd").warm_up(self, _preload_arena))
+
+
+## Arena (skriptləri, teksturaları) menyu açıq ikən fonda yüklənir, OYNA-da yox
+## (bax [method _arena_scene]).
+##
+## İsinmə BİTƏNDƏN SONRA: isinmə `germ_gpu.gd`-ni ana axında yükləyir, fon axını
+## isə onu arenanın asılılığı kimi yükləyir — ikisi üst-üstə düşəndə ana axın fonun
+## demək olar bütün arena yükünü gözləyirdi (masaüstü debug-da isinmə kadrı
+## 180 → 530 ms); shader kompilyasiyası kadrları ilə üst-üstə düşəndə də isinmə
+## kadrı emulyatorda 20–40 ms uzanırdı. Yalnız axınlı build-də: brauzerin axınsız
+## build-ində sorğu yükləməni çağırışın İÇİNDƏ edir və menyunu dondurardı (orada
+## arena əvvəlki kimi OYNA-da yüklənir).
+func _preload_arena() -> void:
+	if OS.has_feature("threads") and not _arena_requested:
+		_arena_requested = ResourceLoader.load_threaded_request(ARENA_SCENE) == OK
+
+
+## Xəritənin teksturaları da fonda — arena səhnəsi yüklənəndən SONRA.
+##
+## Onlar səhnənin asılılığı deyil: [MapKit] onları arenanın `_ready`-sində `load`
+## edir (itkisiz PNG-lərin açılması — masaüstü debug-da keçid kadrının ~100 ms-i)
+## və arena bağlananda buraxır ([method MapKit.release]). Yollar `map_kit.gd`-dən
+## götürülür; o, arenanın asılılığıdır, yəni bu anda artıq yüklənib — ana axında
+## heç nə kompilyasiya olunmur. Qiyməti: menyuda ~34 MB videoyaddaş tutulur.
+##
+## Açılma fon axınında gedir, GL-ə yükləmə isə ana axında — menyuda bir kadr
+## uzanır (emulyatorda +20–90 ms). Növbə ilə istəmək (biri bitəndən sonra o biri)
+## sınanıb və pis çıxıb: ilişmə dağılmır, 5–7 kadra yayılır.
+func _preload_map() -> void:
+	_map_requested = true
+	var kit = load("res://scripts/client/map_kit.gd")
+	for path in [kit.MANIFEST, kit.ATLAS_PATH, kit.FLOOR_PATH, kit.DETAIL_PATH,
+			kit.RIM_PATH, kit.PROPS_PATH]:
+		if ResourceLoader.load_threaded_request(path) == OK:
+			_map_paths.append(path)
 
 
 func _process(delta: float) -> void:
 	_clock += delta
+	if _arena_requested and not _map_requested and ResourceLoader.load_threaded_get_status(
+			ARENA_SCENE) == ResourceLoader.THREAD_LOAD_LOADED:
+		_preload_map()
 	# Jele yayları. Yarım-açıq Euler kifayətdir: sərtlik kiçikdir və kadr 60
 	# Hz-də sabitdir; `delta` sıçrasa belə sürət əvvəl yenilənir, partlamır.
 	#
@@ -2441,7 +2486,7 @@ func _practice() -> void:
 	# Yoxlama üçün açılmış bağlantı məşqdə lazım deyil — açıq qalsa server
 	# oyunçunu onlayn sayardı.
 	Net.disconnect_from_server()
-	var arena = load(ARENA_SCENE).instantiate()
+	var arena = _arena_scene().instantiate()
 	arena.configure_practice()
 	_swap_to(arena)
 
@@ -2475,9 +2520,31 @@ func _on_join_rejected(reason: String) -> void:
 
 
 func _on_world_joined(info: Dictionary) -> void:
-	var arena = load(ARENA_SCENE).instantiate()
+	var arena = _arena_scene().instantiate()
 	arena.configure_online(info)
 	_swap_to(arena)
+
+
+## Arena səhnəsi — fonda yüklənibsə ([method _preload_arena]) oradan, yoxsa indi.
+##
+## Arenaya keçid kadrı skriptlərin (arena, [GermVisual], [Sim], xəritə…) və
+## teksturaların yüklənməsini daşıyırdı: masaüstü debug-da ~750 ms; səhnə fonda
+## ~175 ms, xəritənin teksturaları da fonda ~40 ms. Fon yükləməsi bitməyibsə,
+## burada qalan hissəsini gözləyir.
+func _arena_scene() -> PackedScene:
+	# Xəritənin teksturaları arena qurulana qədər menyuda tutulur (menyu onunla
+	# birlikdə silinir), sonra onları yalnız MapKit tutur.
+	for path in _map_paths:
+		var res := ResourceLoader.load_threaded_get(path)
+		if res != null:
+			_map_hold.append(res)
+	_map_paths.clear()
+	if _arena_requested:
+		_arena_requested = false
+		var scene := ResourceLoader.load_threaded_get(ARENA_SCENE) as PackedScene
+		if scene != null:
+			return scene
+	return load(ARENA_SCENE)
 
 
 func _swap_to(scene: Node) -> void:

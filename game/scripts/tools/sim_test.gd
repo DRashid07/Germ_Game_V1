@@ -127,6 +127,7 @@ static func run() -> int:
 	_test_germ_gpu_fans()
 	_test_water_motes_gpu()
 	_test_water_motes_cpu()
+	_test_super_fx_gpu()
 	_test_map_layouts()
 	_test_arena_core_is_free()
 	_test_bush_hides()
@@ -2454,6 +2455,57 @@ static func _test_water_motes_cpu() -> void:
 	m.free()
 	twin.free()
 	fresh.free()
+
+
+## Superin açılış effekti GPU-dadır (shaders/super_fx.gdshader) — disk, iynələr,
+## halqalar, lövhələr və parıltı super_fx.gd-dəki `_draw_*` funksiyalarının əl ilə
+## yazılmış surətidir. Onlardan biri dəyişsə iz düşür: shader-i də uyğunlaşdır,
+## `--germ-bench --bench-superfx --bench-render pair` ilə yarımları müqayisə et
+## (2026-10-19: yalnız böyük halqanın 0° tikişində 2 sətir piksel fərqli), izi dəyiş.
+const SUPER_FX_SOURCE_MD5 := "387e29cefafe0be0a296a46c9841dfab"
+
+
+static func _test_super_fx_gpu() -> void:
+	var src := FileAccess.get_file_as_string("res://shaders/super_fx.gdshader")
+	var gd := FileAccess.get_file_as_string("res://scripts/client/super_fx.gd")
+	var written := {}
+	for m in RegEx.create_from_string("set_shader_parameter\\(\"(\\w+)\"").search_all(gd):
+		written[m.get_string(1)] = true
+	var unset := []
+	for m in RegEx.create_from_string("\\nuniform \\w+ (\\w+)").search_all(src):
+		if not written.has(m.get_string(1)):
+			unset.append(m.get_string(1))
+	var unknown := []
+	for name: String in written:
+		if not src.contains(" %s;" % name):
+			unknown.append(name)
+	var consts := (SuperFx as Script).get_script_constant_map()
+	var differ := []
+	for key: String in consts:
+		if key.begins_with("L_") or key in ["CIRCLE_SEGMENTS", "RING_POINTS"]:
+			if not src.contains("const int %s = %d;" % [key, consts[key]]):
+				differ.append(key)
+	_check(unset.is_empty() and unknown.is_empty() and differ.is_empty() and written.size() >= 13,
+		"super effektinin shader-i: uniform-lar və qat nömrələri skriptlə eynidir (yazılmayan %s, naməlum %s, fərqli %s)"
+			% [str(unset), str(unknown), str(differ)])
+	var draw := _source_md5(["_fade", "_ease_out", "_draw_trichocyst", "_draw_opening",
+		"_draw_snap", "_draw_flash"], "res://scripts/client/super_fx.gd")
+	_check(draw[1].is_empty() and draw[0] == SUPER_FX_SOURCE_MD5,
+		"super effektinin GDScript görünüşü GPU surəti ilə uyğundur (iz %s; tapılmayan %s) — dəyişibsə super_fx.gdshader-i yenilə, --bench-superfx ilə yoxla, izi dəyiş"
+			% [draw[0], str(draw[1])])
+	# Mesh-in qatları `_draw`-dakı sıradadır (GPU üçbucaqları sıra ilə çəkir).
+	var ordered := true
+	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		var arrays := SuperFx._mesh_for(kind, SuperFx.NEEDLES_HIGH).surface_get_arrays(0)
+		var verts: PackedVector2Array = arrays[Mesh.ARRAY_VERTEX]
+		var tris: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var last := 0
+		for i in range(0, tris.size(), 3):
+			var layer := int(verts[tris[i]].x)
+			ordered = ordered and layer >= last and layer == int(verts[tris[i + 1]].x) \
+				and layer == int(verts[tris[i + 2]].x)
+			last = layer
+	_check(ordered, "super effektinin mesh-i: hər üçbucaq bir qatdadır, qatlar çəkiliş sırasındadır")
 
 
 ## Faylın funksiyalarının şərhsiz mətninin izi: `[md5, tapılmayanlar]`.

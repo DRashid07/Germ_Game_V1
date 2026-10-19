@@ -813,14 +813,18 @@ func _apply_quality() -> void:
 
 ## Xəritənin özü (döşəmə, maneələr, divar) burada deyil — [MapKit]-in
 ## atlasındadır (bax [method _build_world]).
+##
+## `preload`: teksturalar skriptlə birlikdə yüklənir — menyu arenanı fonda
+## yükləyəndə (bax `MenuV2._preload_arena`) onlar da hazırdır, keçid kadrında
+## disk oxunmur.
 func _load_textures() -> void:
 	_tex = {
-		"food": load("res://assets/sprites/food_ball.svg"),
-		"shot": load("res://assets/sprites/shot_ball.svg"),
-		"spark": load("res://assets/sprites/spark.svg"),
-		"burst": load("res://assets/sprites/burst.svg"),
-		"stick_base": load("res://assets/ui/joystick_base.svg"),
-		"stick_knob": load("res://assets/ui/joystick_knob.svg"),
+		"food": preload("res://assets/sprites/food_ball.svg"),
+		"shot": preload("res://assets/sprites/shot_ball.svg"),
+		"spark": preload("res://assets/sprites/spark.svg"),
+		"burst": preload("res://assets/sprites/burst.svg"),
+		"stick_base": preload("res://assets/ui/joystick_base.svg"),
+		"stick_knob": preload("res://assets/ui/joystick_knob.svg"),
 	}
 
 
@@ -847,7 +851,7 @@ func _build_world() -> void:
 	# şeyder arenanın bütün primitivlərinə tətbiq olunardı.
 	_ground = Node2D.new()
 	var floor_mat := ShaderMaterial.new()
-	floor_mat.shader = load("res://shaders/map_floor.gdshader")
+	floor_mat.shader = preload("res://shaders/map_floor.gdshader")
 	floor_mat.set_shader_parameter("detail", MapKit.detail_texture())
 	floor_mat.set_shader_parameter("detail_world", MapKit.detail_world())
 	_ground.material = floor_mat

@@ -74,6 +74,13 @@ var _rend := PackedFloat32Array()
 var _gpu := PackedFloat32Array()
 var _dt := PackedFloat32Array()
 var _draws := PackedInt32Array()
+## Kadrda superin açılış effekti var idimi ([member SuperFx.active]). Super anları
+## matçda nadirdir və orta kadra az təsir edir — onların qiyməti ayrıca sayılır.
+var _fx := PackedByteArray()
+## Ölçmənin İLK super kadrı (effektsiz kadrdan sonra effekt görünən kadr). Shader-in
+## isinməsi (bax [method GermGPU.warm_up]) işləməsə, kompilyasiya donması buradadır.
+var _first_fx := ""
+var _fx_prev := false
 var _hitches: Array[String] = []
 
 var _phase_i := -1
@@ -227,6 +234,12 @@ func _on_post() -> void:
 			_gpu.append(gpu)
 			_dt.append(dt)
 			_draws.append(draws)
+			var fx_on := SuperFx.active > 0
+			_fx.append(1 if fx_on else 0)
+			if fx_on and not _fx_prev and _first_fx.is_empty():
+				_first_fx = "%.2f ms (proses %.2f, render %.2f) %.1f-ci saniyədə" % [
+					busy, proc, rend, _elapsed]
+			_fx_prev = fx_on
 	_last_post = now
 	_t0 = -1
 	_t_proc = -1
@@ -290,6 +303,15 @@ static func _mean(a: PackedFloat32Array) -> float:
 	return t / float(a.size())
 
 
+## [param a]-nın [param mask]-da [param on] olan kadrları.
+static func _pick(a: PackedFloat32Array, mask: PackedByteArray, on: int) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	for i in a.size():
+		if mask[i] == on:
+			out.append(a[i])
+	return out
+
+
 func _report() -> void:
 	print("\n===== Kadr probu (%.0f s matç, %d can) =====" % [_elapsed, _lives])
 	if phases:
@@ -315,6 +337,14 @@ func _report() -> void:
 			_mean(_phys), _mean(_proc), _pct(_proc, 0.9), _mean(_rend), _pct(_rend, 0.9)])
 		print("  Videokart     : %.2f ms orta" % _mean(_gpu))
 		print("  Çəkiliş çağ.  : %d pik" % draws)
+		for on in [1, 0]:
+			var b := _pick(_busy, _fx, on)
+			var p := _pick(_proc, _fx, on)
+			var r := _pick(_rend, _fx, on)
+			print("  %s: %d kadr, məşğulluq orta %.2f (p90 %.2f, p99 %.2f), proses %.2f, render %.2f ms" % [
+				"Super anı     " if on == 1 else "Supersiz      ", b.size(), _mean(b), _pct(b, 0.9),
+				_pct(b, 0.99), _mean(p), _mean(r)])
+		print("  İlk super     : %s" % ("ölçmədə olmadı" if _first_fx.is_empty() else _first_fx))
 	if _hitches.is_empty():
 		print("  İlişmə (> %.0f ms): yoxdur" % HITCH_MS)
 	else:

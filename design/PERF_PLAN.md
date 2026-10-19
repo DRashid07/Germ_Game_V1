@@ -299,6 +299,19 @@ keçidlərinin hazırlığı da gedir.
 > ayrı teksturadadır), atəş düyməsi 8, super düyməsi 5, minixəritə 4. Mikrob adları
 > da hər biri iki çağırışdır. MSDF (F4.3) konturu və mətni bir teksturaya yığır —
 > bütün yazılar bir-iki çağırış olar; qliflərin kənarı bir az dəyişir (A/B lazımdır).
+>
+> **MSDF sınağı (2026-10-19): rədd.** Nunito və Baloo 2 MSDF ilə (piksel diapazonu
+> 24) hərflərdə görünən qüsurlar verir — "OYNA"-da "A"-nın təpəsində tünd çıxıntı,
+> "Mikrob"-da "M"-in küncündə tikan. Səbəb şriftlərin üst-üstə düşən konturlarıdır
+> (dəyişkən şrift). Yalnız konturları birləşdirilmiş (remove overlaps) statik
+> nüsxələrlə yenidən sınamaq olar.
+>
+> **Hadisə node-ları (F6.3) ölçüldü — hovuz hələ dəyməz.** Emulyatorda (A04s ekranı,
+> 60 s) çağırış başına: `_pop_text` 0.32 ms (ən çox 1.0), `_spawn_fx` 0.07 ms
+> (406 dəfə), `_play_super` 0.24, `_explode` 0.12 — kadr başına cəmi ~0.015 ms.
+> Ən yavaş 1% kadrların artığı əsasən simulyasiya tick-indədir (məşqdə yerli
+> dünya + snapshot, +4.5 ms) və SuperFx / BurstFx-in GDScript `_draw`-ındadır
+> (+1.9 / +1.2 ms; SuperFx median kadrda da 0.35 ms) — növbəti CPU hədəfləri bunlardır.
 
 ### F3 — Su zərrəcikləri, axın və effektlər GPU-da, TAM sayda (1 həftə)
 
@@ -318,6 +331,23 @@ keçidlərinin hazırlığı da gedir.
    statik qatda (artıq belədir).
 3. **Effektlər** (`juice_fx`, `burst_fx`, `super_fx`): onsuz da bir neçə batch-dir.
    Yalnız profildə görünən hissələr GPU hissəciklərinə keçir.
+   > **SuperFx hazırdır (2026-10-19, README «Superin açılış effekti GPU-da»).**
+   > Profildə ən böyük skript çəkilişi idi (emulyatorda median kadrda 0.35 ms, ən
+   > yavaş kadrlarda 2.3 ms). İndi mesh + shader, görüntü eynidir (yalnız böyük
+   > halqanın 0° tikişi qapalıdır). Eyni anda ~36 effekt: emulyator 51–87 → 3.4 ms,
+   > masaüstü 3.3 → 0.69 ms, çağırış 277 → 37; adi matçın ortası dəyişmir.
+   > Yoxlama (2026-10-19): yan-yana piksel müqayisəsi GL, ANGLE, Chrome, WebKit və
+   > APK-da, 24 və 12 iynə ilə — kadrda ≤ 18 piksel (0° tikişi); kadr probunun super
+   > anı bölgüsü ilə superin kadra əlavəsi masaüstündə 0.19 → 0.06 ms, emulyatorda
+   > 1.3 → 0.6 ms. Tapılıb və düzəldilib: isinmə effekti arenada ekrandan kənarda
+   > kəsilirdi (menyusuz matçda ilk super Chrome-da 177 ms donurdu) və mikrob
+   > shader-ləri ilə eyni kadrda menyunun donmasını uzadırdı; mesh-lər də isinmədə
+   > qurulur. Ayrıca ilk-super ilişməsi qalmayıb: superin başladığı kadrlar (8
+   > ardıcıl super) proses hissəsində 0.9–3.6 ms-dir (masaüstü debug, adi kadrın
+   > p90-ı ~2 ms), ilki sonrakılardan ağır deyil; `_play_super`-in özü 0.3–0.85 ms.
+   > BurstFx-in hər nüsxəsinin təsadüfi damcıları və sürtünmə ilə addım-addım
+   > hərəkəti var — piksel-piksel köçürmək üçün hissəcik sistemi lazımdır, qazancı
+   > (median 0.07 ms) hələ dəyməz.
 4. **Zərbə rəqəmləri:** `_pop_text` hər zərbədə `Label.new()` + `Tween` yaradır;
    onun yerinə hovuz və MSDF şrift (F4) gəlir.
 
@@ -361,6 +391,14 @@ keçidlərinin hazırlığı da gedir.
 1. **Matç axtarışı ekranı** (Brawl Stars kimi): OYNA basılan kimi arena, onun
    skriptləri və teksturaları yüklənir, server qoşulması da bu vaxt gedir.
    Arenaya keçəndə donma olmur (A04s modelində bu gün ~3.2 s).
+   > **Fon yükləməsi hazırdır (2026-10-19, README «Arenaya keçid: arena fonda
+   > yüklənir»).** Menyu arenanı isinmədən sonra fon axınında yükləyir, sonra
+   > xəritənin teksturalarını da (menyuda ~34 MB videoyaddaş — sahibin nəzərinə);
+   > keçid kadrı masaüstü debug-da 706–827 → **40 ms**, emulyatorda (APK, yavaş rejim)
+   > 1226–1319 → 282–333 ms. Brauzerin axınsız build-ində dəyişiklik yoxdur (sorğu
+   > orada menyunu dondurardı). Telefon ssenarisi (A/B, 2026-10-20): birinci keçid
+   > 528 → 81 ms, ikinci 224 → 75 ms, super anı +6.4 → +1.0 ms; qiyməti menyuda bir
+   > uzanan kadr (+20–90 ms) və ~34 MB tekstura yaddaşıdır.
 2. **Shader qızdırma** — axtarış ekranında hər material bir dəfə ekrandan kənarda
    çəkilir. Mobile render-ə keçilsə, Shader Baker bunu ixracda edir.
 3. **Hovuzlar:** `BurstFx`, effekt node-ları, zərbə rəqəmləri — matçda yeni node

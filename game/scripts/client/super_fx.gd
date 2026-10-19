@@ -25,6 +25,28 @@ extends Node2D
 ## ilə göndərir) — oyunçu sahənin ölçüsünü yalnız effektdən öyrənir.
 ##
 ## Hamısı bir node-un öz `_draw`-ındadır: 4–5 çəkiliş çağırışı, 0.85 saniyə.
+##
+## Effekt GPU-da çəkilir (`shaders/super_fx.gdshader`): mesh növ başına bir dəfə
+## qurulur, hər kadr yalnız `age` yazılır. Əvvəl hər kadr GDScript-də iynələr və
+## iki antialias-lı halqa yenidən qurulurdu — emulyatorda median kadrda 0.35 ms,
+## ən yavaş kadrlarda 2.3 ms. Aşağıdakı `_draw_*` funksiyaları köhnə yoldur
+## (`--fx-cpu`) və shader onların surətidir — dəyişsələr shader-i də yenilə
+## (`_test_super_fx_gpu` xatırladır, `--germ-bench --bench-superfx` yan-yana göstərir).
+
+## GPU yolu. `--fx-cpu` — köhnə GDScript çəkilişi (müqayisə və ehtiyat).
+static var gpu := not OS.get_cmdline_user_args().has("--fx-cpu")
+
+const SHADER := preload("res://shaders/super_fx.gdshader")
+## Mesh-in qatları — shader-dəki L_* ilə eyni.
+const L_DISC := 1
+const L_NEEDLE := 2
+const L_RING_DARK := 3
+const L_RING := 4
+const L_PLATE := 5
+const L_FLASH := 6
+## draw_circle və draw_arc-ın nöqtə sayları (Godot və aşağıdakı çağırışlar).
+const CIRCLE_SEGMENTS := 64
+const RING_POINTS := 64
 
 const LIFETIME := 0.85
 ## Dalğanın açılma müddəti. İynələrdən YAVAŞDIR: iynələr qabaqda uçur,
@@ -51,6 +73,16 @@ var _age := 0.0
 ## mikrobla gedirdi — kadrda iki sürüşmüş halqa görünürdü.
 var _follow: Node2D = null
 
+## Bu effekt GPU-dadırmı — [method setup]-dan əvvəl dəyişdirilə bilər (stend iki
+## yolu yan-yana qoyur).
+var use_gpu: bool = gpu
+var _mat: ShaderMaterial = null
+var _mesh: ArrayMesh = null
+static var _template: ShaderMaterial = null
+static var _meshes := {}
+## Ağacdakı effektlərin sayı — kadr probu super anlarını ayrıca ölçür.
+static var active := 0
+
 
 ## [param body] mikrobun radiusu · [param reach] təsir sahəsinin radiusu
 ## (kirpiklidə trixosist, ayaqlıda tor; amöbdə qabığın öz radiusu).
@@ -63,11 +95,53 @@ func setup(species: Const.Species, color: Color, body: float, reach: float,
 	_needles = NEEDLES_LOW if low_quality else NEEDLES_HIGH
 	_turn = randf() * TAU
 	z_index = 3
+	if use_gpu and DisplayServer.get_name() != "headless":
+		_mesh = _mesh_for(_species, _needles)
+		# Hər effektin öz materialı: dəyərlər adi uniform-dur (`instance uniform`
+		# brauzerdə bəzi elementlərə çatmırdı, bax GermGPU._row_material).
+		_mat = _template_material().duplicate() as ShaderMaterial
+		_mat.set_shader_parameter("species", int(_species))
+		_mat.set_shader_parameter("fx_color", Vector3(_color.r, _color.g, _color.b))
+		_mat.set_shader_parameter("body", _body)
+		_mat.set_shader_parameter("reach", _reach)
+		_mat.set_shader_parameter("needles", _needles)
+		_mat.set_shader_parameter("age", 0.0)
+		material = _mat
+		_sync_turn()
 
 
 ## Açılışın izləyəcəyi mikrob. Trixosistdə verilmir.
 func follow(target: Node2D) -> void:
 	_follow = target
+
+
+## İynələrin və lövhələrin başlanğıc bucağı ([method setup] təsadüfi seçir; stend
+## iki yolu eyni bucaqla qurmaq üçün sonradan yazır).
+func set_turn(value: float) -> void:
+	_turn = value
+	_sync_turn()
+
+
+func _sync_turn() -> void:
+	if _mat != null:
+		_mat.set_shader_parameter("turn", _turn)
+
+
+func _enter_tree() -> void:
+	active += 1
+
+
+func _exit_tree() -> void:
+	active -= 1
+
+
+func _ready() -> void:
+	if _mat != null:
+		# Mesh-in təpələri kod olduğuna görə Godot sərhədi özü bilmir — ekrandan
+		# kənarda kəsilmə üçün düzbucaqlı əl ilə verilir (halqa + ən qalın xətt).
+		var ext := maxf(_reach, _body * 2.3) + 20.0
+		RenderingServer.canvas_item_set_custom_rect(get_canvas_item(), true,
+			Rect2(-ext, -ext, ext * 2.0, ext * 2.0))
 
 
 func _process(delta: float) -> void:
@@ -77,10 +151,17 @@ func _process(delta: float) -> void:
 		return
 	if _follow != null and is_instance_valid(_follow):
 		position = _follow.position
-	queue_redraw()
+	if _mat != null:
+		_mat.set_shader_parameter("age", _age)
+	else:
+		queue_redraw()
 
 
 func _draw() -> void:
+	if _mat != null:
+		# Mesh bir dəfə verilir; hərəkət edən hər şey shader-dədir.
+		draw_mesh(_mesh, null)
+		return
 	var u := clampf(_age / LIFETIME, 0.0, 1.0)
 	match _species:
 		Const.Species.HELIOZOAN:
@@ -183,3 +264,46 @@ func _draw_flash() -> void:
 	if k <= 0.0:
 		return
 	draw_circle(Vector2.ZERO, _body * (1.0 + 0.35 * (1.0 - k)), Color(Palette.TEXT, 0.65 * k * k))
+
+
+# ---------------------------------------------------------------- GPU yolu
+
+## Sabitləri bir dəfə yazılmış material — hər effekt onun nüsxəsini götürür.
+static func _template_material() -> ShaderMaterial:
+	if _template == null:
+		var m := ShaderMaterial.new()
+		m.shader = SHADER
+		m.set_shader_parameter("lifetime", LIFETIME)
+		m.set_shader_parameter("wave_time", WAVE_TIME)
+		m.set_shader_parameter("needle_time", NEEDLE_TIME)
+		m.set_shader_parameter("snap_time", SNAP_TIME)
+		m.set_shader_parameter("plates", PLATES)
+		m.set_shader_parameter("c_outline", Vector3(Palette.OUTLINE.r, Palette.OUTLINE.g, Palette.OUTLINE.b))
+		m.set_shader_parameter("c_text", Vector3(Palette.TEXT.r, Palette.TEXT.g, Palette.TEXT.b))
+		_template = m
+	return _template
+
+
+## Növün mesh-i — qatlar `_draw`-dakı SIRA ilə: kirpiklidə disk, iynələr, iki
+## halqa; ayaqlıda disk, iki halqa; amöbdə iki halqa, lövhələr; sonda parıltı.
+static func _mesh_for(species: Const.Species, needles: int) -> ArrayMesh:
+	var key := "%d:%d" % [int(species), needles if species == Const.Species.CILIATE else 0]
+	if _meshes.has(key):
+		return _meshes[key]
+	var b := GermGPU.Builder.new()
+	if species != Const.Species.AMOEBA:
+		b.fan(L_DISC, CIRCLE_SEGMENTS)
+	if species == Const.Species.CILIATE:
+		# Hər iynə iki seqmentdir (gövdə, uc) — draw_multiline-ın sırası.
+		for i in needles * 2:
+			b.quad(L_NEEDLE, i, 0)
+	b.aa_loop(L_RING_DARK, RING_POINTS)
+	b.aa_loop(L_RING, RING_POINTS)
+	if species == Const.Species.AMOEBA:
+		for i in PLATES:
+			b.quad(L_PLATE, i, 0)
+	b.fan(L_FLASH, CIRCLE_SEGMENTS)
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, b.arrays())
+	_meshes[key] = mesh
+	return mesh

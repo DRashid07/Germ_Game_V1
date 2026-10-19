@@ -835,7 +835,7 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        654 headless test (`--simtest`)
+      sim_test.gd        657 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -852,6 +852,7 @@ game/                    Godot layihəsi
   shaders/germ.gdshader  Mikrobun bütün qatları — GDScript çəkilişinin bir-bir surəti
   shaders/germ_shape.gdshader  Mikrobun konturu — GPU-da, kadrda bir dəfə (kontur keçidi)
   shaders/water_motes.gdshader Su zərrəcikləri — GPU hissəcikləri, axın sahəsi ilə
+  shaders/super_fx.gdshader    Superin açılış effekti — GDScript çəkilişinin surəti
   shaders/map_floor.gdshader   Qabın döşəməsi — makro ton × tikişsiz detal, bir keçiddə
   assets/                SVG sprite-lar, UI, şriftlər, WAV səslər
     fonts/               Baloo 2 (başlıq) + Nunito (mətn) — bax «Şriftlər»
@@ -923,7 +924,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (654 test)
+# Simulyasiya + World + dostluq/komanda testləri (657 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1009,6 +1010,11 @@ arenanı bağlayıb yenisini açır, ölçmə növbəti canda davam edir. `--pro
 qatları (mikroblar, parlama, HUD, zərrəciklər, qida, xəritə, effektlər) növbə ilə
 gizlədib hər birinin çəkiliş payını yazır; matç canlı olduğu üçün fərqlər
 masaüstündə ±0.05 ms, emulyatorda ±1 ms səs-küylüdür — uzun ölçmə götür.
+`Super anı` / `Supersiz` sətirləri superin açılış effekti olan və olmayan kadrları
+ayrıca orta götürür (super anları matçda nadirdir və ortanı az dəyişir); `İlk super`
+— ölçmənin ilk super kadrı: shader-in isinməsi işləməsə, kompilyasiya donması
+buradadır (render hissəsində). Bu sətir isinmə saniyələrini saymır, ona görə ilk
+superi yoxlamaq üçün `--charge` vermə — onunla super elə matçın ilk anında açılır.
 Masaüstü nəticəsi (RTX 5050), `--disable-vsync` ilə. “Əvvəl” bu sənəddəki ilkin
 ölçüdür; “M2” xəritə redizaynından sonrakı ağacdır; “M3” animasiya/VFX/UI
 qatının 2026-09-17 yekun ölçüsüdür:
@@ -1241,6 +1247,133 @@ A55-dən xeyli sürətlidir — emulyator GPU-ya köçən işin qazancını azal
 >
 > ⚠️ **Hissəcik shader-ində `TRANSFORM`, `COLOR`, `CUSTOM` yalnız `start()` və
 > `process()`-in içində görünür** — köməkçi funksiya dəyər qaytarmalıdır.
+
+### Superin açılış effekti GPU-da
+
+[`SuperFx`](game/scripts/client/super_fx.gd) — superin işə düşmə anı (kirpiklinin
+trixosisti, ayaqlının torunun açılışı, amöbün qabığı, 0.85 saniyə). Əvvəl hər kadr
+GDScript-də disk, 24 iynə, iki antialias-lı halqa və lövhələr qurulurdu; indi mesh
+növ başına bir dəfə qurulur ([`shaders/super_fx.gdshader`](game/shaders/super_fx.gdshader)),
+hər kadr yalnız `age` yazılır. Həndəsə Godot-un öz həndəsəsidir: `draw_circle` —
+64 seqmentli yelpik, `draw_multiline` — seqment başına `canvas_item_add_line`
+dördbucaqlısı, `draw_arc` — mikrob halqaları kimi antialias-lı qapalı polyline.
+Hər effektin öz material nüsxəsi var (brauzerdəki `instance uniform` tələsi).
+`--fx-cpu` köhnə yola qaytarır.
+
+**İsinmə** (`GermGPU.warm_up`, menyu görünəndən 0.4 s sonra; menyusuz açılışda
+arenanın `_ready`-sində). Shader ilk çəkilişdə kompilyasiya olunur: isinməsiz
+matçın ilk superi masaüstündə 7–12 ms, emulyatorda 40–46 ms, Chrome-da (ANGLE)
+**176–193 ms** donurdu; isinmə ilə uyğun olaraq 2, 4.5–4.8 və 2.4–3.0 ms-dir
+(`--germ-bench --bench-superfx --bench-render gpu --bench-delay 1 [--bench-warm]`).
+Üç incəlik: (1) isinmə effekti mikrob shader-lərindən 3 kadr SONRA, öz kadrında
+çəkilir — eyni kadrda menyunun onsuz da olan donmasını emulyatorda ~160-dan ~190
+ms-ə uzadırdı; (2) ona `set_extent` verilir — effekt `host`-un (0, 0) nöqtəsindədir,
+arenada bu dünyanın mərkəzidir və ekrandan kənarda kəsilən element çəkilmir, yəni
+kompilyasiya da olmurdu (menyusuz açılan matçda ilk super Chrome-da 177 ms
+donurdu, indi 5–9 ms); (3) qalan mesh-lər (amöb, ayaqlı, kirpiklinin 12 iynəli
+aşağı keyfiyyəti — telefonun ilkin keyfiyyəti) də hərəsi öz kadrında qurulur,
+matçda hər növün ilk superi onu qurmasın (masaüstündə 0.4–2.8 ms).
+
+```bash
+# Yan-yana: solda GDScript, sağda GPU, hər növdən biri, eyni bucaqla
+# (--bench-light — aşağı keyfiyyətin 12 iynəsi)
+GODOT --path game --resolution 1600x720 --max-fps 60 -- --germ-bench --bench-superfx \
+    --bench-render pair --shot C:/yol/fx.png --shot-delay 56 --shot-count 30 --shot-every 2
+# Qiymət: --bench-render cpu | gpu (ekranda eyni anda ~36 effekt)
+```
+
+**Görüntü eynidir** — 2026-10-19 bütün effekt dövrü (30 kadr) yan-yana çəkilib
+yarımlar piksel-piksel müqayisə olunub: masaüstü GL və ANGLE, Chrome, WebKit
+(Playwright, Safari-nin mühərriki) və Android APK (emulyator), 24 və 12 iynə ilə.
+Hər kadrda ~574 min pikseldən ən çoxu 18-i 16/255-dən çox fərqlənir — böyük
+halqanın 0° nöqtəsi (GDScript-in açıq polyline-ı orada iki ucun qapağını üst-üstə
+qoyur, GPU halqası qapalıdır) və iynə ucunun tək pikseli. Arenada da (parlama
+açıq, hər üç növ, `--practice --charge --at 250,250 --shot ...` ilə `--fx-cpu`)
+eynidir; tor və kist halqası hərəkət edən mikrobu izləyir. WebKit-in
+`glBlitFramebuffer` xəbərdarlığı iki yolda da eynidir (köhnədir).
+`_test_super_fx_gpu` qat nömrələrini, uniform-ları və `_draw_*` funksiyalarının
+izini yoxlayır.
+
+**Qazanc.** Eyni anda ~36 effekt: masaüstü release kadrın işi 3.3 → **0.69 ms**,
+çağırış 277 → **37**; Android emulyatoru 51–87 → **3.4 ms**. Real matçda superlər
+kadrların ~10–20%-ində açıqdır və orta kadr az dəyişir, ona görə kadr probu super
+anlarını ayrıca sayır (`Super anı` / `Supersiz` sətirləri). Super anının kadra
+əlavəsi (super açıq kadr eyni qaçışın supersiz kadrından nə qədər ağırdır):
+
+| Platforma (60 s matç, `--charge`)        | köhnə yol      | GPU          |
+|------------------------------------------|----------------|--------------|
+| Masaüstü release, 1600×720 (4 qaçış)      | +0.17…0.21 ms  | +0.02…0.08 ms |
+| Android emulyatoru, A04s ekranı (2 qaçış) | +1.28…1.40 ms  | +0.50…0.65 ms |
+| Chrome, masaüstü (1 + 2 qaçış)            | +0.30 ms       | 0.00…0.16 ms |
+
+Qalan hissə superin başqa işləridir (qığılcım, səs, "SUPER!" yazısı). A04s-in
+prosessoru masaüstündən ~13 dəfə yavaşdır — super anı orada ~2.5 ms əvəzinə
+~0.8 ms əlavə edir. 50 ms-dən uzun ilişmə heç bir qaçışda olmayıb.
+
+### Arenaya keçid: arena fonda yüklənir
+
+OYNA (və MƏŞQ) basılanda ekran donurdu: keçid kadrı arenanın bütün skriptlərini
+(arena, [`GermVisual`](game/scripts/client/germ_visual.gd), [`Sim`](game/scripts/shared/sim.gd),
+xəritə, HUD…) və teksturalarını yükləyirdi. İndi menyu onları isinmə bitəndən
+sonra **fon axınında** yükləyir (`ResourceLoader.load_threaded_request`), OYNA isə
+hazır səhnəni götürür ([`MenuV2._arena_scene`](game/scripts/client/menu_v2.gd)); fon
+yükləməsi hələ bitməyibsə, qalanını gözləyir.
+
+Xəritənin teksturaları (atlas, döşəmə, detal, divar, dekor — itkisiz PNG-lər)
+səhnənin asılılığı deyil: [`MapKit`](game/scripts/client/map_kit.gd) onları arenanın
+`_ready`-sində `load` edir və arena bağlananda buraxır (`MapKit.release`). Onların
+açılması keçid kadrının ~100 ms-i idi (masaüstü debug). Menyu onları da fonda,
+səhnədən sonra istəyir (`_preload_map`) və arena qurulana qədər tutur; sonra yenə
+yalnız MapKit tutur. **Qiyməti:** menyuda ~34 MB videoyaddaş (atlas 2048² mipmap-lərlə
+~22 MB). Arenanın SVG-ləri və döşəmə shader-i `preload`-a keçib — səhnə ilə gəlir.
+
+Üç tələ: (1) sorğu isinmə ilə eyni anda verilsə, ana axın isinmənin
+`load("germ_gpu.gd")`-sində fonun demək olar bütün arena yükünü gözləyirdi —
+menyunun isinmə kadrı masaüstü debug-da 180-dan **530 ms**-ə uzanırdı; ona görə sorğu
+`GermGPU.warm_up`-ın `done` callback-indədir. (2) Teksturaların yolu `map_kit.gd`-dən
+səhnə yüklənəndən SONRA götürülür — əvvəl yükləmək `DishMap`, `Sim`, `World`-u ana
+axında kompilyasiya edərdi. (3) Brauzerin axınsız build-ində
+(`variant/thread_support=false`) sorğu yükləməni çağırışın İÇİNDƏ edir və menyunu
+dondurardı (Chrome-da 312 ms) — orada arena əvvəlki kimi OYNA-da yüklənir
+(`OS.has_feature("threads")`).
+
+Ölçülüb (2026-10-19, menyudan MƏŞQ-ə keçid kadrı, menyunun öz `_practice()`-i ilə):
+
+| | əvvəl | yalnız səhnə fonda | **səhnə + xəritə fonda** |
+|---|---:|---:|---:|
+| Masaüstü (debug, 2–4 qaçış) | 706–827 ms | 149–177 ms | **40–41 ms** |
+| Android emulyatoru, APK | 421–528 ms | 248–257 ms | — |
+| Android emulyatoru, APK, çox yavaş rejim | 1226–1319 ms | — | **282–333 ms** |
+
+Arenanın `_build_world`-ü 105–129 ms-dən **5.5 ms**-ə endi (masaüstü debug). Menyunun
+isinmə kadrı dəyişmir (masaüstü 172–193 → 173–192 ms; emulyator 194–209 → 181–198
+ms). Emulyator bu ölçülərdə kompüterin ekran qoruyucusu/yuxu rejimi üzündən
+yavaş idi (adi kadr 30–160 ms) — nisbət düzdür, mütləq rəqəm yox. QA agenti
+(`--agent --agent-rounds 3`, hər versiya 3 dəfə) menyu → matç → menyu dövrünü
+keçdi: mühərrik xətası və 50 ms-dən uzun kadr yoxdur. Agentin "atəş düyməsi
+basıldı — top çıxmadı" qeydi köhnə və yeni kodda eyni tezlikdə çıxır (köhnədir).
+
+**Telefon ssenarisi (2026-10-20, A/B).** Emulyatorda A04s ekranı, APK, YÜKSƏK, TƏK
+QALAN; bir qaçış: menyu 12 s → menyunun öz MƏŞQ-i → avtomatik oyunçu ilə 30 s matç →
+arenanın öz menyuya qayıdışı → menyu 12 s → ikinci MƏŞQ. Köhnə (bu dəyişikliklərdən
+əvvəlki HEAD), yeni və "yalnız səhnə" (xəritə teksturaları fonda deyil) növbə ilə, hər
+biri 3 dəfə (median; kompüter yüklü idi, emulyatorun adi kadrı ~15–20 ms):
+
+| | köhnə | yalnız səhnə | **yeni** |
+|---|---:|---:|---:|
+| Birinci keçid kadrı | 528 ms | 260 ms | **81 ms** |
+| İkinci keçid kadrı (matçdan sonra) | 224 ms | 199 ms | **75 ms** |
+| Super anının kadra əlavəsi | +6.4 ms | ~+0.4 ms | **+1.0 ms** |
+| Matçın p99 kadrı | 39–68 ms | 39–74 ms | **38–41 ms** |
+| Menyuda ~1-ci saniyədə əlavə uzun kadr | yox | yox | 1 kadr, +20–90 ms |
+| Menyuda RAM / tekstura | 136 / 49 MB | 143 / 51 MB | 144 / 84 MB |
+| Arenada RAM / tekstura | 155 / 76 MB | 156 / 76 MB | 147 / 76 MB |
+
+Xəritə teksturalarının fonda açılması keçiddən ~180 ms (ikinci keçiddən ~125 ms)
+götürür; qiyməti menyuda bir uzanan kadrdır (GL-ə yükləmə ana axındadır, emulyatorda
++20–90 ms) və ~34 MB tekstura yaddaşı. Növbə ilə yükləmə sınanıb, pis çıxıb (5–7
+kadra yayılır). Telefonda (A55 nüvələri, ortaq yaddaş) açılma emulyatordan yavaş,
+GL-ə yükləmə isə ucuzdur — qazanc orada daha böyük olmalıdır; Mali-də ölçülməyib.
 
 ### Brauzerdə (Android) donma və kəsilmə
 

@@ -191,6 +191,8 @@ func _start_germ_bench(args: PackedStringArray) -> void:
 	stand.delay = float(_arg_value(args, "--bench-delay", "0"))
 	stand.warm = args.has("--bench-warm")
 	stand.motes = args.has("--bench-motes")
+	stand.superfx = args.has("--bench-superfx")
+	stand.superfx_light = args.has("--bench-light")
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(stand)
 	tree.set_deferred("current_scene", stand)

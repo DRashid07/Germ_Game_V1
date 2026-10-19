@@ -38,6 +38,14 @@ var delay := 0.0
 var warm := false
 ## Mikrob əvəzinə su zərrəcikləri — iki yol yan-yana (`--bench-motes`).
 var motes := false
+## Mikrob əvəzinə superin açılış effekti (`--bench-superfx`): `pair` — solda
+## GDScript, sağda GPU, hər növdən biri; `cpu` / `gpu` — ekranda 12 effekt hər
+## 0.3 saniyədə yenidən doğulur (eyni anda ~36), qiyməti ölçmək üçün.
+## `--bench-light` — aşağı keyfiyyətin 12 iynəsi (telefonun ilkin keyfiyyəti budur).
+var superfx := false
+var superfx_light := false
+var _fx_left := 0.0
+var _fx_k := 0
 var _born_frame := -1
 var _born_worst := 0.0
 
@@ -104,6 +112,8 @@ func _ready() -> void:
 	var vp := get_viewport_rect().size
 	if motes:
 		_build_motes(vp)
+	if superfx:
+		count = 0
 	var cols := maxi(1, int(ceil(sqrt(float(count) * vp.x / vp.y))))
 	var rows := int(ceil(float(count) / float(cols)))
 	var pair := render_mode == "pair"
@@ -180,8 +190,40 @@ func _make(i: int, kind: Const.Species, cap: int, gpu: bool) -> GermVisual:
 	return g
 
 
+## Superin açılış effektlərini doğurur (bax [member superfx]).
+func _spawn_superfx(vp: Vector2) -> void:
+	var kinds := [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]
+	var pair := render_mode == "pair"
+	var copies := 1 if pair else 4
+	for c in copies:
+		for k in 3:
+			for side in (2 if pair else 1):
+				var kind: Const.Species = kinds[k]
+				var fx := SuperFx.new()
+				fx.use_gpu = side == 1 if pair else render_mode == "gpu"
+				var body := 24.0 + 6.0 * float(k)
+				# Ayaqlıda torun sərhədi, amöbdə qabıq (bax [method Arena._play_super]).
+				var reach := 104.0
+				if kind == Const.Species.AMOEBA:
+					reach = body + GermVisual.SHIELD_GAP * 0.5
+				fx.setup(kind, Palette.germ_color(k * 3 + 1), body, reach, superfx_light)
+				fx.set_turn(0.61 * float(_fx_k * 3 + k))
+				var cell := Vector2(vp.x / (6.0 if pair else 3.0), vp.y / (1.0 if pair else 4.0))
+				var at := Vector2((float(k) + 0.5) * cell.x, (float(c) + 0.5) * cell.y) - vp * 0.5
+				fx.position = at + Vector2(vp.x * 0.5 * float(side), 0.0)
+				add_child(fx)
+	_fx_k += 1
+
+
 func _process(delta: float) -> void:
 	_t += delta
+	# Effektlər də `--bench-delay`-i gözləyir — ilk kompilyasiya "yarandıqdan sonrakı
+	# 10 kadra" düşsün (bax `_born_worst`).
+	if superfx and (delay <= 0.0 or _born_frame >= 0):
+		_fx_left -= delta
+		if _fx_left <= 0.0:
+			_fx_left = 1.0 if render_mode == "pair" else 0.3
+			_spawn_superfx(get_viewport_rect().size)
 	# Pəncərə bəzən MİNİMALLAŞDIRILMIŞ açılır (başqa pəncərə fokusdadırsa). Onda
 	# Godot heç nə çəkmir, `frame_post_draw` gəlmir və stend əbədi gözləyir — FPS
 	# isə 145-də dayanır (`low_processor_usage_mode_sleep_usec` = 6.9 ms).

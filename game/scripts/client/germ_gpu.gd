@@ -110,6 +110,8 @@ const SPARK_LINES := 6
 static var enabled := not OS.get_cmdline_user_args().has("--germ-cpu")
 
 static var _material: ShaderMaterial
+## Sətir başına material nüsxəsi (bax [method _row_material]).
+static var _row_materials: Array[ShaderMaterial] = []
 static var _image: Image
 static var _texture: ImageTexture
 ## Kontur keçidi: kiçik render hədəfi, hər sətri bir mikrob (bax germ_shape.gdshader).
@@ -224,10 +226,25 @@ static func submit(row: int) -> void:
 static func layer(mesh: Mesh, behind: bool, row: int) -> Node2D:
 	var l := Layer.new()
 	l.mesh = mesh
-	l.material = _material
+	l.material = _row_material(row)
 	l.show_behind_parent = behind
-	l.set_instance_shader_parameter("row", float(row))
 	return l
+
+
+## Sətrin öz materialı — sətir nömrəsi orada ADİ uniform-dur.
+##
+## Əvvəl bütün qatlar bir materialı bölüşürdü və nömrə `instance uniform` idi.
+## Brauzerdə (Godot 4.7 web, Chrome və WebKit) bəzi qatlarda o dəyər tətbiq
+## olunmurdu: qat susmaya görə 0-cı sətri oxuyurdu, yəni ikinci mikrob birincinin
+## formasını və rəngini çəkirdi (masaüstündə və emulyatorda belə olmurdu). Qatlar
+## onsuz da ayrı çəkiliş çağırışlarıdır — material nüsxəsi çağırış artırmır.
+## Nüsxə sətirlə birlikdə qalır: sətir başqa mikroba keçəndə də yenisi yaranmır.
+static func _row_material(row: int) -> ShaderMaterial:
+	while _row_materials.size() <= row:
+		var m := _material.duplicate() as ShaderMaterial
+		m.set_shader_parameter("row", float(_row_materials.size()))
+		_row_materials.append(m)
+	return _row_materials[row]
 
 
 ## Mesh-in təpələri kod olduğuna görə Godot qatın sərhədini özü bilmir —

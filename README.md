@@ -834,7 +834,7 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        641 headless test (`--simtest`)
+      sim_test.gd        645 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -846,9 +846,11 @@ game/                    Godot layihəsi
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
       perf_probe.gd      Kadr vaxtı və çəkiliş çağırışı ölçmə
+      frame_probe.gd     Kadrın işi hissələrlə, qatların payı, canlar boyu (`--frame-probe`)
       germ_bench.gd      Mikrob stendi: çəkilişin qiyməti, köhnə və GPU yolu yan-yana (`--germ-bench`)
   shaders/germ.gdshader  Mikrobun bütün qatları — GDScript çəkilişinin bir-bir surəti
   shaders/germ_shape.gdshader  Mikrobun konturu — GPU-da, kadrda bir dəfə (kontur keçidi)
+  shaders/water_motes.gdshader Su zərrəcikləri — GPU hissəcikləri, axın sahəsi ilə
   assets/                SVG sprite-lar, UI, şriftlər, WAV səslər
     fonts/               Baloo 2 (başlıq) + Nunito (mətn) — bax «Şriftlər»
     ui/theme.tres        Şrift rolları; bütün Control-lar bunu oxuyur
@@ -917,7 +919,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (641 test)
+# Simulyasiya + World + dostluq/komanda testləri (645 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -982,6 +984,27 @@ GODOT --path game --resolution 1280x720 --disable-vsync -- --practice --mode 0 -
 > yenə sənin işindir.
 
 Orta, **1% ən pis** kadr, çəkiliş çağırışı və yaddaş yazılır.
+
+> ⚠️ **`--perf` oyunçu öləndən sonrakı kadrları da sayır.** Avtomatik oyunçu
+> TƏK QALAN-da çox vaxt 15–25 saniyə yaşayır; ondan 4 saniyə sonra arena menyuya
+> keçir və menyunun kadrları ölçüyə düşür (menyu səhnəsinin yüklənməsi masaüstündə
+> iki kadrlıq ~70 ms "ilişmə" kimi görünür). "Kadrın işi" sətri də orta deyil:
+> `TIME_PROCESS` Godot-da son saniyənin ƏN PİS kadrıdır. Matçın özünü kadr probu
+> ölçür:
+
+```bash
+# Kadrın işi hissələrlə (fizika / proses / render), ilişmələr, yalnız canlı matç
+GermArena.console.exe --resolution 1600x720 --disable-vsync --max-fps 0 \
+    -- --practice --mode 1 --quality 0 --auto --frame-probe 60 [--probe-phases]
+```
+
+[`tools/frame_probe.gd`](game/scripts/tools/frame_probe.gd) kadrın ana axında
+keçən bütün vaxtını (məşğulluq) ölçür — vsync-dən və kadr həddindən asılı deyil,
+telefonda da düz işləyir. Oyunçu öləndə prob nəticə ekranını və menyunu saymır:
+arenanı bağlayıb yenisini açır, ölçmə növbəti canda davam edir. `--probe-phases`
+qatları (mikroblar, parlama, HUD, zərrəciklər, qida, xəritə, effektlər) növbə ilə
+gizlədib hər birinin çəkiliş payını yazır; matç canlı olduğu üçün fərqlər
+masaüstündə ±0.05 ms, emulyatorda ±1 ms səs-küylüdür — uzun ölçmə götür.
 Masaüstü nəticəsi (RTX 5050), `--disable-vsync` ilə. “Əvvəl” bu sənəddəki ilkin
 ölçüdür; “M2” xəritə redizaynından sonrakı ağacdır; “M3” animasiya/VFX/UI
 qatının 2026-09-17 yekun ölçüsüdür:
@@ -1114,20 +1137,25 @@ GermArena.console.exe --resolution 1600x720 --disable-vsync --max-fps 0 \
 #   ekran A04s kimi: adb shell wm size 720x1600 && adb shell wm density 280
 ```
 
-Ölçülüb (2026-10-18, hər variant növbə ilə 2–3 dəfə):
+Ölçülüb (2026-10-19, kadr probu — yalnız canlı matç kadrları; hər variant növbə
+ilə 2 dəfə; stend 2026-10-18):
 
 | | köhnə yol | GPU yolu |
 |---|---:|---:|
 | Kompüter stend, 10 mikrob — kadrın işi / çağırış | 4.2 ms / 366 | **0.86 ms / 40** |
-| Kompüter matç — orta kadr | 1.56 ms | **1.04 ms** |
+| Kompüter matç — kadrın işi | 2.1 ms | **1.14 ms** |
 | Emulyator stend, 10 mikrob — kadrın işi | 63 ms | **1.75 ms** |
-| Emulyator matç — orta / 1% ən pis | 49 / 30 FPS | **59 / 58 FPS** |
-| Emulyator matç — 16.7 ms-i aşan kadr | 43% | **1.4%** |
-| Emulyator matç — prosessor vaxtı kadr başına | 15.4 ms | **8.0 ms** |
+| Emulyator matç — orta / 1% ən pis | ~37 / ~22 FPS | **60 / 32 FPS** |
+| Emulyator matç — kadrın işi | 25.5 ms | **8.3 ms** |
+| Emulyator matç — 50 ms-dən uzun ilişmə | 3–16 | **0** |
+| Emulyator matç — çəkiliş çağırışı (pik) | 194–250 | **101–110** |
+
+İlk variantda bu cədvəl `--perf` ilə ölçülmüşdü (49 → 59 FPS): o, oyunçu öləndən
+sonrakı menyu kadrlarını da sayırdı və köhnə yolun xərcini az göstərirdi.
 
 A04s-də (prosessor tərəfi, kompüter × 13): ekranda 10 mikrob olanda köhnə yol
-~55 ms (≤ 18 FPS), GPU yolu ~11 ms; adi matçda ~20 ms əvəzinə ~13.5 ms — 60 kadrın
-16.7 ms-lik büdcəsinə sığır. Videokartın vaxtı kompüterdə 10 mikrobda 0.30 → 0.35 ms
+~55 ms (≤ 18 FPS), GPU yolu ~11 ms; adi matçda ~27 ms (~37 FPS) əvəzinə ~15 ms —
+60 kadrın 16.7 ms-lik büdcəsinə sığır. Videokartın vaxtı kompüterdə 10 mikrobda 0.30 → 0.35 ms
 artır (kontur keçidinin sabit xərci), amma mikrob başına 0.078 → 0.009 ms azalır:
 40 mikrobda 2.19 → 0.63 ms. Mali-də ölçülməyib; şeyderlərin dövrlərinə görə təxmin
 10 mikroba ~1 ms əlavə GPU işidir (ən bahası işıq qatıdır — hər təpəsi yelpiyin
@@ -1147,10 +1175,68 @@ kodu dəyişsə düşür — shader-i də yenilə, `--bench-verify` / `--bench-r
 ilə yoxla, izi dəyiş), `_test_germ_gpu_mesh` (super qatları yalnız öz növündədir),
 `_test_germ_gpu_fans`.
 
+> ⚠️ **`instance uniform` brauzerdə hər qatda işləmir — sətir nömrəsi materialdadır.**
+>
+> Əvvəl bütün mikrob qatları bir materialı bölüşürdü, sətir nömrəsi isə `instance
+> uniform` idi. Veb build-də (Chrome və WebKit, Godot 4.7.2) bəzi qatlarda o dəyər
+> GPU-ya çatmırdı: qat susmaya görə 0-cı sətri oxuyurdu və ikinci mikrob birincinin
+> formasını, rəngini çəkirdi (qarışıq stenddə Mikrob 1 ayaqsız yaşıl şar olurdu).
+> Masaüstündə və Android-də belə olmurdu, ona görə yalnız yan-yana stend brauzerdə
+> işlədiləndə tapıldı. İndi hər sətrin öz material nüsxəsi var
+> ([`GermGPU._row_material`](game/scripts/client/germ_gpu.gd)) və nömrə adi
+> uniform-dur; qatlar onsuz da ayrı çəkiliş çağırışlarıdır, sayı dəyişmədi (40).
+> Yeni platformada GPU yolunu yoxlayanda `--germ-bench --bench-render pair`-i
+> elə həmin platformada işlət.
+
 > ⚠️ **Superin görünüşünü dəyişirsənsə:** `_draw_cyst` / `_draw_net` yalnız köhnə
 > yoldur (`--germ-cpu`). Oyunda super `shaders/germ.gdshader`-in `L_CYST_*` /
 > `L_NET_*` qatlarıdır — dəyişikliyi orada da et, yoxsa ekranda heç nə dəyişmir.
 > `_test_germ_gpu_shape_sync` bunu xatırladır.
+
+### Su zərrəcikləri GPU-da
+
+Suda asılı 110 zərrəcik ([`WaterMotes`](game/scripts/client/water_motes.gd)) hər
+kadr axın sahəsi ilə addım atır (`Const.current_at`, Broun titrəməsi, kameranın
+kvadratından çıxanda əks kənara keçmə). Bu iş indi GPU hissəciklərindədir
+(`GPUParticles2D`, [`shaders/water_motes.gdshader`](game/shaders/water_motes.gdshader)):
+vəziyyət (mövqe, toxum) zərrəciyin `CUSTOM`-undadır, `TRANSFORM` isə 1×1 teksturanı
+cizginin düzbucaqlısına çevirir — `draw_multiline`-ın qalın xəttinin eyni dörd küncü.
+CPU hər kadr yalnız üç uniform yazır. Deşiyə sorulan axın (zamandan asılı, vəziyyətsiz)
+node-un öz `_draw`-ında qalıb və zərrəciklərin ÜSTÜNDƏ çəkilir — köhnə batch-dəki kimi.
+`--motes-cpu` köhnə GDScript yoluna qaytarır.
+
+**Görüntü eynidir.** İki yol eyni toxumla eyni düzümü qurur (PCG heşi GDScript-də
+32 bitlik tam ədədlərlə təkrarlanır), Broun titrəməsinin fazası oyun saatındandır.
+Addımı da GDScript verir (`step_dt` = `_process`-in `delta`-sı): hissəcik sisteminin
+öz `DELTA`-sı render tərəfində ayrıca hesablanır və kadr müddəti dəyişəndə (brauzer,
+telefon) `_process`-dən fərqli gəlirdi — sabit `--fixed-fps` ilə yarımlar eyni idi,
+dəyişkən kadrlarla isə zərrəciklər öz trayektoriyalarında bir-iki kadr qabaqda olurdu.
+Yan-yana stend (solda GDScript, sağda GPU):
+
+```bash
+GODOT --path game --resolution 1600x720 --fixed-fps 60 --disable-vsync -- \
+    --germ-bench --bench-motes --bench-secs 6 --shot C:/yol/pair.png --shot-delay 150
+```
+
+GL-də ən böyük piksel fərqi 1/255, ANGLE-də (Chrome-un yolu) 0-dır; dəyişkən
+kadrlarla masaüstündə, Chrome-da və Android emulyatorunda da yarımlar eynidir.
+`_test_water_motes_gpu` axının və addımın GDScript mətninin izini saxlayır:
+dəyişsə, shader-i də yenilə və stendlə yoxla.
+
+Ölçülüb (2026-10-19, 1600×720, TƏK QALAN, YÜKSƏK): masaüstü release-də kadrın işi
+1.24 → **1.14 ms** (proses −0.13, render +0.03; hərəsi 3 qaçış). A04s-ə çevrilmiş
+təxmin ~1.3 ms qazancdır. Emulyatorda isə nəticə +0.3 ms-dir: orada hər GL
+çağırışı host-a ötürülür və hissəciklərin render tərəfi baha görünür, GDScript isə
+A55-dən xeyli sürətlidir — emulyator GPU-ya köçən işin qazancını azaldır.
+
+> ⚠️ **Emulyatorda `Time.get_ticks_msec()` / `get_ticks_usec()` çox bahadır (~10 µs).**
+> Zərrəciklər hər birində bir dəfə saat oxuyurdu: emulyatorda bu, kadra 1.1 ms
+> edirdi və profildə "zərrəciklərin riyaziyyatı" kimi görünürdü. Real telefonda
+> saat ucuzdur, amma ölçmə emulyatordadır — dövr içində saat oxuma, kadrın
+> əvvəlində bir dəfə götür.
+>
+> ⚠️ **Hissəcik shader-ində `TRANSFORM`, `COLOR`, `CUSTOM` yalnız `start()` və
+> `process()`-in içində görünür** — köməkçi funksiya dəyər qaytarmalıdır.
 
 ### Brauzerdə (Android) donma və kəsilmə
 

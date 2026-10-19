@@ -18,7 +18,9 @@ shader_type canvas_item;
 uniform sampler2D data : filter_nearest, repeat_disable;
 // Konturlar — GPU-da kadrda bir dəfə qurulur (shaders/germ_shape.gdshader).
 uniform sampler2D ring_tex : filter_nearest, repeat_disable;
-instance uniform float row = 0.0;
+// Mikrobun sətri — hər sətrin öz material nüsxəsi var (GermGPU._row_material).
+// `instance uniform` deyil: brauzerdə bəzi qatlarda tətbiq olunmurdu.
+uniform float row = 0.0;
 
 // Palitra və sabitlər — GermGPU onları Palette/Const/GermVisual-dan BİR dəfə yazır.
 uniform vec3 c_outline;

@@ -12,6 +12,16 @@ extends Node2D
 ## oyunçu burulğanı görür və ondan istifadə etməyi öyrənir.
 ##
 ## Bütün qat BİR [method CanvasItem.draw_multiline] çağırışıdır.
+##
+## Zərrəciklər GPU-da hərəkət edir ([GPUParticles2D], `shaders/water_motes.gdshader`):
+## hər kadr 110 zərrəciyin axın sahəsini GDScript-də iki dəfə hesablamaq Android-də
+## kadrın ən böyük tək skript xərci idi (emulyatorda ~1.1 ms). Formul, addım, kənardan
+## keçmə və cizginin həndəsəsi eynidir; `--motes-cpu` köhnə yola qaytarır. İki yol
+## eyni toxumla eyni düzümü qurur (bax [method _rand01]) — stend onları yan-yana
+## müqayisə edə bilsin (`--germ-bench --bench-motes`).
+
+## Zərrəciklər GPU-da. `--motes-cpu` — köhnə GDScript yolu (müqayisə və ehtiyat).
+static var gpu := not OS.get_cmdline_user_args().has("--motes-cpu")
 
 ## Zərrəcik sayı. Kadr yükü deyil (bir çağırışdır), amma çoxu fonu
 ## "qar" kimi göstərir və mikrobların oxunmasına mane olur.
@@ -53,10 +63,22 @@ var count := COUNT
 ## əlavə olunur. LOW-da massiv boş qalır və həm hesab, həm görüntü tam sönür.
 var sinks := PackedVector3Array()
 
+## Düzümün toxumu: hər [method rebuild] yenisini seçir. Stend sabit verir
+## ([member fixed_seed] ≥ 0) ki, iki yol eyni zərrəciklərlə başlasın.
+var fixed_seed := -1
+## Bu qat GPU-dadırmı — [method _ready]-dən əvvəl dəyişdirilə bilər (stend iki
+## yolu yan-yana qoyur).
+var use_gpu: bool = gpu
+
 var _pos := PackedVector2Array()
 var _seed := PackedFloat32Array()
 var _ready_field := 0.0
 var _flow_t := 0.0
+var _seed_n := 0
+
+var _particles: GPUParticles2D = null
+var _mat: ShaderMaterial = null
+static var _white: ImageTexture = null
 
 
 func _ready() -> void:
@@ -65,13 +87,9 @@ func _ready() -> void:
 	# görünməz olar (Godot-da uşağın z-i valideynin çəkilişinə nisbətdədir).
 	# Sıfırda isə ağac sırası işləyir: döşəmə və maneələr altda, zərrəciklər
 	# onların üstündə, qida və mikroblar isə sonrakı qatlarda.
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
-	for i in count:
-		_pos.push_back(Vector2.ZERO)
-		# Hər zərrəciyin öz fazası — hamısı eyni ritmdə titrəməsin.
-		_seed.push_back(rng.randf() * TAU)
-	_scatter(rng)
+	if use_gpu:
+		_build_particles()
+	rebuild()
 
 
 ## Sayı dəyişdikdən SONRA sahəni yenidən qurur.
@@ -81,22 +99,91 @@ func _ready() -> void:
 ## işlək vaxtı dəyişir (bax [method MenuV2._apply_quality]) və oyunçu fərqi
 ## elə həmin kadrda görməlidir — yoxsa düymə ölü sayılır.
 func rebuild() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
-	_pos.resize(count)
-	_seed.resize(count)
-	for i in count:
-		_seed[i] = rng.randf() * TAU
-	_scatter(rng)
+	_seed_n = fixed_seed if fixed_seed >= 0 else randi() % 100000
+	_ready_field = span * FIELD_FACTOR
+	if _particles != null:
+		_mat.set_shader_parameter("seed", _seed_n)
+		_mat.set_shader_parameter("focus", focus)
+		_mat.set_shader_parameter("half_size", _ready_field)
+		_particles.amount = count
+		_particles.restart()
+	else:
+		_scatter()
 	queue_redraw()
 
 
-## Zərrəcikləri görüş sahəsinə bərabər səpir.
-func _scatter(rng: RandomNumberGenerator) -> void:
-	var half := span * FIELD_FACTOR
-	_ready_field = half
-	for i in _pos.size():
-		_pos[i] = focus + Vector2(rng.randf_range(-half, half), rng.randf_range(-half, half))
+## Zərrəcikləri görüş sahəsinə bərabər səpir. Toxum və mövqe shader-in `start()`
+## funksiyası ilə EYNİ heşdəndir (bax [method _rand01]).
+func _scatter() -> void:
+	var half := _ready_field
+	_pos.resize(count)
+	_seed.resize(count)
+	for i in count:
+		var base := i * 3 + _seed_n * 7919
+		var r := Vector2(_rand01(base), _rand01(base + 1)) * 2.0 - Vector2.ONE
+		_pos[i] = focus + r * half
+		# Hər zərrəciyin öz fazası — hamısı eyni ritmdə titrəməsin.
+		_seed[i] = _rand01(base + 2) * TAU
+
+
+## 0..1 — PCG heşi, 32 bitlik tam ədəd hesabı ilə: shader-dəki `rand01` ilə eyni.
+static func _rand01(x: int) -> float:
+	var s := (x * 747796405 + 2891336453) & 0xFFFFFFFF
+	var w := (((s >> ((s >> 28) + 4)) ^ s) * 277803737) & 0xFFFFFFFF
+	w = (w >> 22) ^ w
+	return float(w) / 4294967295.0
+
+
+func _build_particles() -> void:
+	_mat = ShaderMaterial.new()
+	_mat.shader = preload("res://shaders/water_motes.gdshader")
+	# Axının formulu `Const.current_at`-dır — shader onun sabitlərini buradan alır.
+	_mat.set_shader_parameter("world_radius", Const.WORLD_RADIUS)
+	_mat.set_shader_parameter("current_edge", Const.CURRENT_EDGE)
+	_mat.set_shader_parameter("current_scale", Const.CURRENT_SCALE)
+	_mat.set_shader_parameter("current_strength", Const.CURRENT_STRENGTH)
+	_mat.set_shader_parameter("current_swirl", Const.CURRENT_SWIRL)
+	_mat.set_shader_parameter("depth", depth)
+	_mat.set_shader_parameter("streak", STREAK)
+	_mat.set_shader_parameter("line_width", _line_width())
+	_mat.set_shader_parameter("mote_color", _mote_color())
+	if _white == null:
+		var img := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_white = ImageTexture.create_from_image(img)
+	_particles = GPUParticles2D.new()
+	_particles.process_material = _mat
+	# 1×1 ağ tekstura — shader onu cizginin düzbucaqlısına uzadır.
+	_particles.texture = _white
+	_particles.amount = count
+	# Zərrəcik ölmür: hamısı bir anda doğulur, sonra yalnız axınla gəzir.
+	_particles.lifetime = 3600.0
+	_particles.explosiveness = 1.0
+	# Hər kadr, kadrın öz addımı ilə — GDScript yolu kimi. 30 Hz + interpolyasiya
+	# cizginin uzunluğunu iki vəziyyət arasında qarışdırardı.
+	_particles.fixed_fps = 0
+	_particles.interpolate = false
+	# Node-a nisbətən: arenada node mərkəzdədir (dünya = yerli), stend isə iki
+	# yolu yan-yana qoymaq üçün node-u sürüşdürür.
+	_particles.local_coords = true
+	_particles.draw_order = GPUParticles2D.DRAW_ORDER_INDEX
+	# Sahə kameranı izləyir, ona görə kəsmə düzbucaqlısı bütün dünyanı örtür.
+	_particles.visibility_rect = Rect2(-100000.0, -100000.0, 200000.0, 200000.0)
+	# Zərrəciklər node-un öz `_draw`-ından (deşik axını) ƏVVƏL çəkilir — köhnə
+	# yolda da eyni batch-də əvvəl gəlirdilər.
+	_particles.show_behind_parent = true
+	add_child(_particles)
+
+
+## Şüşə kənarının rəngindən bir az açıq: fonun içində qalmalıdır, amma
+## görünməlidir. Dərin qat sönük və nazikdir.
+func _mote_color() -> Color:
+	var col := Palette.DISH_EDGE.lerp(Palette.TEXT, 0.30 - 0.12 * depth)
+	return Color(col, 0.40 - 0.16 * depth)
+
+
+func _line_width() -> float:
+	return 1.8 - 0.5 * depth
 
 
 func _process(delta: float) -> void:
@@ -106,12 +193,25 @@ func _process(delta: float) -> void:
 	# əks halda böyüyən mikrobun ətrafında zərrəciklər peyda olardı.
 	_ready_field = lerpf(_ready_field, half, clampf(delta * 1.5, 0.0, 1.0))
 	half = _ready_field
+	# Broun hərəkətinin fazası oyun saatından: iki yol eyni kadrda eyni fazanı
+	# işlədir (əvvəl divar saatı idi — görüntüdə fərqi yoxdur).
+	var jitter_phase := fposmod(_flow_t * 0.4, TAU)
+
+	if _particles != null:
+		_mat.set_shader_parameter("focus", focus)
+		_mat.set_shader_parameter("half_size", half)
+		_mat.set_shader_parameter("jitter_phase", jitter_phase)
+		_mat.set_shader_parameter("step_dt", delta)
+		# Node-un öz çəkilişində yalnız deşik axını qalıb.
+		if not sinks.is_empty():
+			queue_redraw()
+		return
 
 	for i in _pos.size():
 		var p: Vector2 = _pos[i]
 		# Broun hərəkəti: su molekullarının təsadüfi zərbələri. Zəifdir, amma
 		# olmasa zərrəciklər riyazi düzgünlükdə süzülür və süni görünür.
-		var jitter := Vector2.from_angle(_seed[i] + float(Time.get_ticks_msec()) * 0.0004) * 6.0
+		var jitter := Vector2.from_angle(_seed[i] + jitter_phase) * 6.0
 		# Dərin qat daha yavaş sürüşür — parallaks buradan gəlir.
 		p += (Const.current_at(p) * (1.0 - 0.42 * depth) + jitter) * delta
 
@@ -129,11 +229,8 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var pts := PackedVector2Array()
 	var cols := PackedColorArray()
-	# Şüşə kənarının rəngindən bir az açıq: fonun içində qalmalıdır, amma
-	# görünməlidir. Dərin qat sönük və nazikdir.
-	var col := Palette.DISH_EDGE.lerp(Palette.TEXT, 0.30 - 0.12 * depth)
-	var mote_col := Color(col, 0.40 - 0.16 * depth)
-	for i in _pos.size():
+	var mote_col := _mote_color()
+	for i in (_pos.size() if _particles == null else 0):
 		var p: Vector2 = _pos[i]
 		var flow := Const.current_at(p)
 		# Axının dayandığı yerdə (mərkəz, şüşənin dibi) cizgi nöqtəyə enir —
@@ -166,5 +263,7 @@ func _draw() -> void:
 				0.16 + 0.30 * (1.0 - phase)))
 
 	# Rəng massivinə keçmək əlavə çağırış yaratmır: adi su cizgiləri ilə isti
-	# vent axını eyni multiline batch-də qalır.
-	draw_multiline_colors(pts, cols, 1.8 - 0.5 * depth)
+	# vent axını eyni multiline batch-də qalır (GPU yolunda zərrəciklər ayrıca
+	# bir çağırışdır, burada yalnız deşik axını qalır).
+	if not pts.is_empty():
+		draw_multiline_colors(pts, cols, _line_width())

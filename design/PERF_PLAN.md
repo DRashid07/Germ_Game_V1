@@ -144,6 +144,12 @@ Supercell kimi studiyalar performansı real zəif cihazda, büdcə ilə idarə e
 3. **Kadr probu repoya:** `scripts/tools/frame_probe.gd` + `--frame-probe N`.
    Kadrı fizika, məntiq və render hissəsinə bölür, `--probe-phases` ilə qatları
    növbə ilə gizlədib payını ölçür.
+   > **Hazırdır (2026-10-19).** Məşq rejimində işləyir; yalnız canlı matç kadrlarını
+   > sayır — oyunçu öləndə arenanı bağlayıb yenisini açır (avtomatik oyunçu TƏK
+   > QALAN-da 15–25 saniyə yaşayır, `--perf` isə ondan sonrakı menyunu da sayırdı).
+   > 50 ms-dən uzun kadrlar hissələri ilə ayrıca yazılır. Fazalı ölçmə canlı matçda
+   > səs-küylüdür (emulyatorda ±1 ms); dəqiq qat qiyməti üçün səhnəni dondurub
+   > qatları növbə ilə gizlətmək lazımdır (bax aşağıda, «Render-in bölgüsü»).
 4. **Təkrarlanan ssenari:** `--seed N` `Sim.rng` (`sim.gd:294`) və `Bot._rng`
    (`bot.gd:56`) üçün `randomize()`-i əvəz edir. Məşq rejimində TƏK QALAN, ekranda
    10 mikrob, YÜKSƏK.
@@ -183,16 +189,21 @@ Supercell kimi studiyalar performansı real zəif cihazda, büdcə ilə idarə e
 > mikrob başına CPU isə ~0.13 → ~0.025 ms-ə düşüb, yəni mikrob artdıqca qazanc
 > böyüyür. Zəif telefonda B-nin real qazancı ölçülməlidir.
 >
-> **A04s ssenarisi (2026-10-18, README «A04s ssenarisi»):** 1600×720, TƏK QALAN,
-> YÜKSƏK, avtomatik oyunçu (`--auto`), A, B, C və isinmə birlikdə. Emulyator
-> matçı 49 / 30 → **59 / 58 FPS** (orta / 1% ən pis), 16.7 ms-i aşan kadr 43% →
-> **1.4%**, prosessor vaxtı kadr başına 15.4 → **8.0 ms**. Ekranda 10 mikrob:
-> kompüter 4.2 → **0.86 ms**, emulyator 63 → **1.75 ms**; A04s-ə çevrilmiş təxmin
-> (×13) ~55 → ~11 ms. Mali GPU-su ölçülməyib — dövrlərə görə təxmin 10 mikroba
-> +~1 ms. Görüntü: mikrob piksellərinin 1.1–1.5%-i fərqlənir, hamısı kənar
-> antialiası. Ayrıca tapıntı: hər iki yolda matçda bəzən bir dəfə iki kadrlıq
-> 67–76 ms ilişmə olur (kompüterdə, 6 qaçışın 4-ündə, hadisədən asılı; F1-dən
-> deyil) — F6-nın növbəti işi onun mənbəyini tapmaqdır.
+> **A04s ssenarisi (README «A04s ssenarisi»):** 1600×720, TƏK QALAN, YÜKSƏK,
+> avtomatik oyunçu (`--auto`), A, B, C və isinmə birlikdə. Kadr probu ilə (yalnız
+> canlı matç kadrları, 2026-10-19): emulyator matçı ~37 / ~22 → **60 / 32 FPS**
+> (orta / 1% ən pis), kadrın işi 25.5 → **8.3 ms**, 50 ms-dən uzun ilişmə 3–16 →
+> **0**; kompüter matçı 2.1 → **1.14 ms**. Ekranda 10 mikrob: kompüter 4.2 →
+> **0.86 ms**, emulyator 63 → **1.75 ms**; A04s-ə çevrilmiş təxmin (×13) ~55 → ~11
+> ms. Mali GPU-su ölçülməyib — dövrlərə görə təxmin 10 mikroba +~1 ms. Görüntü:
+> mikrob piksellərinin 1.1–1.5%-i fərqlənir, hamısı kənar antialiası (Android-də və,
+> düzəlişdən sonra, brauzerdə də). Brauzerdə tapılan səhv (2026-10-19): sətir nömrəsi
+> `instance uniform` idi və veb build-də bəzi qatlara çatmırdı — mikrob başqasının
+> sətrini çəkirdi; indi hər sətrin öz material nüsxəsi var (README, «Mikrob GPU-da
+> çəkilir»). Android və masaüstü buna düşmürdü. İlk ölçü
+> `--perf` ilə idi (49 → 59 FPS) və ölümdən sonrakı menyu kadrlarını da sayırdı;
+> orada görünən iki kadrlıq ~70 ms "ilişmə" matçın içində deyil, menyu səhnəsinin
+> yüklənməsidir.
 >
 > Növbəti addımlar:
 > - Real Mali-də shader-lərin qiymətini ölçmək (F0): ən bahalıları kontur keçidi,
@@ -275,12 +286,34 @@ yaddaş zolağı və bir neçə tam ekran keçidi deməkdir.
 **Qazanc:** əsasən GPU-dadır (zəif GPU-da 60 kadr üçün şərtdir); CPU-da glow
 keçidlərinin hazırlığı da gedir.
 
+> **Render-in bölgüsü (2026-10-19, masaüstü, matç dondurulub, qatlar növbə ilə
+> gizlədilib, 5 dövr):** render CPU 0.92 ms, GPU 0.41 ms, 90 çağırış. Parlama
+> −0.17 ms CPU və **−0.16 ms GPU (GPU vaxtının 40%-i)**; su zərrəcikləri −0.09 CPU;
+> HUD −0.05 CPU, amma **38 çağırış**; mikroblar −0.04 CPU, 8 çağırış; qida, xəritə,
+> effektlər ≤ 0.02 ms. Hamısı gizlənəndə 0.70 ms / 26 çağırış qalır — döşəmə,
+> kontur keçidi, kadr buferləri. Yəni F1-dən sonra ən böyük dəyişən xərc parlamadır;
+> Mali-də tam ekran bulanıqlıq keçidləri və RGBA16F bufer bundan da bahadır. F2-nin
+> A/B-si (qərar 1) növbəti ən böyük addımdır.
+>
+> HUD-un 38 çağırışı: hər `Label` iki çağırışdır (dinamik şriftdə kontur qlifləri
+> ayrı teksturadadır), atəş düyməsi 8, super düyməsi 5, minixəritə 4. Mikrob adları
+> da hər biri iki çağırışdır. MSDF (F4.3) konturu və mətni bir teksturaya yığır —
+> bütün yazılar bir-iki çağırış olar; qliflərin kənarı bir az dəyişir (A/B lazımdır).
+
 ### F3 — Su zərrəcikləri, axın və effektlər GPU-da, TAM sayda (1 həftə)
 
 1. **Su zərrəcikləri (80+30) və cərəyan deşiklərinə axın:** `GPUParticles2D` öz
    proses shader-i ilə. `Const.current_at` analitik funksiyadır (sin/cos sahəsi)
    və GLSL-ə birbaşa köçür. Zərrəcik mövqeyini GPU özü inteqrasiya edir, CPU
    işi sıfıra enir.
+   > **Zərrəciklər hazırdır (2026-10-19, README «Su zərrəcikləri GPU-da»).** Görüntü
+   > piksel-piksel eynidir (`--germ-bench --bench-motes`: GL-də ən böyük fərq 1/255,
+   > ANGLE-də 0). Masaüstü release matçı 1.24 → 1.14 ms (proses −0.13, render
+   > +0.03), A04s-ə çevrilmiş təxmin ~1.3 ms. Emulyatorda +0.3 ms (GL çağırışı orada
+   > baha, GDScript isə A55-dən sürətli). Deşik axını vəziyyətsizdir, GDScript-də
+   > qalıb (7 cizgi × deşik). Yol üstündə tapıldı: emulyatorda saat oxumaq ~10 µs-dir
+   > və zərrəciklərin "1.1 ms"-i əslində 110 saat çağırışı idi — indi faza kadrın
+   > oyun saatındandır.
 2. **Quruyan zonanın buxarı və çatları** (TƏK QALAN): buxar shader-də, çatlar
    statik qatda (artıq belədir).
 3. **Effektlər** (`juice_fx`, `burst_fx`, `super_fx`): onsuz da bir neçə batch-dir.

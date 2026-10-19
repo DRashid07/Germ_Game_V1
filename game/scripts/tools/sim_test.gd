@@ -125,6 +125,8 @@ static func run() -> int:
 	_test_germ_gpu_shape_sync()
 	_test_germ_gpu_mesh()
 	_test_germ_gpu_fans()
+	_test_water_motes_gpu()
+	_test_water_motes_cpu()
 	_test_map_layouts()
 	_test_arena_core_is_free()
 	_test_bush_hides()
@@ -2235,7 +2237,8 @@ static func _test_germ_gpu_contract() -> void:
 	for name: String in written:
 		var known := false
 		for code: String in [src, shape]:
-			known = known or code.contains(" %s;" % name) or code.contains(" %s :" % name)
+			known = known or code.contains(" %s;" % name) or code.contains(" %s :" % name) \
+				or code.contains(" %s =" % name)
 		if not known:
 			unknown.append(name)
 	_check(unset.is_empty() and unknown.is_empty() and written.size() > 20,
@@ -2354,9 +2357,92 @@ static func _test_germ_gpu_shape_sync() -> void:
 			% [sup[0], str(sup[1])])
 
 
-## germ_visual.gd-dəki funksiyaların şərhsiz mətninin izi: `[md5, tapılmayanlar]`.
-static func _source_md5(names: Array) -> Array:
-	var lines := FileAccess.get_file_as_string("res://scripts/client/germ_visual.gd").split("\n")
+## Su zərrəciklərinin hərəkəti GPU-dadır (shaders/water_motes.gdshader) — axın sahəsi
+## (`Const.current_at`), Eyler addımı, kənardan keçmə, toxum heşi və cizginin
+## həndəsəsi GDScript yolunun əl ilə yazılmış surətidir. Onlardan biri dəyişsə iz
+## düşür: shader-i də uyğunlaşdır, `--germ-bench --bench-motes` ilə iki yarımın
+## eyni olduğunu yoxla (2026-10-19: GL-də ən böyük fərq 1/255, ANGLE-də 0 — həm
+## `--fixed-fps` ilə, həm dəyişkən kadrlarla; brauzerdə də), izi dəyiş.
+const MOTES_SOURCE_MD5 := "cafcae5d2312a0b9c6c4b8e770f5fb58"
+
+
+static func _test_water_motes_gpu() -> void:
+	var src := FileAccess.get_file_as_string("res://shaders/water_motes.gdshader")
+	var gd := FileAccess.get_file_as_string("res://scripts/client/water_motes.gd")
+	var written := {}
+	for m in RegEx.create_from_string("set_shader_parameter\\(\"(\\w+)\"").search_all(gd):
+		written[m.get_string(1)] = true
+	var unset := []
+	for m in RegEx.create_from_string("\\nuniform \\w+ (\\w+)").search_all(src):
+		if not written.has(m.get_string(1)):
+			unset.append(m.get_string(1))
+	var unknown := []
+	for name: String in written:
+		if not src.contains(" %s;" % name) and not src.contains(" %s :" % name):
+			unknown.append(name)
+	_check(src.contains("shader_type particles;") and unset.is_empty() and unknown.is_empty()
+			and written.size() >= 12,
+		"su zərrəciklərinin shader-i: hər uniform yazılır, yazılan hər ad shader-dədir (yazılmayan %s, naməlum %s)"
+			% [str(unset), str(unknown)])
+	var flow := _source_md5(["current_at"], "res://scripts/shared/constants.gd")
+	var motes := _source_md5(["_process", "_draw", "_scatter", "_rand01", "_mote_color",
+		"_line_width"], "res://scripts/client/water_motes.gd")
+	var print_md5: String = (str(flow[0]) + str(motes[0])).md5_text()
+	_check(flow[1].is_empty() and motes[1].is_empty() and print_md5 == MOTES_SOURCE_MD5,
+		"su zərrəciklərinin GDScript qaydası GPU surəti ilə uyğundur (iz %s; tapılmayan %s) — dəyişibsə water_motes.gdshader-i yenilə, --bench-motes ilə yoxla, izi dəyiş"
+			% [print_md5, str(flow[1] + motes[1])])
+
+
+## GDScript yolu (`--motes-cpu`, stendin sol yarısı): heş 0..1 aralığında bərabər
+## paylanır, zərrəciklər kamera hərəkət etsə də görüş kvadratından çıxmır.
+static func _test_water_motes_cpu() -> void:
+	var sum := 0.0
+	var inside := true
+	for i in 2000:
+		var v := WaterMotes._rand01(i)
+		inside = inside and v >= 0.0 and v <= 1.0
+		sum += v
+	_check(inside and absf(sum / 2000.0 - 0.5) < 0.03,
+		"zərrəcik heşi 0..1 aralığındadır və bərabər paylanır (orta %.3f)" % (sum / 2000.0))
+	var m := WaterMotes.new()
+	m.use_gpu = false
+	m.count = 60
+	m.fixed_seed = 5
+	m.span = 500.0
+	m.rebuild()
+	var half := m.span * WaterMotes.FIELD_FACTOR
+	var kept := m._pos.size() == 60
+	for step in 240:
+		m.focus = Vector2(float(step) * 6.0, sin(float(step) * 0.05) * 300.0)
+		m._process(1.0 / 60.0)
+		for p in m._pos:
+			var d: Vector2 = p - m.focus
+			kept = kept and absf(d.x) <= half + 0.001 and absf(d.y) <= half + 0.001
+	var twin := WaterMotes.new()
+	twin.use_gpu = false
+	twin.count = 60
+	twin.fixed_seed = 5
+	twin.span = 500.0
+	twin.rebuild()
+	var same := twin._pos.size() == 60
+	var fresh := WaterMotes.new()
+	fresh.use_gpu = false
+	fresh.count = 60
+	fresh.fixed_seed = 5
+	fresh.span = 500.0
+	fresh.rebuild()
+	for i in 60:
+		same = same and twin._pos[i] == fresh._pos[i] and twin._seed[i] == fresh._seed[i]
+	_check(kept and same,
+		"GDScript zərrəcikləri görüş kvadratında qalır, eyni toxum eyni düzümü verir")
+	m.free()
+	twin.free()
+	fresh.free()
+
+
+## Faylın funksiyalarının şərhsiz mətninin izi: `[md5, tapılmayanlar]`.
+static func _source_md5(names: Array, path := "res://scripts/client/germ_visual.gd") -> Array:
+	var lines := FileAccess.get_file_as_string(path).split("\n")
 	var code := ""
 	var missing := []
 	for name: String in names:

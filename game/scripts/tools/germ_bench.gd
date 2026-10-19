@@ -36,6 +36,8 @@ var _err := {}
 ## isidilir (`--bench-warm`) — ilk kompilyasiyanın donmasını ayrıca görmək üçün.
 var delay := 0.0
 var warm := false
+## Mikrob əvəzinə su zərrəcikləri — iki yol yan-yana (`--bench-motes`).
+var motes := false
 var _born_frame := -1
 var _born_worst := 0.0
 
@@ -62,6 +64,8 @@ var _t_pre := -1
 
 
 func _ready() -> void:
+	# Brauzerdə "Oyun hazırlanır…" örtüyü stendi örtməsin (bax [method Settings.web_page_ready]).
+	Settings.web_page_ready()
 	var bg := ColorRect.new()
 	bg.color = Palette.DISH
 	bg.size = Vector2(8000, 8000)
@@ -98,7 +102,9 @@ func _ready() -> void:
 		_born_frame = Engine.get_frames_drawn()
 
 	var vp := get_viewport_rect().size
-	var cols := int(ceil(sqrt(float(count) * vp.x / vp.y)))
+	if motes:
+		_build_motes(vp)
+	var cols := maxi(1, int(ceil(sqrt(float(count) * vp.x / vp.y))))
 	var rows := int(ceil(float(count) / float(cols)))
 	var pair := render_mode == "pair"
 	# Pair rejimində ekran iki yarıdır: sol — bugünkü yol, sağ — GPU yolu.
@@ -128,6 +134,27 @@ func _ready() -> void:
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 	print("[bench] %d mikrob, növ %s, lod %d, render %s (GPU yolu %s)" % [count, species_arg,
 		lod, render_mode, "açıq" if GermGPU.supported() else "bağlı"])
+
+
+## `--bench-motes`: su zərrəcikləri yan-yana — solda GDScript yolu, sağda GPU
+## (bax [WaterMotes]). Arenadakı kimi iki qat (dərin 80, səth 30 + deşik axını),
+## eyni toxum və eyni addım: `--fixed-fps 60` ilə iki yarım eyni kadrı verməlidir.
+## Mikroblar əlavə olunmur (`--bench-count 0` mənasında).
+func _build_motes(vp: Vector2) -> void:
+	count = 0
+	var half := minf(vp.x * 0.25, vp.y * 0.5) - 8.0
+	for side in 2:
+		for deep in [true, false]:
+			var m := WaterMotes.new()
+			m.use_gpu = side == 1
+			m.depth = 1.0 if deep else 0.0
+			m.count = 80 if deep else 30
+			m.fixed_seed = 11 if deep else 23
+			m.span = half / WaterMotes.FIELD_FACTOR
+			m.position = Vector2(vp.x * (0.25 if side == 1 else -0.25), 0.0)
+			if not deep:
+				m.sinks = PackedVector3Array([Vector3(half * 0.3, half * 0.2, 60.0)])
+			add_child(m)
 
 
 func _species_for(i: int) -> Const.Species:

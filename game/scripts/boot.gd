@@ -86,6 +86,17 @@ func _start_practice(args: PackedStringArray) -> void:
 		Settings.quality_chosen = true
 		Settings.apply()
 
+	_spawn_practice(args)
+
+	_setup_screenshot(args)
+	_setup_perf(args)
+	_setup_frame_probe(args)
+	_setup_super_probe(args)
+
+
+## Məşq arenasını yaradıb səhnə edir. Ayrıca funksiyadır: kadr probu oyunçu
+## öləndə menyu əvəzinə yeni arena açır (bax `tools/frame_probe.gd`).
+func _spawn_practice(args: PackedStringArray) -> void:
 	# `--at x,y` — mikrobu xəritənin müəyyən yerində doğurur (yalnız yoxlama).
 	# `configure_practice`-dən ƏVVƏL oxunmalıdır: yerli dünya mikrobu məhz
 	# orada yaradır. Sonra qoyulsaydı proqnoz yeni yerdə, server isə köhnə
@@ -118,10 +129,6 @@ func _start_practice(args: PackedStringArray) -> void:
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(arena)
 	tree.set_deferred("current_scene", arena)
-
-	_setup_screenshot(args)
-	_setup_perf(args)
-	_setup_super_probe(args)
 
 
 ## Pəncərə portret olanda kadrı YATAY saxlayır.
@@ -183,6 +190,7 @@ func _start_germ_bench(args: PackedStringArray) -> void:
 	stand.verify = args.has("--bench-verify")
 	stand.delay = float(_arg_value(args, "--bench-delay", "0"))
 	stand.warm = args.has("--bench-warm")
+	stand.motes = args.has("--bench-motes")
 	var tree := get_tree()
 	tree.root.add_child.call_deferred(stand)
 	tree.set_deferred("current_scene", stand)
@@ -240,6 +248,19 @@ func _setup_perf(args: PackedStringArray) -> void:
 		return
 	var probe = _tool("perf_probe").new()
 	probe.duration = maxf(float(secs), 3.0)
+	get_tree().root.add_child.call_deferred(probe)
+
+
+## `--frame-probe <saniyə> [--probe-phases]` — kadrın işini hissələrə bölür, fazalarda
+## qatları növbə ilə gizlədib payını ölçür (bax `tools/frame_probe.gd`).
+func _setup_frame_probe(args: PackedStringArray) -> void:
+	var secs := _arg_value(args, "--frame-probe", "")
+	if secs.is_empty():
+		return
+	var probe = _tool("frame_probe").new()
+	probe.duration = maxf(float(secs), 5.0)
+	probe.phases = args.has("--probe-phases")
+	probe.respawn = _spawn_practice.bind(args)
 	get_tree().root.add_child.call_deferred(probe)
 
 

@@ -131,14 +131,15 @@ func _draw_dots() -> void:
 
 ## Maneə növünün xəritə rəngi.
 ##
-## Oyunun içində növ FORMA ilə oxunur (bax [const Arena.BLOB_TEXTURE]) —
+## Oyunun içində növ FORMA ilə oxunur (bax [method MapKit.base_name]) —
 ## xəritədə isə maneə bir neçə pikseldir və forma seçilmir, ona görə burada
 ## rəng işlədilir. İki ayrı dil deyil: hər ikisi eyni suala cavab verir,
-## sadəcə ölçü fərqlidir.
+## sadəcə ölçü fərqlidir. Kolun rəngi [Palette]-dəndir — əvvəl burada əl ilə
+## yazılmış ayrı yaşıl idi və xəritə dəsti dəyişəndə köhnə qalırdı.
 static func _kind_color(kind: int) -> Color:
 	match kind:
 		DishMap.Kind.BUSH:
-			return Color("3E8A6B", 0.9)
+			return Color(Palette.BUSH, 0.9)
 		DishMap.Kind.VENT:
 			return Color("E8A845", 0.9)
 		_:

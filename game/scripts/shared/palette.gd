@@ -14,7 +14,16 @@ const DISH_EDGE := Color("2B5963")     ## Qalxmış şüşə dodağın gövdəsi
 const GRID := Color("1A3942")          ## Döşəmə şəbəkəsi və bevel işığı
 const MUCUS := Color("16333B")         ## Maneə (selik) ləkəsi
 const MUCUS_EDGE := Color("245562")
-const BUSH := Color("4FCB72")           ## Keçilən kolun doymuş yaşıl işarəsi
+## Kolun gövdəsi — xəritənin V1 "Damla" dəsti bu rənglə çəkilib (sahib
+## 2026-10-19-da təsdiqləyib). Əvvəlki parlaq `#4FCB72` laym (7CFF5B), nanə
+## (4BFFA5) və yoldaş halqası (A6FF4D) ilə eyni yaşıl ailədə idi və HIGH-ın
+## parlamasında saçırdı; bu ton nanənin TONUDUR (151° / 150°), amma xeyli tünd
+## və solğundur (V 0.56) — döşəmənin ən parlaq yaşıl kütləsi qalır, saçmır.
+## Kod tərəfdə yalnız xəritə stendi və minimap işlədir; oyunda kol atlasdandır.
+const BUSH := Color("3E9068")
+## Şüşə divarın işıq xətti — V1 divar zolağının üst xətti ilə eyni ton.
+## Cənub dodağının kənarı və onun parıltıları bununla çəkilir.
+const RIM_LINE := Color("8FD3D6")
 const BRITTLE := Color("D09345")        ## Kövrək qabığın kəhrəba işarəsi
 const VENT := Color("F0B94E")           ## Cərəyan deşiyinin isti xəbərdarlığı
 const DRY_CRACK := Color("81785C")      ## Quru zonanın doymamış çatları

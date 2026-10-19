@@ -1319,3 +1319,80 @@ UNLIT clutter exception: no highlights or shading from this light, only dark pig
 No text, letters, numbers, logos, symbols, signatures or watermarks. No anthropomorphic details, paired similar spots, pale or saturated round filled dots, balls, lab equipment, metal, chrome, machinery or hard geometric corners except broken shell cracks and ribs. Repeated features use odd counts and irregular spacing. No cast shadow, ground patch, external glow, guide lines, crosses, arrows, hatching or painted checkerboard.
 ```
 
+
+## 3-cü iş (2026-10-18 04:46) — slot 13 (kaustika)
+
+> Final Codex-indir. Yoxlama: boz (spread 10), tikişsiz — kənar fərqi 3.6/3.3, qonşu sütunlar 4.8; 2×2 təkrarda tikiş görünmür. `raw/shared/`-ə qoyuldu.
+
+# Map art prompts — resumed run, part 3
+
+Scope: slot 13 only. Slots 1–12 were already approved and are outside this run; no files for those slots were generated or changed.
+
+## Slot 13 — `map_shared_caustics.png`
+
+Tool: built-in `image_gen`; one image per call. `transparent_background: false`.
+
+### Try 1 — generation
+
+Input images (`-i`): none. This is a new neutral VFX tile; the obstacle template, kit anchor and scene references are not applicable.
+
+Exact prompt:
+
+```text
+Use case: stylized-concept
+Asset type: seamless tileable pond-light caustics texture for a mobile game, a neutral VFX intensity map.
+Output: one opaque GREYSCALE PNG, exactly 1024x1024 pixels. The entire square is the texture; no border or presentation panel.
+Primary request: a black base with a thin bright wavy interconnected network of irregular organic cells, resembling sunlight refracted through gently rippling shallow pond water. Cell interiors stay black and empty. The soft bright filaments are 6-14 pixels wide at 1024x1024, with gently tapered, smooth edges; junctions remain thin, without bright swollen patches. Irregular cell sizes and spacing, calm open pattern, no dense microtexture.
+Composition: flat plan view, uniform texture scale throughout. Perfectly seamless repeating tile in BOTH directions: every line crossing the left edge continues at the matching position, tangent, width and brightness on the right edge; every line crossing the top continues equally on the bottom. All four corners join cleanly under repetition. No dark border, no edge fade, no mirrored symmetry, no obvious central focal element.
+Color palette: strictly neutral greyscale only, RGB channels identical at every pixel; black #000000 background with bright grey to white caustic filaments. Completely opaque, alpha 255 everywhere.
+Lighting: One key light from the upper-left (11 o'clock); highlight on the upper-left; shading darkens toward the lower-right; optional hairline rim light on the lower-right edge.
+Apply this lighting identity only to the local softness of the refracted filaments; the overall tile must keep uniform exposure and periodic edges.
+Style: clean softly rendered organic light network, suitable for premium chunky mobile arena game art, smooth and readable.
+Constraints: only caustic light on black; no pond floor, objects, raised forms, circles framing the tile, cast shadows, filled pale round dots, balls, isolated specks, blobs, pairs of similar spots, perfect hexagons, honeycomb, straight grid, hard geometric corners, dense noise, text, letters, numbers, logos, symbols or watermarks.
+```
+
+Status: accepted after one generation call and proportional resizing only.
+
+Untouched source: `out/rejected/map_shared_caustics_orig.png` (1254x1254, opaque RGB). Generated source: `C:/Users/User/.codex/generated_images/01a14c79-30ac-78b3-a3c1-da20fb95f441/exec-97f9d9fb-b38b-4ce9-b4d1-7ea8c52ab398.png`.
+
+The untouched source was checked before resizing:
+
+```text
+powershell -ExecutionPolicy Bypass -File verify.ps1 out/rejected/map_shared_caustics_try1_orig.png
+map_shared_caustics_try1_orig.png: size=1254x1254 format=Format24bppRgb corner_a=255 a8=255 aw8=255 centre_a=255 opaque=1.000 bbox=0,0,1253,1253 p99_max=0.902 spread=10 key_px=0 checker=0.026 p99_any=0.902 p99_noamber=0.902 amber=0.0000 amber_glow=0.0000 spread8=10
+```
+
+Exact resize command used (the resulting candidate was then moved to the final path, and the source renamed to the `_orig.png` path above):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File resize.ps1 out/rejected/map_shared_caustics_try1_orig.png out/rejected/map_shared_caustics_try1.png 1024 1024
+```
+
+Final verification command and complete result:
+
+```text
+powershell -ExecutionPolicy Bypass -File verify.ps1 out/map_shared_caustics.png
+map_shared_caustics.png: size=1024x1024 format=Format32bppArgb corner_a=255 a8=255 aw8=255 centre_a=255 opaque=1.000 bbox=0,0,1023,1023 p99_max=0.902 spread=10 key_px=0 checker=0.026 p99_any=0.902 p99_noamber=0.902 amber=0.0000 amber_glow=0.0000 spread8=10
+```
+
+Additional opacity and tiling inspection (channel differences are in 8-bit intensity units):
+
+```text
+alpha_min=255 alpha_max=255
+edge_lr_mae=3.657 edge_tb_mae=3.299
+edge_lr_max=69 edge_tb_max=74
+lr_pixels_diff_gt32=17/1024 tb_pixels_diff_gt32=12/1024
+adjacent_x_mae=3.167 adjacent_y_mae=4.070
+```
+
+Opposite-edge differences are comparable to ordinary neighboring-pixel changes at these soft bright filaments. Visual review of the original and a 2x2 repetition confirmed continuous line joins in both axes, black cell interiors, soft thin irregular caustics, and no dense noise, perfect hexagons, filled dots, text or props. Diagnostic repeat preview: `out/rejected/map_shared_caustics_try1_repeat.png`; this is not a game asset. Edge pixels are not byte-identical; the repeat is visually continuous.
+
+Rejections: no generated candidate was rejected; only the 1254x1254 source dimensions required correction to the specified 1024x1024.
+
+## Short report
+
+- Completed only slot 13: `out/map_shared_caustics.png`.
+- Built-in image generation: one call, no image-generation edits, no reference images.
+- Final: 1024x1024, fully opaque (alpha 255 everywhere), greyscale gate passed (`spread=10 < 24`), seamless repetition visually checked in both axes.
+- All slot-13 gates passed; no observed art deviations. The permitted greyscale tolerance is met, though RGB channels are not mathematically identical.
+- Slots 1–12 were not regenerated or modified.

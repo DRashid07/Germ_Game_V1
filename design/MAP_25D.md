@@ -1,9 +1,9 @@
 # Xəritə 2.5D — Brawl Stars araşdırması, dörd versiya, Codex assetləri
 
 Bu sənəd xəritənin "Brawl Stars kimi 2.5D və interaktiv" görünüşə keçməsinin
-planıdır. Asset-lər Codex ilə çəkilir (maketlər və ortaq dəst hazırdır, versiya
-dəstləri növbədədir — §6); oyuna tətbiq SONRAKI işdir (§7).
-Hələ heç bir oyun faylı dəyişməyib.
+planıdır. Asset-lər Codex ilə çəkilib — dörd maket, ortaq dəst, V1/V2/V3-ün tam dəstləri
+və V4 sınağı hazırdır (§6). **Sahib 2026-10-19-da V1 «Damla»-nı seçdi və o, oyuna
+tətbiq olundu (§8).** V2–V4 yalnız dəst və maket kimi qalır.
 
 Mənbə hesabatlar (ingiliscə, tam):
 
@@ -134,6 +134,14 @@ zolağı (sürətləndirmə).
 7. **Toplar və nişan xətti kol yarpaqlarının üstündə** (F1 düzəlişi ilə birlikdə,
    bütün versiyalarda) — tövsiyə olunur, Brawl Stars-da da belədir.
 
+**2026-10-19, V1 seçiləndən sonra:** 1 — V1-də qapaq qalxmır, sual açıq qalır
+(yalnız V2/V4 üçün). 2 — dəyişmədi, düzüm 0. 3 — `#3E9068`: V1 dəsti bu rənglə
+çəkilib və sahib dəsti təsdiqləyib (`Palette.BUSH`, minimap, stend). 4 — bir
+şeyder işlənir (döşəmə makro × detal); 2026-10-17 qərarından bəri iş GPU-ya
+köçürülür (germ, su zərrəcikləri), "şeyder yox" qaydası köhnəlib; kolun
+"deşiyi" şeydersiz həll olundu (tac şəffaflaşır). 5, 6 — açıq. 7 — tətbiq
+olundu: top və izi kolun içində yarpağın üstündədir, nişanın üst hissəsi də.
+
 ## 5. Codex assetləri — necə çəkilib
 
 Qovluq: [`map_art/`](map_art/).
@@ -169,9 +177,15 @@ Hər işin faylları `map_art/raw/<iş>/`-də, faktiki promptlar
 | **Maketlər** | ✅ 4/4 (10 cəhd) | `raw/mockups/map_v1..v4_mockup.png` — 1536×1024 |
 | **Ortaq** | ⚠️ 5/5, üçündə qeydiyyat qüsuru (aşağıda) | `raw/shared/`: floor_detail, vent_swirl, ripple, splash, debris — 1024² |
 | **V1 Damla dəsti** | ✅ 12/12 (4 işdə, Codex limitləri arasında) | `raw/v1/`: mucus_blob, mucus_bloom, brittle_s0/s1/s2, brittle_rubble, bush_base, bush_canopy, vent_base, floor_macro, rim_north (1536×1024, maqenta açar), clutter (2×2) |
-| V2 Sütun dəsti | ⏳ 12/13 (Codex limiti; 18 okt 04:42-də davam) | `raw/v2/`: mucus_blob (baraban), mucus_bloom (qurbağa kürüsü), brittle_s0/s1/s2 (diatom), brittle_rubble, bush_base, bush_canopy (su otu), vent_base (köpük bulağı), floor_macro (zeytun lil), rim_north (yosunlu şüşə; tikiş düzəlişi lazımdır), clutter; qalan: kaustika. Risk: diatom s0-ın badam sahəsi göz kimi oxuna bilər |
-| V3 Mağara dəsti | gözləyir | 12 |
-| V4 Perspektiv sınağı | gözləyir (V1-in sprite-larına istinad edir) | 3 |
+| **V2 Sütun dəsti** | ✅ 13/13 (3 işdə) | `raw/v2/`: mucus_blob (baraban), mucus_bloom (qurbağa kürüsü), brittle_s0/s1/s2 (diatom), brittle_rubble, bush_base, bush_canopy (su otu), vent_base (köpük bulağı), floor_macro (zeytun lil), rim_north (yosunlu şüşə; tikiş düzəlişi lazımdır), clutter; `raw/shared/map_shared_caustics.png` (tikişsiz). Risk: diatom s0-ın badam sahəsi göz kimi oxuna bilər |
+| **V3 Mağara dəsti** | ✅ 12/12 (2 işdə) | `raw/v3/`: mucus_blob (EPS təpəsi), mucus_bloom (mikrokoloniya), brittle_s0/s1/s2 (mineral qabıq; s1/s2-də kontur itib — pipeline çəkir), brittle_rubble, bush_base, bush_canopy (işıldayan uclu lentlər; boş mərkəz kiçik — pipeline açır), vent_base, floor_macro (EPS şəbəkəsi), rim_north (yaşıl açar), clutter |
+| **V4 Perspektiv sınağı** | ✅ 3/3 sınaq | `raw/v4/`: mucus_blob, brittle_s0, bush_canopy — V1-in eyni obyektləri 55° əyik kameradan, elliptik ayaq izi; brittle bir az böyük, tac enli (pipeline oturdur). Qalan 3 sprite yalnız Perspektiv seçilərsə |
+
+Dəstləri müqayisə üçün: `raw/compare_kits.png` (hər sətir eyni slot, hər sütun bir versiya, öz döşəmə rəngi üstündə); hər versiyanın tam vərəqi `raw/vN/vN_sheet.png`.
+
+> V3 və V4 dəstləri (`raw/v3/`, `raw/v4/`, `PROMPTS_MAP_V3/V4.md`), müqayisə vərəqləri
+> (`raw/compare_*.png`) və PDF təqdimatı repoda saxlanmır (`.gitignore`) — yalnız
+> dizayn maşınında yerli qalır. Repoda V1 (oyundakı dəst), V2 və ortaq assetlər var.
 
 Maketlər haqqında qeydlər:
 - **V1** — təmiz və oxunaqlı; günbəzlər öz dairəsindədir, kol yeganə "yuxarı
@@ -258,3 +272,33 @@ Ardıcıllıq texniki hesabatın §8-indən:
 Hər addımdan sonra `--simtest` və `--perf` (pik ≤ 350 çəkiliş çağırışı).
 `sim_test._test_blob_textures` hər növün iki ölçü sinfində hüceyrəsi olduğunu
 yoxlamalıdır.
+
+## 8. Tətbiq — V1 «Damla» (2026-10-19)
+
+Sahibin sözü: "İlk versiya yaxşıdır. Tətbiq et". Kod, assetlər və ölçülər
+README-nin «Xəritə — V1 Damla» bölməsindədir; üslub ART_BIBLE §4c-dədir.
+§7-nin addımları belə getdi:
+
+1. **F1** düzəldi (tac z 2), top/iz/nişanın üst hissəsi yarpağın üstündə, öz
+   mikrobun kolda 0.70, kolun tacı 0.45-ə şəffaflaşır. **Rentgen konturu
+   yazılmadı:** tacın şəffaflaşması kifayət etdi (kadrlarla yoxlanıb), kontur isə
+   amöbün dartılan formasını dairə ilə yanlış göstərərdi. **F3**: halqa mesh-i.
+   **F2** ayrıca ölçülmədi — atlas heç bir sprite-a rəng vermir, sual aktual deyil.
+2. **Pipeline** `map_art/build_map.gd`-dir (`process.gd`-yə əlavə yox, ayrıca
+   skript): oturtma, maska, kontur, L/S, kölgə hüceyrəsi, mərhələ kompoziti,
+   tikişlər, ortaq assetlərin təmizlənməsi, bayır dekoru. §6 cədvəlinin
+   qüsurlarının hamısı burada düzəlir; Codex-ə yenidən çəkdirmək lazım olmadı.
+3. **Atlas kodu** — [`MapKit`](../game/scripts/client/map_kit.gd). Rim `Line2D` yox,
+   öz mesh-dir (UV tam nəzarətdədir, kafel güzgüsü mümkündür). Quruyan zona öz
+   node-undadır.
+4. **İnteraktivlik** — titrəmə, parıltı, dalğa, sıçrantı, xışıltı, bəzək,
+   qırıntı parçaları (README).
+
+Fərqlər: kol tacı qalxmır (Codex onu düz çəkib, 0.83 kiçildilib); qabığın s2
+közü hədəfdən parlaqdır (8.6% / 3–5%) — sahib dəsti belə təsdiqləyib, HIGH-da
+"dağılmaq üzrədir" kimi oxunur; animasiyalı bayır propları əvəzinə bulanıq,
+yavaş üzən koloniyalar.
+
+Ölçü (masaüstü, HEAD ilə növbə-növbə): kadrın işi 1.37 → 1.33 ms, render 0.89 →
+0.84 ms, pik çəkiliş çağırışı 103–113 → 80–98; videokart yaddaşı ~+31 MB.
+Testlər: 654 keçdi (`_test_blob_textures`, `_test_map_atlas`).

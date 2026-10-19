@@ -133,6 +133,7 @@ static func run() -> int:
 	_test_brittle_breaks()
 	_test_vent_pushes()
 	_test_blob_textures()
+	_test_map_atlas()
 	_test_germ_flash()
 	_test_germ_freeze()
 	_test_shot_trails()
@@ -174,38 +175,53 @@ static func run() -> int:
 
 
 
-## Hər maneə MÖVCUD sprite alır — və eyni maneə həmişə eynisini alır.
+## Hər maneə atlasda MÖVCUD hüceyrə alır — və eyni maneə həmişə eynisini alır.
 ##
-## Səhv olsaydı oyun XƏTA VERMİRDİ: `_tex[name]` yoxdursa Sprite2D teksturasız
-## qalır, yəni maneə sadəcə GÖRÜNMÜR. Oyunçu isə görünməyən divara dəyir.
+## Səhv olsaydı oyun XƏTA VERMİRDİ: hüceyrə yoxdursa sprite boş qalır, yəni
+## maneə sadəcə GÖRÜNMÜR. Oyunçu isə görünməyən divara dəyir.
 static func _test_blob_textures() -> void:
+	var cells := MapKit.cells()
+	_check(not cells.is_empty(), "xəritə atlasının manifesti açılır")
 	var keep := DishMap.layout
 	for which in 3:
 		DishMap.layout = which
 		var bad := 0
 		var unstable := 0
 		for o in DishMap.obstacles():
-			var name := Arena._blob_texture(o)
-			if not Arena.BLOB_ORDER.has(name):
+			var name := MapKit.cell_name(MapKit.base_name(o), o.z)
+			if not cells.has(name):
 				bad += 1
 			# Seçim MÖVQEDƏN çıxır: iki çağırış eyni cavabı verməlidir,
 			# yoxsa xəritə hər açılışda başqa cür görünər.
-			if Arena._blob_texture(o) != name:
+			if MapKit.cell_name(MapKit.base_name(o), o.z) != name:
 				unstable += 1
-		_check(bad == 0, "%s: hər maneənin sprite-ı var (%d naməlum)"
+		_check(bad == 0, "%s: hər maneənin atlasda hüceyrəsi var (%d naməlum)"
 			% [DishMap.layout_name(which), bad])
-		_check(unstable == 0, "%s: sprite seçimi sabitdir" % DishMap.layout_name(which))
+		_check(unstable == 0, "%s: hüceyrə seçimi sabitdir" % DishMap.layout_name(which))
 	DishMap.layout = keep
 
-	# Keçilə bilən növlərin sprite-ı BƏRK növlərinkindən fərqli olmalıdır:
+	# Hər növün HƏR İKİ ölçü sinfində hüceyrəsi var: L böyük, S kiçik (R ≤ 60)
+	# maneələr üçündür — kövrəyin üç mərhələsi və qırıntısı, kolun tacı,
+	# cərəyanın burulğanı, bərk növlərin kölgəsi də (critique §5).
+	var missing := []
+	for base in ["mucus_blob", "mucus_bloom", "brittle_s0", "brittle_s1", "brittle_s2",
+			"brittle_rubble", "bush_base", "bush_canopy", "vent_base", "vent_swirl", "shadow"]:
+		for cls in ["L", "S"]:
+			if not cells.has("%s_%s" % [base, cls]):
+				missing.append("%s_%s" % [base, cls])
+	_check(missing.is_empty(), "hər növün L və S hüceyrəsi var %s" % [missing])
+	_check(MapKit.size_class(60.0) == "S" and MapKit.size_class(61.0) == "L",
+		"ölçü sinfi R 60-dan sonra dəyişir")
+
+	# Keçilə bilən növlərin hüceyrəsi BƏRK növlərinkindən fərqli olmalıdır:
 	# forma dili qaydanı deyir (bax ART_BIBLE §4).
-	var solid := Arena._blob_texture(Vector4(0, 0, 100, DishMap.Kind.MUCUS))
-	var bush := Arena._blob_texture(Vector4(0, 0, 100, DishMap.Kind.BUSH))
-	var vent := Arena._blob_texture(Vector4(0, 0, 100, DishMap.Kind.VENT))
-	var brittle := Arena._blob_texture(Vector4(0, 0, 100, DishMap.Kind.BRITTLE))
+	var solid := MapKit.base_name(Vector4(0, 0, 100, DishMap.Kind.MUCUS))
+	var bush := MapKit.base_name(Vector4(0, 0, 100, DishMap.Kind.BUSH))
+	var vent := MapKit.base_name(Vector4(0, 0, 100, DishMap.Kind.VENT))
+	var brittle := MapKit.base_name(Vector4(0, 0, 100, DishMap.Kind.BRITTLE))
 	_check(bush != solid and vent != solid and brittle != solid
 			and bush != vent and bush != brittle and vent != brittle,
-		"dörd növün dördü də ayrı sprite ilə çəkilir")
+		"dörd növün dördü də ayrı hüceyrə ilə çəkilir")
 
 
 ## Zərbə parıltısı: yanır, sönür, və TƏKRAR zərbədə uzanmır.
@@ -5879,3 +5895,89 @@ static func _width_at(body: PackedVector2Array, mid: Vector2,
 		lo = minf(lo, y)
 		hi = maxf(hi, y)
 	return (hi - lo) if hi > lo else 0.0
+
+
+## Xəritə atlası (V1 "Damla") və onun teksturaları pozulmamalıdır:
+##   1. hər hüceyrənin bölgəsi öz 512/256/128 blokunun içindədir — mip
+##      səviyyələri qonşu hüceyrəni qarışdırmır, bilinear nümunə başqa şəklə daşmır;
+##   2. pivot hüceyrənin mərkəzidir (ayaq izinin mərkəzi), ayaq izinin radiusu
+##      sinfinə uyğundur (L 192, S 96 tekstel) — oyunda miqyas = R / radius;
+##   3. bərk maneənin silueti TOQQUŞMA DAİRƏSİNİN ÖZÜDÜR (ART_BIBLE §4b): oyunçu
+##      divarı şəkildən oxuyur. Şəkil dairədən böyük olsa keçə biləcəyi boşluğu
+##      bağlı görər, kiçik olsa "boş" yerdə ilişər;
+##   4. divar zolağı və döşəmə detalı tikişsiz təkrarlanır — tikiş qab boyunca
+##      27 dəfə, döşəmədə hər 400 px-də görünərdi.
+## Atlas `design/map_art/build_map.gd` ilə yenidən qurulanda bu test onu yoxlayır.
+static func _test_map_atlas() -> void:
+	var cells := MapKit.cells()
+	var bad_block := []
+	var bad_pivot := []
+	var bad_radius := []
+	for name: String in cells:
+		var c: Dictionary = cells[name]
+		var r: Array = c["rect"]
+		var rect := Rect2i(int(r[0]), int(r[1]), int(r[2]), int(r[3]))
+		var n := int(c["cell"])
+		var origin := rect.position - Vector2i(posmod(rect.position.x, n), posmod(rect.position.y, n))
+		if not Rect2i(origin, Vector2i(n, n)).encloses(rect):
+			bad_block.append(name)
+		var off: Array = c["offset"]
+		var pivot := Vector2(rect.position) + Vector2(rect.size) * 0.5 \
+			- Vector2(float(off[0]), float(off[1]))
+		if pivot.distance_to(Vector2(origin) + Vector2(n, n) * 0.5) > 0.6:
+			bad_pivot.append(name)
+		var want := 192.0 if name.ends_with("_L") else (96.0 if name.ends_with("_S") else -1.0)
+		if want > 0.0 and absf(float(c["r"]) - want) > 0.01:
+			bad_radius.append(name)
+	_check(bad_block.is_empty(), "atlas: hər hüceyrə öz blokundadır %s" % [bad_block])
+	_check(bad_pivot.is_empty(), "atlas: pivot hüceyrənin (ayaq izinin) mərkəzidir %s" % [bad_pivot])
+	_check(bad_radius.is_empty(), "atlas: ayaq izi L-də 192, S-də 96 teksteldir %s" % [bad_radius])
+
+	# PNG birbaşa oxunur: başsız testdə idxal olunmuş tekstura GPU-ya gedir və
+	# pikselləri geri oxunmur.
+	var page := Image.new()
+	var loaded := page.load_png_from_buffer(FileAccess.get_file_as_bytes(MapKit.ATLAS_PATH)) == OK
+	var inside := 1.0
+	var outside := 0.0
+	if loaded:
+		for base in ["mucus_blob", "mucus_bloom", "brittle_s0", "brittle_s1", "brittle_s2"]:
+			for cls in ["L", "S"]:
+				var c: Dictionary = cells["%s_%s" % [base, cls]]
+				var r: Array = c["rect"]
+				var n := int(c["cell"])
+				var origin := Vector2(int(r[0]) - posmod(int(r[0]), n), int(r[1]) - posmod(int(r[1]), n))
+				var center := origin + Vector2(n, n) * 0.5
+				var rad := float(c["r"])
+				for k in 36:
+					var dir := Vector2.from_angle(TAU * float(k) / 36.0)
+					inside = minf(inside, page.get_pixelv(Vector2i(center + dir * (rad - 2.0))).a)
+					outside = maxf(outside, page.get_pixelv(Vector2i(center + dir * (rad + 2.0))).a)
+	_check(loaded and inside >= 0.9 and outside <= 0.1,
+		"bərk maneənin silueti toqquşma dairəsidir (kənardan 2 tekstel içəridə alfa ≥ %.2f, bayırda ≤ %.2f)"
+			% [inside, outside])
+
+	for spec in [[MapKit.RIM_PATH, false], [MapKit.DETAIL_PATH, true]]:
+		var img := Image.new()
+		var ok := img.load_png_from_buffer(FileAccess.get_file_as_bytes(String(spec[0]))) == OK
+		var w := img.get_width()
+		var h := img.get_height()
+		# Tikiş qonşu sütunlardan çox fərqlənməməlidir (orta fərqin iki misli).
+		var seam := _map_seam(img, w - 1, 0, true)
+		var typical := _map_seam(img, (w >> 1) - 1, w >> 1, true)
+		var good := ok and seam <= typical * 2.0 + 0.01
+		if bool(spec[1]):
+			good = good and _map_seam(img, h - 1, 0, false) \
+				<= _map_seam(img, (h >> 1) - 1, h >> 1, false) * 2.0 + 0.01
+		_check(good, "%s tikişsiz təkrarlanır (tikiş %.3f, adi qonşu %.3f)"
+			% [String(spec[0]).get_file(), seam, typical])
+
+
+## İki sütunun (və ya sətrin) orta parlaqlıq fərqi.
+static func _map_seam(img: Image, a: int, b: int, columns: bool) -> float:
+	var n := img.get_height() if columns else img.get_width()
+	var s := 0.0
+	for i in n:
+		var p := img.get_pixel(a, i) if columns else img.get_pixel(i, a)
+		var q := img.get_pixel(b, i) if columns else img.get_pixel(i, b)
+		s += absf(p.get_luminance() - q.get_luminance())
+	return s / float(n)

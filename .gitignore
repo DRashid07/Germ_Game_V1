@@ -11,3 +11,13 @@ web/public/
 # İmza açarları heç vaxt repoda olmamalıdır.
 *.keystore
 *.jks
+
+# Xəritə dizaynının yalnız yerli faylları — repoda saxlanmır: versiyaların
+# müqayisə vərəqləri, V3/V4 dəstləri və onların promptları, PDF təqdimatı.
+# Sahib V1 «Damla»-nı seçib (design/MAP_25D.md §8); qalanlar bu maşında qalır.
+design/map_art/raw/compare_*.png
+design/map_art/raw/v3/
+design/map_art/raw/v4/
+design/map_art/brief/PROMPTS_MAP_V3.md
+design/map_art/brief/PROMPTS_MAP_V4.md
+design/map_art/Germ_Arena_2.5D_Xerite.pdf

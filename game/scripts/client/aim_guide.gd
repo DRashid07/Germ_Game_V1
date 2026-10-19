@@ -37,10 +37,21 @@ var _lock_at := Vector2.ZERO
 var _lock_r := 0.0
 var _lock_color := Color.WHITE
 
+## Nişanın ÜST hissəsi — səkmə halqaları, ox və kilid çərçivəsi. Kol yarpaqları
+## mikrobların üstündədir (z 2); bu hissə onların da üstündə olmalıdır, yoxsa
+## kola nişan alanda ox və kilid yarpaq altında itərdi (critique B2–B3). Zolaq
+## və nöqtələr isə döşəmədə, mikrobların altında qalır — nişan alınan rəqibi
+## örtməsin deyə.
+var _over: Node2D
+
 
 func _ready() -> void:
 	# Ikonlar 256 px-dir, dünyada ~50 px: mipmap-sız kiçiltmə konturu dişləyir.
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_over = Node2D.new()
+	_over.z_index = 3
+	add_child(_over)
+	_over.draw.connect(_draw_over)
 
 
 ## Xətti göstərir. [param can_fire] — buraxsan top indi atılarmı.
@@ -48,14 +59,14 @@ func show_path(path: PackedVector2Array, color: Color, can_fire: bool) -> void:
 	_path = path
 	_color = color
 	_live = can_fire
-	queue_redraw()
+	_redraw()
 
 
 func hide_path() -> void:
 	if _path.is_empty():
 		return
 	_path = PackedVector2Array()
-	queue_redraw()
+	_redraw()
 
 
 ## Avtomatik nişanın hədəfi [param key] üçün kilidi açır.
@@ -65,7 +76,7 @@ func lock(key: int, at: Vector2, radius: float, color: Color) -> void:
 	_lock_at = at
 	_lock_r = radius
 	_lock_color = color
-	queue_redraw()
+	_redraw()
 
 
 ## Kilidlənmiş rəqib — işarə onun ardınca gedir; yoxdursa -1.
@@ -81,7 +92,7 @@ func follow(at: Vector2, radius: float) -> void:
 func unlock() -> void:
 	_lock_t = 0.0
 	_lock_key = -1
-	queue_redraw()
+	_redraw()
 
 
 func _process(delta: float) -> void:
@@ -90,14 +101,26 @@ func _process(delta: float) -> void:
 		_lock_t = maxf(0.0, _lock_t - delta)
 		if _lock_t <= 0.0:
 			_lock_key = -1
-		queue_redraw()
+		_redraw()
 	elif not _path.is_empty():
-		queue_redraw()
+		_redraw()
+
+
+func _redraw() -> void:
+	queue_redraw()
+	if _over != null:
+		_over.queue_redraw()
 
 
 func _draw() -> void:
 	if _path.size() >= 2:
 		_draw_path()
+
+
+## Üst hissə — yarpaqların üstündə (bax [member _over]).
+func _draw_over() -> void:
+	if _path.size() >= 2:
+		_draw_path_top()
 	if _lock_t > 0.0:
 		_draw_lock()
 
@@ -110,9 +133,6 @@ func _draw_path() -> void:
 	var dot := Color(col.lerp(Color.WHITE, 0.35), 0.75 if _live else 0.35)
 	var phase := fmod(_t * DOT_SPEED, DOT_GAP)
 	var walked := 0.0
-	var total := 0.0
-	for i in _path.size() - 1:
-		total += _path[i].distance_to(_path[i + 1])
 	for i in _path.size() - 1:
 		var a := _path[i]
 		var b := _path[i + 1]
@@ -125,9 +145,16 @@ func _draw_path() -> void:
 			BatchDraw.disc(self, a.lerp(b, s / seg), 3.5, dot)
 			s += DOT_GAP
 		walked += seg
+
+
+func _draw_path_top() -> void:
+	var col := _color if _live else Palette.TEXT_MUTED
+	var total := 0.0
+	for i in _path.size() - 1:
+		total += _path[i].distance_to(_path[i + 1])
 		# Səkmə nöqtəsi — kiçik halqa: "top burada döndü".
 		if i + 1 < _path.size() - 1:
-			draw_arc(b, BAND * 0.5, 0.0, TAU, 20, Color(col, 0.55), 2.5, true)
+			_over.draw_arc(_path[i + 1], BAND * 0.5, 0.0, TAU, 20, Color(col, 0.55), 2.5, true)
 	# Uc: Codex-in oxu son seqmentin istiqamətində.
 	if total < ARROW_MIN:
 		return
@@ -137,10 +164,10 @@ func _draw_path() -> void:
 	# Ox hündürlüyü ARROW_SIZE-dir; ucu xəttin sonundan bir az qabağa çıxır.
 	var ts := ARROW.get_size()
 	var sz := ts * (ARROW_SIZE / ts.y)
-	draw_set_transform(end, ang, Vector2.ONE)
-	draw_texture_rect(ARROW, Rect2(Vector2(-sz.x * 0.7, -sz.y * 0.5), sz), false,
+	_over.draw_set_transform(end, ang, Vector2.ONE)
+	_over.draw_texture_rect(ARROW, Rect2(Vector2(-sz.x * 0.7, -sz.y * 0.5), sz), false,
 		Color(col, 0.9 if _live else 0.45))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_over.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Kilid: tez böyüyüb hədəfin üstünə "oturur", sonra söner. Yavaşca fırlanır —
@@ -151,6 +178,6 @@ func _draw_lock() -> void:
 	var alpha := minf(1.0, _lock_t / (LOCK_TIME * 0.4))
 	var ts := TARGET.get_size()
 	var sz := ts * ((_lock_r * 2.0 + 30.0) * pop / maxf(ts.x, ts.y))
-	draw_set_transform(_lock_at, _t * 1.4, Vector2.ONE)
-	draw_texture_rect(TARGET, Rect2(-sz * 0.5, sz), false, Color(_lock_color, 0.95 * alpha))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_over.draw_set_transform(_lock_at, _t * 1.4, Vector2.ONE)
+	_over.draw_texture_rect(TARGET, Rect2(-sz * 0.5, sz), false, Color(_lock_color, 0.95 * alpha))
+	_over.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

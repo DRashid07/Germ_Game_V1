@@ -429,8 +429,14 @@ var _fx: Node2D
 var _juice: JuiceFx
 var _trails: ShotTrails
 ## Maneə sprite-ları — indeks [method DishMap.obstacles] ilə eynidir, ona görə
-## dağılan divarı serverin göndərdiyi indekslə tapmaq olur.
+## dağılan divarı serverin göndərdiyi indekslə tapmaq olur. Bərk növdə bu,
+## qalxan gövdədir; kol və cərəyanda yastı bazadır.
 var _blob_nodes: Array[Sprite2D] = []
+## Bərk maneələrin kölgəsi və kövrəyin qalıcı qırıntısı (indeks -> Sprite2D).
+## Ayrı sprite-dır: kölgə döşəmədə qalır, gövdə titrəyəndə o titrəmir; qırıntı
+## isə yastı qatdadır — qalxan gövdələrin cənub üzünü örtməməlidir.
+var _shadow_nodes := {}
+var _rubble_nodes := {}
 ## Kolun üst yarpaq qatı — mikrobların üstündə çəkilir (bax [method _build_world]).
 var _canopy: Node2D
 ## Üst yarpaqların node-ları, indeks [method DishMap.obstacles] ilə eynidir.
@@ -438,8 +444,52 @@ var _canopy_nodes := {}
 ## Cərəyan deşiyinin fırlanan İÇ qatı. Baza sabit qalır ki, mənfi hündürlüyün
 ## yuxarı-sol daxili kölgəsi qlobal işıqla ziddiyyətə düşməsin.
 var _vent_swirl_nodes: Array[Sprite2D] = []
-## Dağılmış maneələr (serverin sözü). Kölgə çəkilişi bunu oxuyur.
+## Dağılmış maneələr (serverin sözü).
 var _broken := PackedByteArray()
+
+## Xəritənin qatları, altdan yuxarı (bax [method _build_world]): qabın bayırı
+## bu node-un öz `_draw`-ındadır, sonra döşəmə, şəbəkə, quruyan zona, şimal
+## şüşə divarı. Dalğalar maneələrlə qida arasında, cənub dodağı mikrobların
+## və yarpaqların üstündə.
+var _ground: Node2D
+## Qabın bayırındakı bulanıq koloniyalar (bax [method _spawn_props]).
+var _props: Node2D
+var _prop_nodes: Array[Sprite2D] = []
+var _grid: Node2D
+var _dry: Node2D
+var _rim: Node2D
+var _ripples: Node2D
+var _lip: Node2D
+var _backdrop: ArrayMesh
+var _rim_mesh: ArrayMesh
+## Döşəmə və divar teksturalarını arena ÖZÜ tutur: çəkiliş əmri yalnız RID
+## saxlayır, istinadı heç kim tutmasa tekstura azad olunur və GPU ağ
+## standart teksturanı çəkir (bax [method MapKit.release]).
+var _floor_tex: Texture2D
+var _rim_tex: Texture2D
+var _lip_mesh: ArrayMesh
+## Kolların siyahısı (x, y, radius, indeks) — topun yarpaq üstünə çıxması və
+## xışıltı üçün. Top onu birbaşa gəzmir, öz xanasındakı kolları oxuyur
+## (bax [member _bush_grid]).
+var _bush_list: Array[Vector4] = []
+## Döşəmə bəzəyi: [{"node", "at", "r", "base", "pop"}] — top üstündən keçəndə
+## sıçrayır. Hər kadr hər top üçün 46 parçanı gəzmək GDScript-də ölçülən iş idi
+## (masaüstündə +0.1 ms proses, zəif telefonda ~10 dəfə çox), ona görə parçalar
+## 128 px-lik şəbəkə xanalarına yığılıb: top yalnız öz xanasına baxır.
+var _clutter: Array[Dictionary] = []
+var _clutter_grid := {}             ## Vector2i xana -> Array[int] parça indeksləri
+var _clutter_popping: Array[int] = []
+## Kolların eyni xanalara yığılması: Vector2i xana -> Array[int] ([member _bush_list]
+## indeksi). Topların çoxu heç bir kolun yanında deyil — xanası boşdur.
+var _bush_grid := {}
+## Dalğa və sıçrantı sprite-larının hovuzu (bax [method _ripple]).
+var _ripple_pool: Array[Sprite2D] = []
+var _ripple_live: Array[Dictionary] = []
+## Şüşə dodaqda parıltılar: [{"angle", "t"}] (bax [method _glint]).
+var _glints: Array[Dictionary] = []
+## Kolun içindəki toplar: top açarı -> Vector2(kol indeksi, son görülmə anı).
+var _shot_bushes := {}
+var _shot_bushes_swept := 0.0
 var _motes: WaterMotes
 ## Dərin su qatı — maneələrin üstündə, qidanın altında (bax [method _build_world]).
 var _motes_deep: WaterMotes
@@ -761,22 +811,11 @@ func _apply_quality() -> void:
 		_motes.rebuild()
 
 
+## Xəritənin özü (döşəmə, maneələr, divar) burada deyil — [MapKit]-in
+## atlasındadır (bax [method _build_world]).
 func _load_textures() -> void:
 	_tex = {
 		"food": load("res://assets/sprites/food_ball.svg"),
-		"floor": load("res://assets/sprites/dish_floor.svg"),
-		"blob": load("res://assets/sprites/mucus_blob.svg"),
-		"crust": load("res://assets/sprites/mucus_crust.svg"),
-		# Qabığın zədə mərhələləri — 1 və 2 zərbədən sonra (bax [method _apply_walls]).
-		"crust2": load("res://assets/sprites/mucus_crust2.svg"),
-		"crust3": load("res://assets/sprites/mucus_crust3.svg"),
-		"bloom": load("res://assets/sprites/mucus_bloom.svg"),
-		"bush": load("res://assets/sprites/mucus_bush.svg"),
-		# Kolun ÜST yarpaqları — mikrobun üstündən keçir (bax [member _canopy]).
-		"bush_top": load("res://assets/sprites/mucus_bush_top.svg"),
-		"vent": load("res://assets/sprites/mucus_vent.svg"),
-		# Deşiyin yalnız burulğanı fırlanır; divarı fırlatsaq işıq da fırlanardı.
-		"vent_swirl": load("res://assets/sprites/mucus_vent_swirl.svg"),
 		"shot": load("res://assets/sprites/shot_ball.svg"),
 		"spark": load("res://assets/sprites/spark.svg"),
 		"burst": load("res://assets/sprites/burst.svg"),
@@ -792,9 +831,54 @@ func _load_textures() -> void:
 ## elementləri bir çağırışa yığır. Hamısı bir node-un altında qarışıq
 ## dursaydı, hər qida topu ayrıca çağırış olardı.
 func _build_world() -> void:
-	# Qab və şəbəkə bu node-un öz `_draw`-ında çəkilir (bax [method _draw]):
-	# statik məzmundur və uşaqların arxasında qalır.
+	# QABIN BAYIRI bu node-un öz `_draw`-ındadır (bax [method _draw]) — uşaqlardan
+	# əvvəl çəkilir, yəni hər şeyin altındadır. Bulanıq koloniyalar onun üstündə,
+	# döşəmədən əvvəl: hamısı qabın xaricindədir, döşəmə ilə üst-üstə düşmür.
+	_build_backdrop()
+	_floor_tex = MapKit.floor_texture()
+	_rim_tex = MapKit.rim_texture()
+	_props = Node2D.new()
+	_props.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(_props)
+	_spawn_props()
+
+	# DÖŞƏMƏ ayrıca node-dur və şeyderlə çəkilir: makro ton × tikişsiz detal
+	# (bax `shaders/map_floor.gdshader`). Arenanın öz `_draw`-ında qalsaydı,
+	# şeyder arenanın bütün primitivlərinə tətbiq olunardı.
+	_ground = Node2D.new()
+	var floor_mat := ShaderMaterial.new()
+	floor_mat.shader = load("res://shaders/map_floor.gdshader")
+	floor_mat.set_shader_parameter("detail", MapKit.detail_texture())
+	floor_mat.set_shader_parameter("detail_world", MapKit.detail_world())
+	_ground.material = floor_mat
+	add_child(_ground)
+	_ground.draw.connect(_draw_ground)
+
+	# Şəbəkə statikdir və bir dəfə çəkilir; quruyan zona isə snapshot ritmində
+	# nəbz vurur. Ayrı node-lardır: əvvəl hamısı bir `_draw`-da idi və matçlı
+	# rejimdə hər snapshot-da döşəmə, şəbəkə və divar da yenidən qurulurdu.
+	# Quruyan zona döşəmənin ÜSTÜNDƏ olmalıdır — arenanın `_draw`-ında qalsaydı
+	# döşəmə node-u onu örtərdi (critique B5).
+	_grid = Node2D.new()
+	add_child(_grid)
+	_grid.draw.connect(_draw_grid)
+	_dry = Node2D.new()
+	add_child(_dry)
+	_dry.draw.connect(_draw_dry)
+
+	# ŞİMAL ŞÜŞƏ DİVARI — qabın bayırına, yuxarı uzanır (bax [method _build_rim]).
+	_rim = Node2D.new()
+	_rim.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	_rim.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(_rim)
+	_build_rim()
+	_rim.draw.connect(_draw_rim)
+
+	# Maneələr — kölgə, yastı baza, burulğan və qalxan gövdələr BİR atlasdan,
+	# BİR çəkiliş çağırışında (bax [MapKit]). Atlas mipmap-lıdır: R 34-lük daş
+	# 192 teksteli hüceyrədən 10 dəfəyə qədər kiçilir.
 	_blobs = Node2D.new()
+	_blobs.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(_blobs)
 	_spawn_obstacles()
 
@@ -818,6 +902,13 @@ func _build_world() -> void:
 
 	_motes = WaterMotes.new()
 	add_child(_motes)
+
+	# Su dalğaları və sıçrantılar — suyun səthindədir: maneələrin və
+	# zərrəciklərin üstündə, qida və mikrobların altında. Mikrobun üstünə
+	# düşən halqa onu örtərdi (JuiceFx bütün mikrobların üstündədir, z 4).
+	_ripples = Node2D.new()
+	_ripples.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(_ripples)
 
 	_food_layer = Node2D.new()
 	add_child(_food_layer)
@@ -846,9 +937,25 @@ func _build_world() -> void:
 	#
 	# Effektlərdən ƏVVƏLdir: partlayış və qığılcım yarpaqların da üstündə
 	# olmalıdır, yoxsa kolda baş verən ölüm yarımçıq görünür.
+	#
+	# z 2 ŞƏRTDİR. Əvvəl qat z 0-da idi, [GermVisual] isə özünə 1 (rəqib) və 2
+	# (öz mikrobun) yazır: z ağac sırasından ƏVVƏL gəlir, yəni yarpaqlar bu
+	# yazıya baxmayaraq mikrobun ALTINDA çəkilirdi (MAP_25D F1). z 2 + ağacda
+	# `_entities`-dən sonra = hər iki mikrobun üstündə, effektlərin (z 3–4) altında.
+	# Kola girən topun yarpaq üstünə çıxması ayrıca yazılır (bax [method _layer_shots]).
 	_canopy = Node2D.new()
+	_canopy.z_index = 2
+	_canopy.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(_canopy)
 	_spawn_canopy()
+
+	# CƏNUB DODAĞI — qabın yaxın şüşə divarının üstü, mikrobların və yarpaqların
+	# ÜSTÜNDƏ (bax [method _build_rim]). Cənub kənarına sıxılan mikrob "şüşənin
+	# arxasında" görünür — Brawl Stars-ın kənar divarları kimi.
+	_lip = Node2D.new()
+	_lip.z_index = 2
+	add_child(_lip)
+	_lip.draw.connect(_draw_lip)
 
 	_fx = Node2D.new()
 	add_child(_fx)
@@ -861,125 +968,215 @@ func _build_world() -> void:
 	add_child(_cam)
 
 
-## Maneə növü → sprite.
+## Maneələri qurur — hamısı [MapKit] atlasından, BİR çəkiliş çağırışında.
 ##
-## Toqquşma həndəsəsi bütün növlərdə EYNİDİR (dairə, radius `Vector4.z`) və
-## beş sprite-ın da xarici dairəsi eynidir. Fərq YALNIZ forma dilindədir:
-## oyunçu bir baxışda qaydanı oxumalıdır — keçə bilərəmmi, sındıra bilərəmmi.
+## Sıra altdan yuxarı:
+##   1. döşəmə bəzəyi (yastı, konturu yox — bax [method _spawn_clutter]);
+##   2. bərk maneələrin kölgəsi — HAMISI əvvəl: heç bir kölgə qonşu maneənin
+##      gövdəsinin üstünə düşmür;
+##   3. yastı növlər: kol döşəyi, cərəyan dəliyi, kövrəyin (hələ gizli) qırıntısı;
+##   4. cərəyanın fırlanan burulğanı;
+##   5. qalxan gövdələr (selik, kövrək) ŞİMALDAN CƏNUBA: kamera cənubdan
+##      baxır, cənubdakı gövdə şimaldakının üstündə olmalıdır (Spiral
+##      düzümündə qonşular 40 px-ə qədər üst-üstə düşür).
+## Hamısı eyni teksturadır, ona görə bu növbə batch-i bölmür.
 ##
-## SELİK iki naxışa bölünür (mövqedən asılı olaraq `blob` və ya `bloom`):
-## dünyada 22 maneə var və eyni qaydanın 12 eyni şəkli oriyentiri öldürürdü.
-## Qalan növlərin hər birinin TƏK şəkli var — onlar qaydadır, bəzək deyil,
-## və qaydanın iki görkəmi olmamalıdır.
-const BLOB_TEXTURE := {
-	DishMap.Kind.BUSH: "bush",
-	DishMap.Kind.BRITTLE: "crust",
-	DishMap.Kind.VENT: "vent",
-}
-
-## Çəkiliş sırası: hər tekstura ARDICIL getməlidir, yoxsa batch qırılır
-## (bax [method _spawn_obstacles]). Beş baza teksturası beş çağırış qalır;
-## azsaylı cərəyan burulğanları sonda eyni tekstura ilə altıncı çağırışdır.
-const BLOB_ORDER := ["blob", "bloom", "crust", "bush", "vent"]
-
-## Sprite-dakı ləkənin radiusu (bax `mucus_blob.svg`).
-const BLOB_SPRITE_RADIUS := 120.0
-
-
+## Maneələr FIRLADILMIR — və bu, unudulma deyil. Əvvəl hər ləkə `(x + y) * 0.01`
+## radian fırladılırdı; ölçü yüzlərlədir, yəni bucaq faktiki təsadüfi idi və
+## sprite-a bişmiş işıq da fırlanırdı: 26 maneənin hər birində işıq başqa
+## tərəfdən gəlirdi. Naxış variasiyası EYNİ işıqlı ayrı hüceyrə ilə verilir
+## (bax [method MapKit.base_name]).
+##
+## Hər sprite-a ayrıca `modulate` verilmir. README-nin köhnə ölçüsü (131 → 242
+## çağırış) bunu batch-i qıran səbəb sayırdı; Godot 4.7-nin GLES3 mənbəyi isə
+## modulate-i instansiya başına saxlayır (MAP_25D F2). Yenə də ehtiyac yoxdur:
+## rəng fərqi atlasın öz hüceyrələrindədir.
 func _spawn_obstacles() -> void:
 	var list := DishMap.obstacles()
 	_blob_nodes.resize(list.size())
+	_spawn_clutter(list)
 
-	# Teksturaya görə qruplaşdırma. Godot yalnız ARDICIL və eyni teksturalı
-	# elementləri bir çağırışa yığır — qarışıq düzülsəydi hər tekstura
-	# dəyişimi yeni çağırış olardı (22 maneə üçün ~22 çağırış). Belə isə
-	# cəmi BEŞ çağırışdır.
-	var by_tex := {}
-	for name in BLOB_ORDER:
-		by_tex[name] = []
 	for i in list.size():
-		by_tex[_blob_texture(list[i])].append(i)
+		var o: Vector4 = list[i]
+		if not MapKit.casts_shadow(int(o.w)):
+			continue
+		var shadow := MapKit.sprite(MapKit.cell_name("shadow", o.z), o.z)
+		shadow.position = Vector2(o.x, o.y)
+		_blobs.add_child(shadow)
+		_shadow_nodes[i] = shadow
 
-	for name in BLOB_ORDER:
-		for i in by_tex[name]:
-			var o: Vector4 = list[i]
-			var spr := Sprite2D.new()
-			spr.texture = _tex[name]
-			spr.position = Vector2(o.x, o.y)
-			spr.scale = Vector2.ONE * (o.z / BLOB_SPRITE_RADIUS)
-			# Maneələr FIRLADILMIR — və bu, unudulma deyil.
-			#
-			# Əvvəl hər ləkə `(o.x + o.y) * 0.01` radian fırladılırdı ki, eyni
-			# şəklin təkrarı bilinməsin. Ölçü isə yüzlərlədir: x=400, y=300 üçün
-			# bu, 7 radian ≈ 401°, yəni bucaq FAKTİKİ TƏSADÜFİDİR. Sprite-ın
-			# içindəki qradiyent yuxarı-soldan işıqlanıb, ona görə fırlanma
-			# İŞIĞI da fırladırdı: 26 maneənin hər birində işıq başqa tərəfdən
-			# gəlirdi və qradiyent həcm yox, rəng ləkəsi kimi oxunurdu.
-			#
-			# Naxış variasiyası lazımdırsa, EYNİ istiqamətdə işıqlandırılmış
-			# ayrı sprite variantı seçilməlidir (bax [method _blob_texture]).
-			#
-			# Cərəyan bazası da fırladılmır. Əvvəl qabın mərkəzinə döndərilirdi ki,
-			# qüvvənin istiqamətini desin, amma bununla deşiyin yuxarı-sol daxili
-			# kölgəsi də dönürdü. Qaydanı indi fırlanan iç burulğan verir, işıq isə
-			# bütün xəritədə sabit qalır.
-			# QEYD: burada hər sprite-a ayrıca `modulate` verilirdi (±6%
-			# parlaqlıq). ÇIXARILDI, ölçmə ilə: `gl_compatibility` batch-i eyni
-			# `modulate` tələb edir, ona görə 22 fərqli rəng 22 AYRI çağırış
-			# demək idi (131 → 242, ən pis kadr 11 ms → 70 ms).
-			_blobs.add_child(spr)
-			_blob_nodes[i] = spr
+	for i in list.size():
+		var o: Vector4 = list[i]
+		match int(o.w):
+			DishMap.Kind.BRITTLE:
+				# Qırıntı əvvəlcədən qurulur və gizlənir: dağılanda yalnız
+				# görünürlük dəyişir, yeni node yaranmır.
+				var rubble := MapKit.sprite(MapKit.cell_name("brittle_rubble", o.z), o.z)
+				rubble.position = Vector2(o.x, o.y)
+				rubble.visible = false
+				_blobs.add_child(rubble)
+				_rubble_nodes[i] = rubble
+			DishMap.Kind.BUSH:
+				_blob_nodes[i] = _obstacle_sprite(o)
+				_grid_add(_bush_grid, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS,
+					_bush_list.size())
+				_bush_list.append(Vector4(o.x, o.y, o.z, float(i)))
+			DishMap.Kind.VENT:
+				_blob_nodes[i] = _obstacle_sprite(o)
 
-	# Cərəyanın mənfi hündürlüyü baza sprite-ındadır, hərəkəti isə AYRI iç
-	# qatdadır. Qatların ayrılması yalnız vent üçün bir çağırış artırır; bütün
-	# burulğanlar ardıcıl və eyni teksturalıdır, maneə başına çağırış yaratmır.
+	# Cərəyanın mənfi hündürlüyü baza hüceyrəsindədir, hərəkəti isə AYRI iç
+	# qatdadır: deşiyin yuxarı-sol daxili kölgəsi qlobal işıqla mismarlanır,
+	# yalnız burulğan fırlanır.
 	for i in list.size():
 		var o: Vector4 = list[i]
 		if int(o.w) != DishMap.Kind.VENT:
 			continue
-		var swirl := Sprite2D.new()
-		swirl.texture = _tex["vent_swirl"]
+		var swirl := MapKit.sprite(MapKit.cell_name("vent_swirl", o.z), o.z)
 		swirl.position = Vector2(o.x, o.y)
-		swirl.scale = Vector2.ONE * (o.z / BLOB_SPRITE_RADIUS)
 		# Eyni kadrda deşiklər üst-üstə düşən mexaniki nüsxə kimi görünməsin;
 		# faza mövqedən deterministik çıxır, təsadüf xəritə yaddaşını pozmur.
 		swirl.set_meta("phase", fposmod((o.x * 0.013 + o.y * 0.021), TAU))
 		_blobs.add_child(swirl)
 		_vent_swirl_nodes.append(swirl)
 
+	var raised: Array[int] = []
+	for i in list.size():
+		if DishMap.blocks_germ(int(list[i].w)):
+			raised.append(i)
+	raised.sort_custom(func(a: int, b: int) -> bool: return list[a].y < list[b].y)
+	for i in raised:
+		_blob_nodes[i] = _obstacle_sprite(list[i])
 
-## Kolların üst yarpaqlarını doğurur.
+
+func _obstacle_sprite(o: Vector4) -> Sprite2D:
+	var cell := MapKit.cell_name(MapKit.base_name(o), o.z)
+	var spr := MapKit.sprite(cell, o.z)
+	spr.position = Vector2(o.x, o.y)
+	spr.set_meta("cell", cell)
+	# Titrəmə miqyası bu baza üzərinə gəlir (bax [method _wobble]).
+	spr.set_meta("base_scale", spr.scale)
+	_blobs.add_child(spr)
+	return spr
+
+
+## Döşəmə bəzəyi neçə ədəddir və toxumu. Brawl Stars-ın "D" qırıntısı kimi:
+## oyuna təsir etmir, top üstündən keçəndə sıçrayır (bax [method _pop_clutter]).
+const CLUTTER_COUNT := 46
+const CLUTTER_SEED := 7715
+
+
+## Döşəmə bəzəyini səpir. Yalnız client-dədir və DETERMİNİSTİKDİR (sabit toxum,
+## düzümə görə): hər açılışda eyni yerdədir, xəritə yadda qalır. Maneələrdən,
+## qabın kənarından və bir-birindən aralıdır; rəngi döşəmədən cəmi ±0.08
+## fərqlənir — maneə, qida və ya top kimi oxunmamalıdır. Yastı və işıqsız
+## çəkilib, ona görə fırlatmaq olar — eyni dörd parça təkrar kimi görünmür.
+func _spawn_clutter(list: Array[Vector4]) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = CLUTTER_SEED + DishMap.layout
+	var tries := 0
+	while _clutter.size() < CLUTTER_COUNT and tries < CLUTTER_COUNT * 40:
+		tries += 1
+		var at := Vector2.from_angle(rng.randf() * TAU) * sqrt(rng.randf()) \
+			* (Const.WORLD_RADIUS - 90.0)
+		var r := rng.randf_range(16.0, 30.0)
+		var piece := rng.randi_range(0, 3)
+		var spin := rng.randf() * TAU
+		var free := true
+		for o in list:
+			if at.distance_to(Vector2(o.x, o.y)) < o.z + r + 18.0:
+				free = false
+				break
+		for c in _clutter:
+			if free and at.distance_to(c["at"]) < float(c["r"]) + r + 60.0:
+				free = false
+		if not free:
+			continue
+		var spr := MapKit.sprite("clutter_%d" % piece, r)
+		spr.position = at
+		spr.rotation = spin
+		_blobs.add_child(spr)
+		_grid_add(_clutter_grid, at, r + Const.SHOT_RADIUS, _clutter.size())
+		_clutter.append({"node": spr, "at": at, "r": r, "base": spr.scale, "pop": -INF})
+
+
+## Bayır dekoru: neçə koloniya və toxum.
+const PROP_COUNT := 18
+const PROP_SEED := 9137
+
+
+## Qabın bayırına fokusdan kənar koloniyalar səpir — Brawl Stars-da arena
+## dünyanın içində durur, bizim qab isə boş qaranlıqda asılı idi. Kənara sıxılan
+## oyunçu ekranın yarısında boşluq görürdü; indi şüşənin o tayında dərinlik var.
+## Hamısı DETERMİNİSTİKDİR (sabit toxum) və oyuna heç bir təsiri yoxdur.
+func _spawn_props() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = PROP_SEED
+	for k in PROP_COUNT:
+		var a := TAU * (float(k) + rng.randf_range(-0.32, 0.32)) / float(PROP_COUNT)
+		# Şimal divarı bayıra 70 px uzanır — koloniyalar ondan aralı başlayır.
+		var d := Const.WORLD_RADIUS + rng.randf_range(210.0, 640.0)
+		var spr := MapKit.prop_sprite(rng.randi_range(0, 3), rng.randf_range(70.0, 175.0))
+		spr.position = Vector2.from_angle(a) * d
+		spr.set_meta("home", spr.position)
+		spr.set_meta("phase", rng.randf() * TAU)
+		_props.add_child(spr)
+		_prop_nodes.append(spr)
+
+
+## Koloniyaların yavaş "üzməsi" — yalnız görünənlər tərpənir (çoxu ekrandan
+## kənardadır, onlara heç nə yazılmır).
+func _bob_props() -> void:
+	var view := _view_rect.grow(220.0)
+	# Kamera qabın içindədirsə və kənarı görmürsə, heç bir koloniya görünmür.
+	var far := Vector2(maxf(absf(view.position.x), absf(view.end.x)),
+		maxf(absf(view.position.y), absf(view.end.y)))
+	if far.length() < Const.WORLD_RADIUS + 140.0:
+		return
+	for spr in _prop_nodes:
+		var home: Vector2 = spr.get_meta("home")
+		if not view.has_point(home):
+			continue
+		var ph := float(spr.get_meta("phase"))
+		spr.position = home + Vector2(sin(_clock * 0.23 + ph), cos(_clock * 0.19 + ph * 1.3)) * 9.0
+
+
+## Xəritə şəbəkəsinin xanası (128 px).
+static func _map_cell(at: Vector2) -> Vector2i:
+	return Vector2i(floori(at.x / 128.0), floori(at.y / 128.0))
+
+
+## Dairəni (topun çata biləcəyi radiusla) toxunduğu bütün xanalara yazır: onda
+## top yalnız ÖZ xanasına baxır, qonşulara yox.
+static func _grid_add(grid: Dictionary, at: Vector2, reach: float, index: int) -> void:
+	var lo := _map_cell(at - Vector2(reach, reach))
+	var hi := _map_cell(at + Vector2(reach, reach))
+	for cx in range(lo.x, hi.x + 1):
+		for cy in range(lo.y, hi.y + 1):
+			var key := Vector2i(cx, cy)
+			if not grid.has(key):
+				grid[key] = [] as Array[int]
+			(grid[key] as Array[int]).append(index)
+
+
+## Kolların üst yarpaqları — hamısı bir qatda və bir atlas hüceyrəsindən, yəni
+## BİR çəkiliş çağırışı.
 ##
 ## Yalnız KOL üçün: bərk maneənin üstündən keçən yarpaq olmaz, cərəyan deşiyi
-## isə döşəmədəki dəlikdir. Hamısı bir node-un altındadır və eyni teksturadır,
-## yəni cəmi BİR əlavə çəkiliş çağırışıdır.
+## isə döşəmədəki dəlikdir. Tacın ortası BOŞDUR (atlas bunu zəmanətləyir) —
+## kolun mərkəzindəki mikrob və qida görünür.
 func _spawn_canopy() -> void:
 	var list := DishMap.obstacles()
 	for i in list.size():
 		var o: Vector4 = list[i]
 		if int(o.w) != DishMap.Kind.BUSH:
 			continue
-		var spr := Sprite2D.new()
-		spr.texture = _tex["bush_top"]
+		var spr := MapKit.sprite(MapKit.cell_name("bush_canopy", o.z), o.z)
 		spr.position = Vector2(o.x, o.y)
-		spr.scale = Vector2.ONE * (o.z / BLOB_SPRITE_RADIUS)
 		# Xışıltı miqyası bu baza üzərinə gəlir; hər kadr əvvəlki miqyasın
 		# üstünə vurulsaydı kol tədricən şişib kiçilərdi.
 		spr.set_meta("base_scale", spr.scale)
 		_canopy.add_child(spr)
 		_canopy_nodes[i] = spr
-
-
-## Bu maneə hansı sprite ilə çəkilir?
-##
-## SELİK iki naxış arasında MÖVQEYƏ görə bölünür, təsadüfə görə yox: eyni
-## maneə hər açılışda eyni görünməlidir, yoxsa xəritə yadda saxlanıla bilməz.
-static func _blob_texture(o: Vector4) -> String:
-	var kind := int(o.w)
-	if BLOB_TEXTURE.has(kind):
-		return BLOB_TEXTURE[kind]
-	var pick := int(absf(o.x) * 0.37 + absf(o.y) * 0.61 + o.z * 1.7)
-	return "bloom" if pick % 2 == 1 else "blob"
 
 
 func _build_hud() -> void:
@@ -1011,6 +1208,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		_ask_leave()
+
+
+## Xəritənin teksturaları yalnız arena yaşadıqca saxlanılır (bax [method MapKit.release]).
+func _exit_tree() -> void:
+	MapKit.release()
 
 
 func _ask_leave() -> void:
@@ -1173,6 +1375,13 @@ func _animate_environment() -> void:
 	for spr in _vent_swirl_nodes:
 		var phase := float(spr.get_meta("phase", 0.0))
 		spr.rotation = phase + _clock * 0.72
+	_step_ripples()
+	_step_clutter()
+	_bob_props()
+	if not _glints.is_empty():
+		while not _glints.is_empty() and _clock - float(_glints[0]["t"]) > GLINT_TIME:
+			_glints.pop_front()
+		_lip.queue_redraw()
 
 
 func _do_tick() -> void:
@@ -2290,9 +2499,10 @@ func _apply_match(row: Array) -> void:
 
 	if was != _phase:
 		_on_phase_changed()
-	# Kənar hər kadr tərpənir, ona görə fon yenidən çəkilməlidir.
+	# Kənar hər kadr tərpənir, ona görə quruyan zona yenidən çəkilməlidir —
+	# yalnız o: döşəmə, şəbəkə və divar statikdir və öz node-larındadır.
 	if _mode != Const.Mode.ENDLESS:
-		queue_redraw()
+		_dry.queue_redraw()
 
 
 ## Faza dəyişdi — mesaj və səs.
@@ -2314,18 +2524,25 @@ func _on_phase_changed() -> void:
 func _apply_walls(walls: PackedByteArray) -> void:
 	if walls.size() != _blob_nodes.size():
 		return
-	var changed := false
+	var list := DishMap.obstacles()
 	for i in walls.size():
 		var spr := _blob_nodes[i]
 		if spr == null:
 			continue
 
-		if DishMap.wall_gone(walls[i]):
-			# YENİ dağılan divar — effekt yalnız BİR dəfə oynadılır.
-			if i < _broken.size() and DishMap.wall_gone(_broken[i]):
-				continue
-			changed = true
-			spr.visible = false
+		# Dağılan divar YOX OLMUR, sınıq qalır — Brawl Stars-dakı kimi: gövdə
+		# və kölgə gizlənir, yastı qırıntı görünür. Keçid artıq açıqdır, amma
+		# oyunçu hələ də "burada divar vardı" oxuyur. Hal hər iki istiqamətdə
+		# baytdan qurulur: yenidən qoşulanda (və ya başqa dünyaya düşəndə)
+		# bütöv divar da geri görünür.
+		var gone := DishMap.wall_gone(walls[i])
+		if spr.visible == gone:
+			spr.visible = not gone
+			if _shadow_nodes.has(i):
+				(_shadow_nodes[i] as Sprite2D).visible = not gone
+			if _rubble_nodes.has(i):
+				(_rubble_nodes[i] as Sprite2D).visible = gone
+		if gone:
 			continue
 
 		# Hələ durur, amma zədə almış ola bilər. Qabığın şəkli zərbə sayına
@@ -2333,20 +2550,18 @@ func _apply_walls(walls: PackedByteArray) -> void:
 		# görməlidir — əvvəl sprite heç vaxt dəyişmirdi və qabıq son zərbəyə
 		# qədər toxunulmamış görünürdü.
 		#
-		# Zədəli qabıq öz teksturasına keçdiyinə görə maneə batch-i qısa müddətə
-		# bölünə bilər (düzümdə cəmi iki qabıq var, yəni ən pis halda +2
-		# çağırış) — qabıq dağılan kimi geri qapanır.
+		# Mərhələ tekstura deyil, atlasın BÖLGƏSİDİR — batch bölünmür (köhnə
+		# SVG-lərdə zədəli qabıq ən pis halda +2 çağırış idi).
+		var o: Vector4 = list[i]
 		var hits := DishMap.wall_hits(walls[i])
-		if hits > 0 and _blob_texture(DishMap.obstacles()[i]) == "crust":
-			var want: Texture2D = _tex["crust3"] if hits >= 2 else _tex["crust2"]
-			if spr.texture != want:
-				spr.texture = want
+		if int(o.w) == DishMap.Kind.BRITTLE:
+			var want := MapKit.cell_name("brittle_s%d" % mini(hits, 2), o.z)
+			if String(spr.get_meta("cell", "")) != want:
+				MapKit.apply(spr, want, o.z)
+				spr.set_meta("cell", want)
+				spr.set_meta("base_scale", spr.scale)
 	_broken = walls
 	pred.broken = walls
-	if changed:
-		# Kölgələr statik `_draw`-dadır: dağılan divarın kölgəsi öz-özünə
-		# getmir, çəkiliş yenidən istənilməlidir.
-		queue_redraw()
 
 
 ## Donmanı mikrob görüntülərinə ötürür.
@@ -2392,6 +2607,12 @@ func _watch_capacity() -> void:
 ##
 ## Yazı yalnız BİR dəfə çıxır. Hər kola girəndə təkrarlansaydı, kolların
 ## arasından keçən oyunçu fasiləsiz mesaj yağışı altında qalardı.
+##
+## Yarpaqlar indi mikrobun ÜSTÜNDƏDİR, ona görə iki şey birlikdə dəyişir: öz
+## mikrobun 0.70-ə sönür (əvvəl 0.45 idi — yarpaq altında demək olar itərdi,
+## critique B3) və içində olduğun kolun tacı yarımşəffaf olur — Brawl Stars-da
+## kol öz oyunçusunun ətrafında şəffaflaşır. Yalnız SƏNİN kolun: başqa kolların
+## tacı tutqun qalır, gizli rəqib orada gizli qalır.
 func _watch_bush() -> void:
 	var now := pred.bush_of(me)
 	var inside := now >= 0
@@ -2403,6 +2624,9 @@ func _watch_bush() -> void:
 		_bush_rustles[_bush_index] = _clock
 	if now >= 0:
 		_bush_rustles[now] = _clock
+	if now != _bush_index:
+		_fade_canopy(_bush_index, 1.0)
+		_fade_canopy(now, CANOPY_SEE_THROUGH)
 	_bush_index = now
 	if inside == _hidden:
 		return
@@ -2410,11 +2634,30 @@ func _watch_bush() -> void:
 	var v := _germ_by_color(my_color)
 	if v != null:
 		var tw := create_tween()
-		tw.tween_property(v, "modulate:a", 0.45 if inside else 1.0, 0.22)
+		tw.tween_property(v, "modulate:a", OWN_HIDDEN_ALPHA if inside else 1.0, 0.22)
 	if inside and not _bush_taught:
 		_bush_taught = true
 		_hud.show_message("GİZLƏNDİN", "Kolun içində rəqiblər səni görmür")
 		get_tree().create_timer(2.2).timeout.connect(_hud.hide_message)
+
+
+## Kolda öz mikrobunun şəffaflığı və içində olduğun kolun tacının şəffaflığı.
+const OWN_HIDDEN_ALPHA := 0.70
+const CANOPY_SEE_THROUGH := 0.45
+
+
+## Kolun tacını [param alpha]-ya yumşaq keçirir ([param i] < 0 — heç nə).
+func _fade_canopy(i: int, alpha: float) -> void:
+	if not _canopy_nodes.has(i):
+		return
+	var spr: Sprite2D = _canopy_nodes[i]
+	if spr.has_meta("fade"):
+		var old: Tween = spr.get_meta("fade")
+		if old != null and old.is_valid():
+			old.kill()
+	var tw := create_tween()
+	tw.tween_property(spr, "modulate:a", alpha, 0.22)
+	spr.set_meta("fade", tw)
 
 
 ## Görünən rəqibin kol sərhədini keçməsini yalnız görüntü üçün tutur.
@@ -3117,6 +3360,8 @@ func _render_shots(render_time: float) -> void:
 		if node != null and not bool(_shot_views[tid].get("absorbed", false)):
 			_trails.push(tid, node.position, node.modulate)
 	_render_ghosts()
+	# Mövqelər oturub — indi hansı topun kol yarpağının üstündə olduğu seçilir.
+	_layer_shots()
 	_trails.queue_redraw()
 
 
@@ -3688,10 +3933,13 @@ func _on_own_contact(c: Dictionary) -> void:
 			if int(c["kind"]) == ShotPrediction.Contact.CRACK:
 				var o: Vector4 = DishMap.obstacles()[int(c["key"])]
 				_juice.crust(at, (at - Vector2(o.x, o.y)).normalized(), o.z * 0.46, false)
+			_map_hit(at)
 			_claims.append({"pos": at, "t": _clock, "hit": false})
 		_:
 			# Ömrü bitdi: serverdə qidaya çevrilir və snapshot ilə görünəcək.
-			pass
+			# Top suya "enir" — kiçik sıçrantı və dalğa.
+			_ripple(at, 22.0, Color(col, 0.40), "splash", SPLASH_TIME)
+			_ripple(at, 30.0, Color(Palette.TEXT, 0.26))
 
 
 ## Şəbəkə sıxılıbmı: gediş-gəliş son saniyələrin ən aşağısından xeyli uzundur.
@@ -4259,6 +4507,7 @@ func _flush_fx(render_time: float) -> void:
 						var o: Vector4 = DishMap.obstacles()[brittle]
 						_juice.crust(pos, (pos - Vector2(o.x, o.y)).normalized(),
 							o.z * 0.46, false)
+					_map_hit(pos)
 			Const.EvKind.BREAK:
 				# Divar dağıldı. Partlayış effekti TƏKRAR işlədilir: hadisə
 				# eyni cinsdəndir (bir şey dağılıb ətrafa səpilir) və oyunçu
@@ -4269,6 +4518,7 @@ func _flush_fx(render_time: float) -> void:
 					false, _tex["burst"])
 				_fx.add_child(fx)
 				_juice.crust(pos, Vector2.RIGHT, maxf(float(e["arg"]), 20.0), true)
+				_break_chunks(_brittle_at(pos, true))
 				Sfx.play("burst", 0.05, -4.0)
 				if pos.distance_to(me.pos) < 600.0:
 					_add_shake(7.0)
@@ -4447,40 +4697,315 @@ func _spawn_fx(kind: String, pos: Vector2, scale: float, color: Color) -> void:
 	tw.chain().tween_callback(spr.queue_free)
 
 
+# ---------------------------------------------------------------- xəritənin canlılığı
+
+## Xəritə toxunuşa CAVAB VERİR — Brawl Stars-da divar vurulanda titrəyir, kol
+## top keçəndə xışıldayır, sınan divar sınıq qalır. Hamısı kodladır, kadr
+## animasiyası yoxdur: atlasın sprite-ları miqyas və görünürlüklə oynanır, şüşə
+## parıltısı dodaq node-unun öz multiline çağırışındadır.
+##
+## Heç biri keyfiyyət səviyyəsindən asılı deyil — hamısı ucuzdur (≤ 46 bəzək,
+## ≤ 9 kol, bir neçə dalğa), və qrafika heç bir cihazda sadələşmir.
+
+## Şüşə dodağın parıltısının ömrü.
+const GLINT_TIME := 0.45
+## Maneənin titrəməsi: 1 → 1.045 → 0.975 → 1. Qısa və kiçik — divar "canlıdır",
+## amma toqquşma dairəsi tərpənmir (yalnız şəkil, sərhəd yox).
+const WOBBLE_TIME := 0.17
+const WOBBLE_UP := 0.045
+const WOBBLE_DOWN := 0.025
+## Su dalğası və sıçrantının ömrü.
+const RIPPLE_TIME := 0.55
+const SPLASH_TIME := 0.34
+## Bəzəyin sıçrayışının ömrü.
+const CLUTTER_POP := 0.32
+## Yarpaq üstündəki topun z-i: yarpaqlardan (z 2) yuxarı. [constant FX_Z] ilə
+## eynidir — ağacda `_shot_layer` `_fx`-dən əvvəldir, qığılcımlar yenə üstdədir.
+const SHOT_OVER_Z := 3
+## Dağılan kövrəyin atlas qırıntıları.
+const CHUNK_TIME := 0.62
+
+
+## Top dəyən yerdə hansı bərk maneə var? Sıçrayış nöqtəsi maneənin SƏTHİNDƏDİR,
+## ona görə mərkəzə yox, çevrəyə olan məsafə yoxlanılır.
+func _obstacle_at(at: Vector2) -> int:
+	var list := DishMap.obstacles()
+	var best := -1
+	var best_d := INF
+	for i in list.size():
+		var o: Vector4 = list[i]
+		if not DishMap.blocks_shot(int(o.w)):
+			continue
+		if i < _broken.size() and DishMap.wall_gone(_broken[i]):
+			continue
+		var d := absf(at.distance_to(Vector2(o.x, o.y)) - o.z)
+		if d <= Const.SHOT_RADIUS + 12.0 and d < best_d:
+			best_d = d
+			best = i
+	return best
+
+
+## Topun maneəyə və ya şüşəyə dəyməsinin xəritə cavabı: maneə titrəyir, şüşə
+## parıldayır, suda kiçik dalğa qalır. Proqnozun təması da, serverin HIT
+## hadisəsi də buraya gəlir — öz topunun hadisəsini iddia sistemi süzür
+## ([method _match_claim]), ona görə heç nə iki dəfə oynanmır.
+func _map_hit(at: Vector2) -> void:
+	var i := _obstacle_at(at)
+	if i >= 0:
+		_wobble(i)
+	elif at.length() > Const.WORLD_RADIUS - Const.SHOT_RADIUS - 6.0:
+		_glint(at.angle())
+	_ripple(at, 24.0, Color(Palette.TEXT, 0.34))
+
+
+## Maneənin gövdəsi qısa titrəyir. Kölgə döşəmədədir — titrəmir.
+func _wobble(i: int) -> void:
+	if i < 0 or i >= _blob_nodes.size():
+		return
+	var spr := _blob_nodes[i]
+	if spr == null or not spr.visible:
+		return
+	if spr.has_meta("wobble"):
+		var old: Tween = spr.get_meta("wobble")
+		if old != null and old.is_valid():
+			old.kill()
+	var tw := create_tween()
+	tw.tween_method(func(u: float) -> void:
+		var base: Vector2 = spr.get_meta("base_scale", spr.scale)
+		# Sönən sinus: əvvəl şişir, sonra bir az yığılır, sonra yerinə qayıdır.
+		var k := sin(u * TAU) * (WOBBLE_UP if u < 0.5 else WOBBLE_DOWN) * (1.0 - u * 0.35)
+		spr.scale = base * (1.0 + k), 0.0, 1.0, WOBBLE_TIME)
+	tw.tween_callback(func() -> void: spr.scale = spr.get_meta("base_scale", spr.scale))
+	spr.set_meta("wobble", tw)
+
+
+## Şüşə dodağında [param angle] bucağında parıltı.
+func _glint(angle: float) -> void:
+	_glints.append({"angle": angle, "t": _clock})
+	_lip.queue_redraw()
+
+
+## Suyun səthində genişlənən halqa (atlasın `ripple` hüceyrəsi) — sprite
+## hovuzdan gəlir, hamısı eyni teksturadır, yəni dalğa nə qədər olsa da bir
+## çəkiliş çağırışıdır. [param reach] — halqanın son radiusu.
+func _ripple(at: Vector2, reach: float, color: Color, cell := "ripple",
+		life := RIPPLE_TIME) -> void:
+	if not _in_view(at, reach):
+		return
+	var spr: Sprite2D
+	if _ripple_pool.is_empty():
+		spr = MapKit.sprite(cell, reach)
+		_ripples.add_child(spr)
+	else:
+		spr = _ripple_pool.pop_back()
+		spr.visible = true
+		MapKit.apply(spr, cell, reach)
+	spr.position = at
+	spr.modulate = color
+	spr.rotation = fposmod(at.x * 0.37 + at.y * 0.61, TAU)
+	_ripple_live.append({"node": spr, "t": _clock, "life": life,
+		"scale": spr.scale, "alpha": color.a})
+
+
+## Dalğaların və sıçrantıların ömrü — böyüyür, sönür, hovuza qayıdır.
+func _step_ripples() -> void:
+	for k in range(_ripple_live.size() - 1, -1, -1):
+		var e: Dictionary = _ripple_live[k]
+		var spr: Sprite2D = e["node"]
+		var u := (_clock - float(e["t"])) / float(e["life"])
+		if u >= 1.0:
+			spr.visible = false
+			_ripple_pool.append(spr)
+			_ripple_live.remove_at(k)
+			continue
+		var grow := 1.0 - pow(1.0 - u, 3.0)
+		spr.scale = Vector2(e["scale"]) * (0.35 + 0.65 * grow)
+		spr.modulate.a = float(e["alpha"]) * (1.0 - u) * (1.0 - u)
+
+
+## Bu nöqtə kameranın görüş sahəsindədirmi (bir az ehtiyatla)?
+func _in_view(at: Vector2, margin: float) -> bool:
+	return _view_rect.grow(margin + 60.0).has_point(at)
+
+
+## Kövrək dağıldı: atlasın dörd qırıntı parçası mərkəzdən səpilir, fırlanır və
+## söner (JuiceFx-in xətt qırıntılarına əlavə — onlar toz, bunlar qabığın öz
+## materialıdır). Üstəlik böyük dalğa və sıçrantı.
+func _break_chunks(i: int) -> void:
+	if i < 0 or i >= DishMap.obstacles().size():
+		return
+	var o: Vector4 = DishMap.obstacles()[i]
+	var at := Vector2(o.x, o.y)
+	_ripple(at, o.z * 1.5, Color(Palette.TEXT, 0.40))
+	_ripple(at, o.z * 1.05, Color(Palette.TEXT, 0.55), "splash", SPLASH_TIME)
+	if not _in_view(at, o.z * 2.0):
+		return
+	for k in 7:
+		var spr := MapKit.sprite("debris_%d" % (k % 4), o.z * (0.13 + 0.05 * float(k % 3)))
+		spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		spr.position = at
+		spr.z_index = FX_Z
+		_fx.add_child(spr)
+		var dir := Vector2.from_angle(TAU * float(k) / 7.0 + sin(float(k) * 7.1 + o.x) * 0.3)
+		var dist := o.z * (0.75 + 0.45 * fposmod(float(k) * 0.618 + o.y * 0.01, 1.0))
+		var spin := (1.0 if k % 2 == 0 else -1.0) * (2.0 + float(k % 3))
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(spr, "position", at + dir * dist, CHUNK_TIME) \
+			.set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)
+		tw.tween_property(spr, "rotation", spin, CHUNK_TIME)
+		tw.tween_property(spr, "modulate:a", 0.0, CHUNK_TIME * 0.45).set_delay(CHUNK_TIME * 0.55)
+		tw.chain().tween_callback(spr.queue_free)
+
+
+## Top üstündən keçən döşəmə bəzəyi sıçrayır və kiçik dalğa qoyur. Yalnız topun
+## öz xanasındakı parçalar yoxlanılır (bax [member _clutter_grid]).
+func _pop_clutter(at: Vector2, cell_key: Vector2i) -> void:
+	if not _clutter_grid.has(cell_key):
+		return
+	for k in _clutter_grid[cell_key]:
+		var c: Dictionary = _clutter[k]
+		if _clock - float(c["pop"]) < CLUTTER_POP * 2.0:
+			continue
+		var p: Vector2 = c["at"]
+		var reach := float(c["r"]) + Const.SHOT_RADIUS
+		if p.distance_squared_to(at) > reach * reach:
+			continue
+		c["pop"] = _clock
+		_clutter_popping.append(k)
+		_ripple(p, float(c["r"]) * 1.6, Color(Palette.TEXT, 0.22))
+
+
+## Bəzəyin sıçrayışı: kiçik "hop" — böyüyür, sonra yerinə qayıdır. Yalnız
+## sıçrayan parçalar gəzilir.
+func _step_clutter() -> void:
+	for n in range(_clutter_popping.size() - 1, -1, -1):
+		var c: Dictionary = _clutter[_clutter_popping[n]]
+		var spr: Sprite2D = c["node"]
+		var u := (_clock - float(c["pop"])) / CLUTTER_POP
+		if u >= 1.0:
+			spr.scale = c["base"]
+			_clutter_popping.remove_at(n)
+			continue
+		var hop := sin(u * PI) * (1.0 - u * 0.4)
+		spr.scale = Vector2(c["base"]) * (1.0 + 0.32 * hop)
+
+
+## Topları yarpaq qatına görə yerləşdirir və koldan keçən topa xışıltı verir.
+##
+## Top adətən mikrobların ALTINDADIR (ART_BIBLE §3c): mikrobun içindən doğulur
+## və membrandan keçəndə üzə çıxır, rəqibə dəyəndə onun içinə girir. Yarpaqlar
+## isə mikrobların ÜSTÜNDƏDİR. Kola girən top yarpaq altında itərdi — qaçmaq
+## mümkün olmazdı (critique B2; Brawl Stars-da top kolların üstündədir). Ona
+## görə top yalnız KOLUN İÇİNDƏ və heç bir mikrobun gövdəsində olmayanda
+## yarpaqların üstünə çıxır: kolun xaricində heç nə dəyişmir, gövdədən çıxış
+## və gövdəyə giriş isə yenə membranın altında görünür.
+func _layer_shots() -> void:
+	for sid in _shot_views:
+		var view: Dictionary = _shot_views[sid]
+		var spr: Sprite2D = view["node"]
+		if spr == null or not spr.visible or bool(view.get("absorbed", false)):
+			continue
+		_layer_shot(sid, spr)
+	for gid in _ghost_nodes:
+		_layer_shot(-int(gid), _ghost_nodes[gid])
+	# Kolun içində ölən topun qeydi saniyədə bir dəfə silinir: hər kadr "görülən
+	# toplar" lüğəti qurmaq əlavə iş idi, qeyd isə yalnız kolun İÇİNDƏKİ toplar
+	# üçün var, yəni azdır.
+	if _clock - _shot_bushes_swept > 1.0:
+		_shot_bushes_swept = _clock
+		for key in _shot_bushes.keys():
+			if _clock - float((_shot_bushes[key] as Vector2).y) > 0.5:
+				_shot_bushes.erase(key)
+
+
+func _layer_shot(key: int, spr: Sprite2D) -> void:
+	var at := spr.position
+	var cell := _map_cell(at)
+	_pop_clutter(at, cell)
+	var bush := -1
+	if _bush_grid.has(cell):
+		for n in _bush_grid[cell]:
+			var b := _bush_list[n]
+			var dx := at.x - b.x
+			var dy := at.y - b.y
+			var rr := b.z + Const.SHOT_RADIUS
+			if dx * dx + dy * dy <= rr * rr:
+				bush = int(b.w)
+				break
+	var before := int((_shot_bushes.get(key, Vector2(-1.0, 0.0)) as Vector2).x)
+	if bush != before:
+		# Koldan keçən top yarpağı silkələyir — həm girəndə, həm çıxanda.
+		# Yalnız GÖRÜNƏN top: server gizli mikrobun topunu da göndərir, amma
+		# topun özü onsuz da görünür, yəni xışıltı heç nəyi ifşa etmir.
+		if bush >= 0:
+			_bush_rustles[bush] = _clock
+		elif before >= 0:
+			_bush_rustles[before] = _clock
+	if bush >= 0:
+		_shot_bushes[key] = Vector2(float(bush), _clock)
+	elif before >= 0:
+		_shot_bushes.erase(key)
+	var over := bush >= 0 and not _inside_germ(at)
+	var z := SHOT_OVER_Z if over else 0
+	if spr.z_index != z:
+		spr.z_index = z
+	# Heç vaxt kola girməyən top (əksəriyyət) iz lüğətinə toxunmur.
+	if bush >= 0 or before >= 0:
+		_trails.set_over(key, over)
+
+
+## Nöqtə hər hansı görünən mikrobun gövdəsinin içindədirmi (top radiusu ilə)?
+func _inside_germ(at: Vector2) -> bool:
+	for gid in _visuals:
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.visible or v.burst:
+			continue
+		var r := Const.germ_radius(v.capacity) + Const.SHOT_RADIUS
+		if v.position.distance_squared_to(at) <= r * r:
+			return true
+	return false
+
+
 # ---------------------------------------------------------------- fon
 
-## Petri qabı və mühit qatı. Sonsuz rejimdə statikdir; matçlı rejimdə quruyan
-## sərhədin nəbzi və buxarı üçün snapshot ritmində yenilənir.
+## Qabın BAYIRI — halqa mesh-i (bax [method _build_backdrop]).
+##
+## Əvvəl burada iki tam ekran disk çəkilirdi və qabın içində ikisini də döşəmə
+## örtürdü: hər kadr iki görünməz ekran doldurması (MAP_25D F3). Halqa yalnız
+## qabın xaricini doldurur. Döşəmə, şəbəkə, quruyan zona və şüşə divar öz
+## node-larındadır (bax [method _build_world]).
 func _draw() -> void:
+	if _backdrop != null:
+		draw_mesh(_backdrop, null)
+
+
+## Qabın bayırının halqası (bax [method MapKit.backdrop_mesh]).
+func _build_backdrop() -> void:
+	_backdrop = MapKit.backdrop_mesh()
+
+
+## DÖŞƏMƏ — makro tekstura, şeyder detalı üstünə vurur (bax `map_floor.gdshader`).
+##
+## Qab əyri şüşədir: mərkəz bir az açıq, kənar qaranlığa düşür, zonalar və
+## sediment zolaqları teksturaya bişib. Əvvəl 14 `draw_circle` idi (14 çağırış),
+## sonra bir SVG, indi bir şeyderli düzbucaqlıdır. Diskin künclərindəki şəffaf
+## sahədən qabın bayırı görünür.
+func _draw_ground() -> void:
 	var r := Const.WORLD_RADIUS
+	_ground.draw_texture_rect(_floor_tex, Rect2(-r, -r, r * 2.0, r * 2.0), false)
 
-	# Qabın kənarından bayır — oyunçu sərhədi aydın görməlidir.
-	#
-	# İki disk bişməmiş radial vinyet rolunu oynayır: uzaq sahə demək olar qara,
-	# dodağa yaxın 260 px isə əvvəlki BG_OUTER tonudur. Tək düz disk sınanmışdı;
-	# qabın bayırı döşəmə qədər bərabər görünür və gözü mərkəzə yığmırdı.
-	draw_circle(Vector2.ZERO, r + 600.0, Palette.BG_VIGNETTE)
-	draw_circle(Vector2.ZERO, r + 260.0, Palette.BG_OUTER)
 
-	# DÖŞƏMƏ — düz rəng deyil, ÇÖKƏN səth.
-	#
-	# Qab əyri şüşədir: mərkəz bir az açıq, kənar isə qaranlığa doğru düşür.
-	# Düz rənglə çəkiləndə qab disk kimi oxunurdu — dərinliyin ilk işarəsi elə
-	# səthin özündə olmalıdır, üstündəki obyektlərdə yox.
-	#
-	# TEKSTURA ilə, konsentrik disklərlə YOX. Əvvəlcə 14 `draw_circle` yazılmışdı
-	# və ölçmə göstərdi ki, hər biri ayrıca çəkiliş çağırışıdır: təkcə döşəmə
-	# 14 çağırış yeyirdi. Radial ton, agar ləkələri və kənar vinyeti indi eyni
-	# teksturaya bişirilib, yenə bir çağırışdır.
-	draw_texture_rect(_tex["floor"], Rect2(-r, -r, r * 2.0, r * 2.0), false)
-
-	# ŞƏBƏKƏ — məsafə hissi verir, amma kənara doğru SÖNÜR.
-	#
-	# Bərabər parlaq şəbəkə koordinat kağızı kimi oxunur və səthi yastılaşdırır.
-	# Kənara doğru sönəndə isə əksinə: səth əyilmiş görünür.
-	#
-	# `draw_multiline_colors` hər seqmentə ayrıca rəng verir və yenə TƏK
-	# çağırışdır (eyni üsul mikrobun ayaqlarında işlənir).
+## ŞƏBƏKƏ — məsafə hissi verir, amma kənara doğru SÖNÜR.
+##
+## Bərabər parlaq şəbəkə koordinat kağızı kimi oxunur və səthi yastılaşdırır.
+## Kənara doğru sönəndə isə əksinə: səth əyilmiş görünür.
+##
+## `draw_multiline_colors` hər seqmentə ayrıca rəng verir və yenə TƏK
+## çağırışdır (eyni üsul mikrobun ayaqlarında işlənir). Statikdir — node bir
+## dəfə çəkilir.
+func _draw_grid() -> void:
+	var r := Const.WORLD_RADIUS
 	var step := 200.0
 	var lines := PackedVector2Array()
 	var cols := PackedColorArray()
@@ -4509,117 +5034,136 @@ func _draw() -> void:
 			cols.push_back(hi)
 			lines.push_back(Vector2(-h, x + 2.5)); lines.push_back(Vector2(h, x + 2.5))
 			cols.push_back(lo)
-	draw_multiline_colors(lines, cols, 2.0)
+	_grid.draw_multiline_colors(lines, cols, 2.0)
 
-	# Maneələrin kölgəsi burada ÇƏKİLMİR — sprite-a bişirilib.
-	#
-	# Əvvəl hər bərk maneə üçün iki `draw_circle` vardı. Ölçmə göstərdi ki,
-	# `_draw` içindəki hər primitiv ayrıca çəkiliş çağırışıdır: 15 maneə × 2
-	# = 30 çağırış, yalnız kölgə üçün. Teksturaya bişəndə pulsuzdur, üstəlik
-	# kölgə radiusla birlikdə özü miqyaslanır və fırlanma dayandırıldığı üçün
-	# istiqaməti də sabit qalır (bax [method _spawn_obstacles]).
 
-	# SEDİMENT ZOLAQLARI — mərkəzdən nə qədər uzaqdasan.
-	#
-	# Əvvəl nazik tam halqa idi və döşəmənin ÜSTÜNƏ çəkilmiş UI elementi kimi
-	# oxunurdu. İndi enli, çox sönük və yalnız çevrənin bir hissəsində görünən
-	# zolaqdır: oriyentir qalır, "xəritə üzərində cizgi" hissi gedir.
-	#
-	# Qırıq olması həm də təbiidir — çöküntü halqa boyunca bərabər yığılmır.
-	for i in 3:
-		var rr := r * (0.35 + 0.22 * float(i))
-		var a0 := float(i) * 2.1
-		draw_arc(Vector2.ZERO, rr, a0, a0 + PI * 0.85, 48,
-			Color(Palette.GRID, 0.30), 26.0, true)
+## QURUMA KƏNARI — yalnız matçlı rejimdə və yalnız qab daralanda.
+##
+## Quru zona DİVAR DEYİL: mikrob ora keçir, sadəcə orada dolur və partlayır
+## (bax [method Sim._step_germs]). Ona görə kənar bərk xətt kimi yox, NƏBZ
+## VURAN halqa kimi çəkilir — "təhlükə", "maneə" yox.
+##
+## Quru döşəmə ayrıca tekstura deyil: qabın üstünə kəhrəba örtük və bütün
+## çatlar TƏK `draw_multiline_colors` çağırışı ilə düşür. Çatların nöqtələri
+## indeksdən hesablanır, ona görə nəbz yenidən çəkiləndə naxış qaynamır.
+##
+## Ayrı node-dadır və snapshot ritmində yalnız O yenidən çəkilir (bax
+## [method _apply_match]); əvvəl bütün fon — şəbəkə və divar da — yenilənirdi.
+func _draw_dry() -> void:
+	var r := Const.WORLD_RADIUS
+	if _mode == Const.Mode.ENDLESS or _wet_radius >= r - 1.0:
+		return
+	var dry := Color(Palette.WARNING, 0.055)
+	_dry.draw_arc(Vector2.ZERO, (_wet_radius + r) * 0.5, 0.0, TAU, 96, dry,
+		r - _wet_radius, true)
 
-	# Şüşə kənar. Maneələr burada YOX, sprite kimi çəkilir —
-	# bax [method _spawn_obstacles].
-	# QURUMA KƏNARI — yalnız matçlı rejimdə və yalnız qab daralanda.
-	#
-	# Quru zona DİVAR DEYİL: mikrob ora keçir, sadəcə orada dolur və partlayır
-	# (bax [method Sim._step_germs]). Ona görə kənar bərk xətt kimi yox, NƏBZ
-	# VURAN halqa kimi çəkilir — "təhlükə", "maneə" yox.
-	#
-	# Quru döşəmə ayrıca tekstura deyil: qabın üstünə kəhrəba örtük və bütün
-	# çatlar TƏK `draw_multiline_colors` çağırışı ilə düşür. Çatların nöqtələri
-	# indeksdən hesablanır, ona görə nəbz yenidən çəkiləndə naxış qaynamır.
-	if _mode != Const.Mode.ENDLESS and _wet_radius < r - 1.0:
-		var dry := Color(Palette.WARNING, 0.055)
-		draw_arc(Vector2.ZERO, (_wet_radius + r) * 0.5, 0.0, TAU, 96, dry,
-			r - _wet_radius, true)
+	var crack_lines := PackedVector2Array()
+	var crack_cols := PackedColorArray()
+	var dry_span := r - _wet_radius
+	var crack_count := 18 if Net.quality == Const.Quality.HIGH else 10
+	for i in crack_count:
+		var seed := float(i)
+		var a := fposmod(seed * 2.39996 + sin(seed * 4.17) * 0.18, TAU)
+		var radial := Vector2.from_angle(a)
+		var tangent := radial.orthogonal()
+		var inner_r := _wet_radius + dry_span * (0.12 + fposmod(seed * 0.37, 0.20))
+		var outer_r := minf(r - 12.0, inner_r + dry_span * (0.30 + fposmod(seed * 0.19, 0.32)))
+		var p0 := radial * inner_r
+		var p1 := radial * lerpf(inner_r, outer_r, 0.48) \
+			+ tangent * sin(seed * 8.3) * minf(22.0, dry_span * 0.10)
+		var p2 := radial * outer_r \
+			- tangent * cos(seed * 5.1) * minf(16.0, dry_span * 0.08)
+		crack_lines.append_array(PackedVector2Array([p0, p1, p1, p2]))
+		var cc := Color(Palette.DRY_CRACK, 0.25 + 0.12 * fposmod(seed * 0.43, 1.0))
+		crack_cols.append_array(PackedColorArray([cc, cc]))
+		# Hər üçüncü əsas çata qısa yan budaq verilir; eyni çağırışda qalır.
+		if i % 3 == 0:
+			var branch := p1 + (tangent + radial * 0.35).normalized() \
+				* minf(34.0, dry_span * 0.16)
+			crack_lines.append_array(PackedVector2Array([p1, branch]))
+			crack_cols.append(Color(Palette.DRY_CRACK, 0.22))
+	if not crack_lines.is_empty():
+		_dry.draw_multiline_colors(crack_lines, crack_cols, 3.0)
 
-		var crack_lines := PackedVector2Array()
-		var crack_cols := PackedColorArray()
-		var dry_span := r - _wet_radius
-		var crack_count := 18 if Net.quality == Const.Quality.HIGH else 10
-		for i in crack_count:
-			var seed := float(i)
-			var a := fposmod(seed * 2.39996 + sin(seed * 4.17) * 0.18, TAU)
-			var radial := Vector2.from_angle(a)
+	# Yaş sahə daraldıqca döyüşün təciliyi artır: 2.2-dən 7.0 rad/san-a.
+	# Sabit 2.2 sınanmışdı və son 90 px-lik dairədə də başlanğıc qədər sakit
+	# görünürdü; sürət radiusdan çıxanda qayda ilə görüntü eyni anda sıxılır.
+	var danger := clampf(1.0 - _wet_radius / r, 0.0, 1.0)
+	var pulse_speed := 2.2 + danger * 4.8
+	var pulse := 0.5 + 0.5 * sin(_clock * pulse_speed)
+	_dry.draw_arc(Vector2.ZERO, _wet_radius, 0.0, TAU, 96,
+		Color(Palette.WARNING, 0.34 + 0.28 * pulse), 10.0, true)
+
+	# Buxar yalnız YÜKSƏK keyfiyyətdədir. Səkkiz kəkil ayrıca primitiv deyil:
+	# bütün qısa seqmentlər bir multiline çağırışında yığılır. LOW-da bu
+	# massiv heç qurulmur, çünki buxar qayda yox, material işarəsidir.
+	if Net.quality == Const.Quality.HIGH:
+		var steam_lines := PackedVector2Array()
+		var steam_cols := PackedColorArray()
+		for i in 8:
+			var drift := _clock * 0.16 + float(i) * TAU / 8.0
+			var radial := Vector2.from_angle(drift)
 			var tangent := radial.orthogonal()
-			var inner_r := _wet_radius + dry_span * (0.12 + fposmod(seed * 0.37, 0.20))
-			var outer_r := minf(r - 12.0, inner_r + dry_span * (0.30 + fposmod(seed * 0.19, 0.32)))
-			var p0 := radial * inner_r
-			var p1 := radial * lerpf(inner_r, outer_r, 0.48) \
-				+ tangent * sin(seed * 8.3) * minf(22.0, dry_span * 0.10)
-			var p2 := radial * outer_r \
-				- tangent * cos(seed * 5.1) * minf(16.0, dry_span * 0.08)
-			crack_lines.append_array(PackedVector2Array([p0, p1, p1, p2]))
-			var cc := Color(Palette.DRY_CRACK, 0.25 + 0.12 * fposmod(seed * 0.43, 1.0))
-			crack_cols.append_array(PackedColorArray([cc, cc]))
-			# Hər üçüncü əsas çata qısa yan budaq verilir; eyni çağırışda qalır.
-			if i % 3 == 0:
-				var branch := p1 + (tangent + radial * 0.35).normalized() \
-					* minf(34.0, dry_span * 0.16)
-				crack_lines.append_array(PackedVector2Array([p1, branch]))
-				crack_cols.append(Color(Palette.DRY_CRACK, 0.22))
-		if not crack_lines.is_empty():
-			draw_multiline_colors(crack_lines, crack_cols, 3.0)
+			var lift := 18.0 + 9.0 * sin(_clock * 0.9 + float(i) * 1.7)
+			var p0 := radial * (_wet_radius + 8.0)
+			var p1 := p0 + radial * lift * 0.38 + tangent * 7.0
+			var p2 := p0 + radial * lift * 0.72 - tangent * 6.0
+			var p3 := p0 + radial * lift + tangent * 3.0
+			steam_lines.append_array(PackedVector2Array([p0, p1, p1, p2, p2, p3]))
+			steam_cols.append_array(PackedColorArray([
+				Color(Palette.STEAM, 0.22), Color(Palette.STEAM, 0.15),
+				Color(Palette.STEAM, 0.06)]))
+		_dry.draw_multiline_colors(steam_lines, steam_cols, 4.0)
 
-		# Yaş sahə daraldıqca döyüşün təciliyi artır: 2.2-dən 7.0 rad/san-a.
-		# Sabit 2.2 sınanmışdı və son 90 px-lik dairədə də başlanğıc qədər sakit
-		# görünürdü; sürət radiusdan çıxanda qayda ilə görüntü eyni anda sıxılır.
-		var danger := clampf(1.0 - _wet_radius / r, 0.0, 1.0)
-		var pulse_speed := 2.2 + danger * 4.8
-		var pulse := 0.5 + 0.5 * sin(_clock * pulse_speed)
-		draw_arc(Vector2.ZERO, _wet_radius, 0.0, TAU, 96,
-			Color(Palette.WARNING, 0.34 + 0.28 * pulse), 10.0, true)
 
-		# Buxar yalnız YÜKSƏK keyfiyyətdədir. Səkkiz kəkil ayrıca primitiv deyil:
-		# bütün qısa seqmentlər bir multiline çağırışında yığılır. LOW-da bu
-		# massiv heç qurulmur, çünki buxar qayda yox, material işarəsidir.
-		if Net.quality == Const.Quality.HIGH:
-			var steam_lines := PackedVector2Array()
-			var steam_cols := PackedColorArray()
-			for i in 8:
-				var drift := _clock * 0.16 + float(i) * TAU / 8.0
-				var radial := Vector2.from_angle(drift)
-				var tangent := radial.orthogonal()
-				var lift := 18.0 + 9.0 * sin(_clock * 0.9 + float(i) * 1.7)
-				var p0 := radial * (_wet_radius + 8.0)
-				var p1 := p0 + radial * lift * 0.38 + tangent * 7.0
-				var p2 := p0 + radial * lift * 0.72 - tangent * 6.0
-				var p3 := p0 + radial * lift + tangent * 3.0
-				steam_lines.append_array(PackedVector2Array([p0, p1, p1, p2, p2, p3]))
-				steam_cols.append_array(PackedColorArray([
-					Color(Palette.STEAM, 0.22), Color(Palette.STEAM, 0.15),
-					Color(Palette.STEAM, 0.06)]))
-			draw_multiline_colors(steam_lines, steam_cols, 4.0)
+## ŞÜŞƏ DİVAR — iki hissə (godot_25d_technique §4, Brawl Stars-ın kənar divarı):
+##
+##   ŞİMAL DİVARI — şüşənin daxili üzü, dodaqdan BAYIRA uzanır. Kamera
+##   cənubdadır və uzaq divarın içini görür: eni şimalda 70 px, yanlarda 8 px
+##   (divar yandan görünür, bax [method MapKit.wall_width]). Tekstura divarın
+##   zolağıdır (`map_rim.png`): ayağı dodaqda, kondensasiya halqalı üzü və
+##   işıqlı üst xətti bayırda. Oyun sahəsindən bir piksel də yemir.
+##   CƏNUB DODAĞI — yaxın divarın üstü, İÇƏRİYƏ 6..28 px: yarımşəffaf şüşə və
+##   nazik işıq xətti. Mikrobların ÜSTÜNDƏ çəkilir (bax [member _lip]).
+##
+## İkisi də statik mesh-dir, hər biri bir çəkiliş çağırışı (bax
+## [method MapKit.rim_mesh], [method MapKit.lip_mesh]). Əvvəlki dörd `draw_arc`
+## (hər biri ayrıca poliqon) bunlarla əvəz olunub.
+func _build_rim() -> void:
+	_rim_mesh = MapKit.rim_mesh()
+	_lip_mesh = MapKit.lip_mesh()
 
-	# ŞÜŞƏ DİVAR — dörd hissə, çünki tək xətt "xəritə sərhədi" kimi oxunurdu.
-	#
-	# Qab QAB kimi görünmək üçün üç şey deməlidir: maye şüşəyə dırmaşır
-	# (menisk), materialın qalınlığı var, və işıq ona bir tərəfdən düşür.
-	# Sonuncusu ən vacibdir: simmetrik halqa həmişə yastı qalır.
-	# Daxili kölgə dodağın qalxdığını, tam gövdə onun qalınlığını deyir.
-	# İşıq və kölgə qövsləri Palette.LIGHT_DIR-dən çıxır; əl ilə yazılmış iki
-	# bucaq sınananda mikrob və maneə işığı ilə bir neçə dərəcə ayrılırdı.
-	draw_arc(Vector2.ZERO, r - 18.0, 0.0, TAU, 128,
-		Color(Palette.OUTLINE, 0.48), 34.0, true)
-	draw_arc(Vector2.ZERO, r, 0.0, TAU, 128, Palette.DISH_EDGE, 17.0, true)
-	var light_a := Palette.LIGHT_DIR.angle()
-	var shadow_a := (-Palette.LIGHT_DIR).angle()
-	draw_arc(Vector2.ZERO, r - 4.0, light_a - 0.92, light_a + 0.92, 48,
-		Color(Palette.TEXT, 0.38), 5.0, true)
-	draw_arc(Vector2.ZERO, r + 5.0, shadow_a - 0.92, shadow_a + 0.92, 48,
-		Color(Palette.OUTLINE, 0.78), 9.0, true)
+
+func _draw_rim() -> void:
+	if _rim_mesh != null:
+		_rim.draw_mesh(_rim_mesh, _rim_tex)
+
+
+## Dodaq və onun parıltıları. Parıltı top şüşədən sıçrayanda yanır (bax
+## [method _glint]): dodaq da maneələr kimi toxunuşa cavab verir.
+func _draw_lip() -> void:
+	if _lip_mesh != null:
+		_lip.draw_mesh(_lip_mesh, null)
+	if _glints.is_empty():
+		return
+	var r := Const.WORLD_RADIUS - 2.0
+	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	# HDR-dir (bax [constant Palette.HIT_FLASH]): YÜKSƏK-in parlaması onu bir anlıq
+	# işıq kimi tutur. Adi açıq rəng 3 px-lik xətdə demək olar görünmürdü.
+	var hot := Palette.RIM_LINE.lerp(Palette.BODY_LIGHT, 0.6) * 1.6
+	for g in _glints:
+		var u := clampf((_clock - float(g["t"])) / GLINT_TIME, 0.0, 1.0)
+		var fade := (1.0 - u) * (1.0 - u)
+		var a := float(g["angle"])
+		# İşıq dodaq boyunca iki tərəfə yayılır və sönür.
+		var span := 0.06 + 0.12 * (1.0 - pow(1.0 - u, 2.0))
+		var seg := 14
+		for k in seg:
+			var a0 := a - span + 2.0 * span * float(k) / float(seg)
+			var a1 := a0 + 2.0 * span / float(seg)
+			var w := 1.0 - absf((float(k) + 0.5) / float(seg) * 2.0 - 1.0)
+			pts.push_back(Vector2.from_angle(a0) * r)
+			pts.push_back(Vector2.from_angle(a1) * r)
+			cols.push_back(Color(hot.r, hot.g, hot.b, fade * minf(w * 1.6, 1.0)))
+	_lip.draw_multiline_colors(pts, cols, 4.0)

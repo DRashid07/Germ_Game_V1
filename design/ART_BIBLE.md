@@ -20,7 +20,8 @@ Rəngi dəyişəndə həm oradakı sabit, həm bu sənəd yenilənməlidir.
 | `DISH_EDGE` | `#2B5963` | Qalxmış şüşə dodağın gövdəsi |
 | `GRID` | `#1A3942` | Döşəmə şəbəkəsi və 400 px-lik bevel işığı |
 | `MUCUS` / `MUCUS_EDGE` | `#16333B` / `#245562` | Selik ləkələri (maneə) |
-| `BUSH` / `BRITTLE` / `VENT` | `#4FCB72` / `#D09345` / `#F0B94E` | Xəritə növlərinin ikinci rəng kanalı |
+| `BUSH` / `BRITTLE` / `VENT` | `#3E9068` / `#D09345` / `#F0B94E` | Xəritə növlərinin ikinci rəng kanalı (kol V1 dəstinin rəngidir, §4c) |
+| `RIM_LINE` | `#8FD3D6` | Şüşə divarın işıq xətti — cənub dodağı və parıltılar |
 | `DRY_CRACK` / `STEAM` | `#81785C` / `#B9D8D0` | Quru çat və yalnız HIGH-da buxar |
 
 Fon QƏSDƏN aşağı kontrastdır: ekranda 10 mikrob, 50 qida topu və uçan toplar var —
@@ -667,16 +668,18 @@ Dünyada 22-26 maneə var və əvvəl hamısı EYNİ şəkil idi. Dünya ekranda
 enlidir, ona görə oyunçunun harada olduğunu ayırd edə biləcəyi heç bir
 oriyentir qalmırdı.
 
-| Növ | Sprite | Forma dili | Qayda |
+| Növ | Atlas hüceyrəsi (V1, §4c) | Forma dili | Qayda |
 |---|---|---|---|
-| **SELİK** | `mucus_blob` · `mucus_bloom` | hamar / dənəvər, bütöv haşiyə | bloklayır |
-| **KÖVRƏK** | `mucus_crust` | **kəhrəba çatlar** — bucaqlı xətlər | topla sınır |
-| **KOL** | `mucus_bush` | **haşiyəsiz**, tüklü kənar, yaşıl | keçilir, gizlədir |
-| **CƏRƏYAN** | `mucus_vent` | **kəsik** haşiyə, kəhrəba, axın qövsləri | keçilir, itələyir |
+| **SELİK** | `mucus_blob` · `mucus_bloom` | hamar gel / vezikullu gel, bütöv haşiyə | bloklayır |
+| **KÖVRƏK** | `brittle_s0` → `s1` → `s2` → `brittle_rubble` | **kəhrəba çatlar**, kömür qabıq | topla sınır, sınıq qalır |
+| **KOL** | `bush_base` + `bush_canopy` | **haşiyəsiz**, yarpaqlı, yaşıl | keçilir, gizlədir |
+| **CƏRƏYAN** | `vent_base` + `vent_swirl` | **9 kəhrəba kəsik**, qara dəlik, fırlanan burulğan | keçilir, itələyir |
 
-Beşinin də **xarici dairəsi eynidir** (r = 120) və bu, məcburidir: toqquşma
-həndəsəsi `Vector4(x, y, radius, kind)`-dır, yəni siluet dəyişsəydi oyunçu
-"hara dəyəcəyəm" sualında yanılardı.
+Hamısının **ayaq izi eynidir** (master-də r 384, atlasda L 192 / S 96 tekstel)
+və bu, məcburidir: toqquşma həndəsəsi `Vector4(x, y, radius, kind)`-dır, yəni
+siluet dəyişsəydi oyunçu "hara dəyəcəyəm" sualında yanılardı. Atlas bunu
+zəmanətləyir: bərk maneənin alfası Codex-in kənarı yox, dairənin özüdür
+(`SimTest._test_map_atlas`).
 
 **Forma dili qaydanı deməlidir.** Keçilə bilən iki növ bərk növlərdən
 HAŞİYƏSİ ilə ayrılır: bərk maneənin konturu bütövdür, kolun konturu yoxdur
@@ -700,13 +703,17 @@ olmamalıdır.
 Naxış maneənin MÖVQEYİNDƏN çıxır, təsadüfdən yox — eyni maneə hər açılışda
 eyni görünür, yəni xəritə yadda saxlanıla bilir.
 
-Bərk maneələrin altında kölgə var (aşağı 10 px, radiusun 1.03 misli): maneə
-döşəmənin İÇİNDƏ deyil, ÜSTÜNDƏ oturur. **Kolun və cərəyanın kölgəsi yoxdur** —
-kölgə "bu, döşəmənin üstündə duran cisimdir" deməkdir, onlar isə keçilə
-biləndir; kölgə qoysaydıq forma dili özü-özünü təkzib edərdi.
+Bərk maneələrin altında kölgə var: maneə döşəmənin İÇİNDƏ deyil, ÜSTÜNDƏ
+oturur. V1-də bu, ayrıca atlas hüceyrəsidir (§4c) — aşağı-sağa düşən yumşaq
+ellips və ayaq izinin dərhal xaricində nazik təmas halqası. **Kolun və
+cərəyanın kölgəsi yoxdur** — kölgə "bu, döşəmənin üstündə duran cisimdir"
+deməkdir, onlar isə keçilə biləndir; kölgə qoysaydıq forma dili özü-özünü
+təkzib edərdi. Dağılmış kövrək də kölgəsizdir: qırıntısı yastıdır.
 
-> Rəng fərqi kodda `modulate` ilə verilmir — batch-i qırır və kadr vaxtını
-> altı dəfə pisləşdirir (ölçmə README-dədir). Fərq teksturaya bişirilir.
+> Rəng fərqi kodda `modulate` ilə verilmir, teksturaya bişirilir. Köhnə səbəb
+> ("batch-i qırır, 131 → 242 çağırış") Godot 4.7.2-nin GLES3 mənbəyi ilə
+> təsdiqlənmir — modulate orada instansiya başına saxlanılır (MAP_25D F2) —
+> amma ehtiyac da yoxdur: atlasın hüceyrələri rəngi özü daşıyır.
 
 ### Gizlənməni oyunçu GÖRMƏLİDİR
 
@@ -715,13 +722,23 @@ göndərilmir. Oyunçunun ekranında isə heç nə dəyişmir — geribildirim o
 xüsusiyyət praktiki olaraq YOXDUR, çünki oyunçu ondan istifadə etməyi ağlına
 gətirmir.
 
-Ona görə öz mikrobun kola girəndə **sönükləşir** (alfa 1.0 → 0.45). Mikrobun
-ÖZÜ dəyişir, yəni mesaj oyunçunun baxdığı yerdədir; HUD-dakı ikonu döyüş
-vaxtı heç kim görmür.
+Ona görə öz mikrobun kola girəndə **sönükləşir**. Mikrobun ÖZÜ dəyişir, yəni
+mesaj oyunçunun baxdığı yerdədir; HUD-dakı ikonu döyüş vaxtı heç kim görmür.
+
+V1-dən bəri yarpaqlar həqiqətən mikrobun ÜSTÜNDƏDİR (§4c), ona görə iki şey
+birlikdə dəyişir: mikrob 0.45 yox, **0.70**-ə sönür (yarpaq altında 0.45 demək
+olar görünməzdi), içində olduğun kolun tacı isə **0.45**-ə şəffaflaşır — Brawl
+Stars-da kol öz oyunçusunun ətrafında şəffaflaşdığı kimi. Başqa kolların tacı
+tutqun qalır: gizli rəqib orada gizli qalır.
 
 ---
 
 ### 4b. Xəritənin dərinliyi
+
+> Bu bölmə SVG dövrünün dərsləridir. Qaydaları (siluet = toqquşma izi, vahid
+> işıq, maneəni fırlatmamaq, kol iki qat, qabığın üç mərhələsi) V1 «Damla» dəsti
+> olduğu kimi saxlayır; sprite, döşəmə və divarın konkret təsviri isə §4c ilə
+> əvəz olunub.
 
 Xəritə əvvəl yastı idi: düz rəngli döşəmə, bərabər şəbəkə, nazik halqalar və
 maneə şəkilləri. Maneələr döşəmənin **üstündə** yox, **üzərinə çəkilmiş** kimi
@@ -799,6 +816,67 @@ halqa döşəmənin üstünə çəkilmiş UI elementi kimi oxunurdu).
 deterministik çat eyni multiline çağırışında çəkilir. Nəbz yaş radius daraldıqca
 `2.2 → 7.0 rad/san` sürətlənir. Səkkiz buxar kəkili yalnız HIGH keyfiyyətdədir
 və hamısı bir əlavə multiline çağırışıdır; LOW-da massiv belə qurulmur.
+
+### 4c. V1 «Damla» — oyundakı xəritə (2026-10-19)
+
+Dörd versiyadan sahib birincini seçdi ([MAP_25D.md](MAP_25D.md)): hündürlük
+ayaq izinin içindədir, yəni §4b-nin sərt qaydası qalır. Rəsmlər Codex ilə
+çəkilib (`map_art/raw/v1/`, `raw/shared/`) və oyuna `map_art/build_map.gd`
+vasitəsilə girir — README, «Xəritə — V1 Damla».
+
+**Maneə.** Gel günbəzi: üst üz yuxarı-soldan işıqlanıb, cənub bandı tündləşir
+(kamera cənubdadır və hər qalxan şeyin cənub üzünü görür), haşiyə `#081A20` —
+mikrobların `#04090B`-sindən qəsdən zəif. Selik iki naxışdır (hamar damla və
+yastı vezikullu "bloom"), kövrək kömür qabıqdır: s0-da nazik kəhrəba çatlar,
+s1-də bir çat bütün qapağı kəsir, s2-də qabıq közərir — HIGH-ın parlamasında
+"dağılmaq üzrədir" uzaqdan oxunur. Dağılan kövrək **sınıq qalır**: yastı,
+konturu və kölgəsi olmayan qırıntı yığını, keçid artıq açıqdır.
+
+**Kölgə pipeline-dandır**, Codex-dən yox: bütün bərk siluetlər eyni dairədir,
+ona görə bir hüceyrə hamısına yarayır və işıq kodda dəqiq qalır — ellips
+`1.05 × 0.80 R`, `+0.11 R / +0.22 R` aşağı-sağa, alfa 0.36 (Brawl Stars-da kölgə
+pikseli cəmi ×0.75 tündləşir), kənarı σ 0.06 R; ayaq izinin dərhal xaricində
+0.04 R-lik təmas halqası, alfa 0.28. Bütün kölgələr gövdələrdən ƏVVƏL çəkilir,
+gövdələr isə şimaldan cənuba — cənubdakı gövdə şimaldakını örtür.
+
+**Kol iki qatdır və indi həqiqətən iki qatdır.** Döşək (`bush_base`, 0.95 R)
+mikrobun altında, tac (`bush_canopy`, boş mərkəzi r 0.35 R) z 2-də — mikrobların
+üstündə. Əvvəlki "frondlar mikrobun üstündən keçir" sözü ekranda heç vaxt doğru
+olmamışdı: tac z 0-da idi, mikrob özünə 1/2 yazırdı. Kolun rəngi `#3E9068`-dir:
+əvvəlki `#4FCB72` laym, nanə və yoldaş halqası ilə eyni yaşıl ailədə idi və
+HIGH-da saçırdı; yeni ton nanənin tonudur, amma xeyli tünd və solğundur (V 0.56).
+
+**Top kolun üstündə.** Yarpaq mikrobun üstündə olanda kola girən top yarpaq
+altında itərdi. Top və izi kolun içində yarpağın üstünə çıxır, amma yalnız
+heç bir mikrobun gövdəsində olmayanda — §3c-nin "top gövdədən membranı yararaq
+çıxır" görüntüsü pozulmur. Nişanın səkmə halqaları, oxu və kilidi də yuxarıdadır.
+
+**Cərəyan.** Dəliyin dodağında 9 kəhrəba kəsik, içində qaranlıq; burulğan ayrı
+hüceyrədir, üç qollu, kəhrəbaya boyanmış və TAM fırlanma oxundadır — Codex onu
+48 px mərkəzdən kənarda çəkmişdi, fırlananda yırğalanardı.
+
+**Döşəmə** iki qatdır, bir keçiddə: makro ton (1024², bütün qab — mərkəz açıq,
+kənar qaralır, yumşaq agar zonaları, sediment zolaqları bişib) × 400 px-lik
+tikişsiz detal (agar dənəsi, mikro baloncuq halqaları, liflər; orta 0.5,
+±6%). Detal ±12% həm açır, həm qaraldır — MUL qarışdırma yalnız qaraldardı.
+
+**Şüşə divar** artıq dörd qövs deyil. **Şimal divarı** şüşənin daxili üzüdür və
+dodaqdan BAYIRA uzanır: şimalda 70 px, yanlarda 8 px (divar yandan görünür),
+üzündə kondensasiya halqaları (içi boş — dolu açıq kürə qida kimi oxunardı).
+Kafellərin bəziləri güzgü kimi çevrilir: eyni üç halqa hər 280 px-də eyni
+sırada təkrarlananda divar divar kağızı kimi görünürdü. **Cənub dodağı** yaxın
+divarın üstüdür: içəriyə 6–28 px, yarımşəffaf şüşə və nazik `RIM_LINE` xətti,
+mikrobların ÜSTÜNDƏ — kənara sıxılan mikrob "şüşənin arxasında" görünür.
+
+**Qabın bayırı** halqa mesh-idir (`BG_OUTER` → `BG_VIGNETTE`), üstündə
+fokusdan kənar, tünd "başqa koloniyalar" — maneə şəkillərinin bulanıq
+nüsxələri. Mikrob formalı heç nə yoxdur: bayırdakı mikrob silueti rəqib kimi
+oxunardı.
+
+**Toxunuş.** Divar vurulanda titrəyir (yalnız şəkil, dairə yox), şüşə
+parıldayır, suda dalğa və sıçrantı qalır, koldan keçən top yarpağı silkələyir,
+döşəmə bəzəyi (46 yastı, konturu yox, döşəmədən ±0.08 fərqli parça) top
+üstündən keçəndə sıçrayır, dağılan qabıq öz parçalarını səpir.
 
 ---
 
@@ -1235,15 +1313,23 @@ Digər qaydalar:
 
 Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 
-> **Maneə sprite-larının kətanı 320²-dir, ləkənin radiusu isə yenə 120.** Aradakı
-> boşluq BİŞMİŞ KÖLGƏ üçündür (bax §4b). Kodda `scale = radius / 120` düsturu
-> kətan ölçüsündən asılı deyil, ona görə dəyişmir.
+> **Xəritə V1-dən bəri SVG deyil** — `map/` atlası (§4c). Aşağıdakı `mucus_*` və
+> `dish_floor` SVG-ləri oyunda işlənmir; SVG dövründə kətan 320², ləkənin
+> radiusu 120 idi və aradakı boşluq bişmiş kölgə üçün idi.
+
+| Fayl | Ölçü | Qeyd |
+|---|---|---|
+| `map/map_atlas.png` + `.json` | 2048² | Bütün maneələr (L 512² / S 256² hüceyrə), kölgə, burulğan, qırıntı, dalğa, sıçrantı, bəzək; mipmap-lı, itkisiz |
+| `map/map_floor.png` | 1024² | Döşəmənin makro tonu, künclər şəffaf, sediment zolaqları bişib |
+| `map/map_floor_detail.png` | 1024² | 400 dünya px-lik tikişsiz detal, boz, orta 0.5 |
+| `map/map_rim.png` | 1024×256 | Şimal şüşə divarının zolağı, üfüqi tikişsiz |
+| `map/map_props.png` | 512² | Qabın bayırındakı bulanıq koloniyalar (4 hüceyrə) |
 
 | Fayl | Ölçü | Qeyd |
 |---|---|---|
 | `sprites/food_ball.svg` | 32² | Kodda `scale 0.85` |
 | `sprites/shot_ball.svg` | 36² | `modulate` ilə rənglənir |
-| `sprites/mucus_blob.svg` | 320² | Üç üzlü selik; ləkə radiusu 120 |
+| `sprites/mucus_blob.svg` | 320² | İşlənmir (V1-dən əvvəlki selik) |
 | `sprites/spark.svg` | 64² | Dəymə/udma qığılcımı |
 | `sprites/burst.svg` | 256² | Partlayış BULUDU (yalnız yumşaq qradiyent), `modulate` ilə rənglənir |
 | `ui/joystick_base.svg` | 220² | Üzən joystickin bazası |
@@ -1253,11 +1339,7 @@ Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 | `ui/panel.svg` | 480×300 | Nəticə lövhəsi üçün çərçivə |
 | `ui/logo.svg` | 600×220 | YALNIZ nişan, yazısız |
 | `ui/app_icon.svg` | 512² | `game/icon.svg` ilə eynidir; menyuda oyunçu nişanının avatarıdır |
-| `sprites/dish_floor.svg` | 512² | Qradiyent + agar ləkələri + vinyet, TƏK çağırış |
-| `sprites/mucus_crust2.svg` | 320² | Qabıq, 1 zərbə yeyib |
-| `sprites/mucus_crust3.svg` | 320² | Qabıq, 2 zərbə yeyib — kəhrəba HDR həddini keçir |
-| `sprites/mucus_bush_top.svg` | 320² | Kolun ÜST yarpaqları — mikrobun üstündən keçir |
-| `sprites/mucus_vent_swirl.svg` | 320² | Deşiyin fırlanan şəffaf iç qatı |
+| `sprites/dish_floor.svg`, `mucus_crust2/3.svg`, `mucus_bush_top.svg`, `mucus_vent_swirl.svg` | 320–512² | İşlənmir (V1-dən əvvəlki döşəmə, qabıq mərhələləri, tac, burulğan) |
 | `ui/gear.svg` | 32² | Ayarlar. Simvol (`⚙`) DEYİL — o, şriftdə yoxdur |
 | `ui/species_ciliate.svg` | 64² | Növ kartının silueti — yatıq oval + kirpik + qamçı |
 | `ui/species_heliozoan.svg` | 64² | Növ kartının silueti — radial şüalar |

@@ -19,14 +19,16 @@ var layout := 0
 var _cam: Camera2D
 ## Başlıq və əfsanə — AYRICA node-da, maneə sprite-larından yuxarı z-də.
 var _legend: Node2D
-var _floor: Texture2D
 var _canopies: Array[Sprite2D] = []
 var _vent_swirls: Array[Sprite2D] = []
+var _backdrop: ArrayMesh
 
 
+## Qatlar oyundakı kimidir (bax [method Arena._build_world]): qabın bayırı bu
+## node-un öz `_draw`-ında, sonra şeyderli döşəmə, şəbəkə və növ halqaları,
+## şimal divarı, maneələr, tac və burulğan, cənub dodağı, ən üstdə əfsanə.
 func _ready() -> void:
 	DishMap.layout = layout
-	_floor = load("res://assets/sprites/dish_floor.svg")
 	var bg := ColorRect.new()
 	bg.color = Palette.BG_OUTER
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -38,7 +40,41 @@ func _ready() -> void:
 	add_child(_cam)
 	_cam.make_current()
 
+	_backdrop = MapKit.backdrop_mesh()
+
+	var ground := Node2D.new()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/map_floor.gdshader")
+	mat.set_shader_parameter("detail", MapKit.detail_texture())
+	mat.set_shader_parameter("detail_world", MapKit.detail_world())
+	ground.material = mat
+	add_child(ground)
+	# Teksturalar lambdada tutulur: çəkiliş əmri yalnız RID saxlayır, istinadı
+	# heç kim tutmasa tekstura azad olunur və ağ çıxır (bax [method MapKit.release]).
+	var floor_tex := MapKit.floor_texture()
+	ground.draw.connect(func() -> void:
+		var r := Const.WORLD_RADIUS
+		ground.draw_texture_rect(floor_tex, Rect2(-r, -r, r * 2.0, r * 2.0), false))
+
+	var marks := Node2D.new()
+	add_child(marks)
+	marks.draw.connect(_draw_marks.bind(marks))
+
+	var rim := Node2D.new()
+	rim.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	rim.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(rim)
+	var rim_mesh := MapKit.rim_mesh()
+	var rim_tex := MapKit.rim_texture()
+	rim.draw.connect(func() -> void: rim.draw_mesh(rim_mesh, rim_tex))
+
 	_spawn_sprites()
+
+	var lip := Node2D.new()
+	lip.z_index = 2
+	add_child(lip)
+	var lip_mesh := MapKit.lip_mesh()
+	lip.draw.connect(func() -> void: lip.draw_mesh(lip_mesh, null))
 
 	# Əfsanə sprite-lardan SONRA və daha yüksək z-də qurulur — bax
 	# [method _spawn_sprites]-dəki izah.
@@ -48,59 +84,61 @@ func _ready() -> void:
 	_legend.draw.connect(_draw_legend)
 
 
-## Maneələri OYUNDAKI sprite-larla çəkir.
+## Maneələri OYUNDAKI atlas hüceyrələri ilə çəkir.
 ##
 ## Əvvəl burada rəngli dairələr çəkilirdi. Rəng düzümü oxumağa kifayət edirdi,
 ## amma stendin ikinci işini görmürdü: sprite-ın ÖZÜNÜ yoxlamaq. İndi stend
-## bir kadrda beş sprite-ın da həqiqi görkəmini göstərir — forma dilinin
+## bir kadrda bütün hüceyrələrin həqiqi görkəmini göstərir — forma dilinin
 ## işlədiyini (keçilə bilən növ haşiyəsiz, bərk növ bütöv haşiyəli) yalnız
 ## belə yoxlamaq olar.
 ##
-## Tekstura seçimi [method Arena._blob_texture]-dən gəlir, təkrar yazılmır:
-## iki yerdə ayrı-ayrı saxlansaydı, biri dəyişəndə o biri səssizcə köhnəlirdi
-## və stend oyunu YANLIŞ göstərərdi — stendin bütün dəyəri isə düz
-## göstərməsindədir.
+## Hüceyrə seçimi [method MapKit.base_name]-dən gəlir, təkrar yazılmır: iki
+## yerdə ayrı-ayrı saxlansaydı, biri dəyişəndə o biri səssizcə köhnəlirdi və
+## stend oyunu YANLIŞ göstərərdi — stendin bütün dəyəri isə düz göstərməsindədir.
 func _spawn_sprites() -> void:
-	var tex := {}
-	for name in Arena.BLOB_ORDER:
-		tex[name] = load("res://assets/sprites/mucus_%s.svg" % name)
-	tex["bush_top"] = load("res://assets/sprites/mucus_bush_top.svg")
-	tex["vent_swirl"] = load("res://assets/sprites/mucus_vent_swirl.svg")
-	for o in DishMap.obstacles():
-		var spr := Sprite2D.new()
-		spr.texture = tex[Arena._blob_texture(o)]
-		spr.position = Vector2(o.x, o.y)
-		spr.scale = Vector2.ONE * (o.z / Arena.BLOB_SPRITE_RADIUS)
-		# Sprite-lar BAŞLIQ VƏ ƏFSANƏNİN ALTINDA qalır.
-		#
-		# Godot-da uşaqlar valideynin `_draw`-ından SONRA çəkilir, ona görə
-		# `_draw`-dakı panel sprite-ların altında qalırdı: ARXİPELAQ düzümündə
-		# "KOL" sözü tamamilə, "KÖVRƏK" isə yarısına qədər örtülürdü — halbuki
-		# stendin bütün mənası əfsanəni oxumaqdır. Panel indi ayrıca uşaqdadır
-		# (bax [method _build_legend]) və sıfırdan yuxarı z-də durur.
-		spr.z_index = 0
-		add_child(spr)
-
-		# Oyundakı ikinci qatlar da stenddə olmalıdır: yoxsa kolun örtülməsi və
-		# cərəyanın fırlanan içi yalnız practice kadrında yoxlanardı. Baza sprite
-		# fırlanmır — işıq yuxarı-solda sabitdir.
-		if int(o.w) == DishMap.Kind.BUSH:
-			var top := Sprite2D.new()
-			top.texture = tex["bush_top"]
-			top.position = spr.position
-			top.scale = spr.scale
-			top.z_index = 1
-			add_child(top)
-			_canopies.append(top)
-		elif int(o.w) == DishMap.Kind.VENT:
-			var swirl := Sprite2D.new()
-			swirl.texture = tex["vent_swirl"]
-			swirl.position = spr.position
-			swirl.scale = spr.scale
-			swirl.z_index = 1
+	var list := DishMap.obstacles()
+	var holder := Node2D.new()
+	holder.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(holder)
+	# Oyundakı sıra: kölgələr, yastı növlər, burulğan, sonra qalxan gövdələr
+	# şimaldan cənuba (bax [method Arena._spawn_obstacles]).
+	for o in list:
+		if MapKit.casts_shadow(int(o.w)):
+			_add(holder, MapKit.cell_name("shadow", o.z), o)
+	for o in list:
+		if not DishMap.blocks_germ(int(o.w)):
+			_add(holder, MapKit.cell_name(MapKit.base_name(o), o.z), o)
+	for o in list:
+		if int(o.w) == DishMap.Kind.VENT:
+			var swirl := _add(holder, MapKit.cell_name("vent_swirl", o.z), o)
 			swirl.set_meta("phase", fposmod(o.x * 0.013 + o.y * 0.021, TAU))
-			add_child(swirl)
 			_vent_swirls.append(swirl)
+	var raised := []
+	for o in list:
+		if DishMap.blocks_germ(int(o.w)):
+			raised.append(o)
+	raised.sort_custom(func(a: Vector4, b: Vector4) -> bool: return a.y < b.y)
+	for o in raised:
+		_add(holder, MapKit.cell_name(MapKit.base_name(o), o.z), o)
+
+	# Oyundakı ikinci qat — kolun tacı — stenddə də olmalıdır: yoxsa kolun
+	# örtülməsi yalnız practice kadrında yoxlanardı. Sprite-lar BAŞLIQ VƏ
+	# ƏFSANƏNİN ALTINDA qalır: əvvəl `_draw`-dakı panel sprite-ların altında
+	# qalırdı və ARXİPELAQ-da "KOL" sözü tamamilə örtülürdü.
+	var tops := Node2D.new()
+	tops.z_index = 1
+	tops.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(tops)
+	for o in list:
+		if int(o.w) == DishMap.Kind.BUSH:
+			_canopies.append(_add(tops, MapKit.cell_name("bush_canopy", o.z), o))
+
+
+func _add(parent: Node, cell: String, o: Vector4) -> Sprite2D:
+	var spr := MapKit.sprite(cell, o.z)
+	spr.position = Vector2(o.x, o.y)
+	parent.add_child(spr)
+	return spr
 
 
 func _process(_delta: float) -> void:
@@ -113,17 +151,19 @@ func _process(_delta: float) -> void:
 		_canopies[i].skew = sin(clock * 0.83 + float(i) * 1.21) * 0.018
 	for swirl in _vent_swirls:
 		swirl.rotation = float(swirl.get_meta("phase", 0.0)) + clock * 0.72
-	queue_redraw()
 	if _legend != null:
 		_legend.queue_redraw()
 
 
+## Qabın bayırı — oyundakı eyni halqa mesh-i.
 func _draw() -> void:
-	var r := Const.WORLD_RADIUS
-	draw_circle(Vector2.ZERO, r + 500.0, Palette.BG_VIGNETTE)
-	draw_circle(Vector2.ZERO, r + 260.0, Palette.BG_OUTER)
-	draw_texture_rect(_floor, Rect2(-r, -r, r * 2.0, r * 2.0), false)
+	draw_mesh(_backdrop, null)
 
+
+## Şəbəkə, növ halqaları və bir ekranın çərçivəsi — döşəmənin üstündə,
+## sprite-ların altında. Sediment zolaqları döşəmənin teksturasına bişib.
+func _draw_marks(ci: Node2D) -> void:
+	var r := Const.WORLD_RADIUS
 	# Şəbəkə və 400 px-lik bevel — oyundakı eyni tək-batch quruluşu.
 	var step := 200.0
 	var lines := PackedVector2Array()
@@ -146,10 +186,7 @@ func _draw() -> void:
 				Vector2(-h, x - 2.5), Vector2(h, x - 2.5),
 				Vector2(-h, x + 2.5), Vector2(h, x + 2.5)]))
 			cols.append_array(PackedColorArray([hi, lo, hi, lo]))
-	draw_multiline_colors(lines, cols, 3.0)
-	for i in 3:
-		draw_arc(Vector2.ZERO, r * (0.35 + 0.22 * float(i)), 0.0, TAU, 96,
-			Color(Palette.GRID, 0.30), 26.0, true)
+	ci.draw_multiline_colors(lines, cols, 3.0)
 
 	# Maneələr — NÖVƏ görə rənglənir. Stendin bütün mənası budur: düzümə
 	# baxanda "harada gizlənmək olar, harada divar sındırmaq olar" sualı
@@ -159,24 +196,13 @@ func _draw() -> void:
 		var col := _kind_color(int(o.w))
 		# Sprite-ın altındakı halqa: sprite-lar bir-birini örtəndə düzümün
 		# həndəsəsi itir, halqa isə hər maneənin SƏRHƏDİNİ saxlayır.
-		draw_circle(at, o.z, Color(col, 0.12))
-		draw_arc(at, o.z, 0.0, TAU, 48, Color(col, 0.95), 4.0, true)
-
-	# Qalxmış dodaq oyundakı eyni işıq oxu ilə göstərilir.
-	draw_arc(Vector2.ZERO, r - 18.0, 0.0, TAU, 128,
-		Color(Palette.OUTLINE, 0.48), 34.0, true)
-	draw_arc(Vector2.ZERO, r, 0.0, TAU, 128, Palette.DISH_EDGE, 17.0, true)
-	var light_a := Palette.LIGHT_DIR.angle()
-	var shadow_a := (-Palette.LIGHT_DIR).angle()
-	draw_arc(Vector2.ZERO, r - 4.0, light_a - 0.92, light_a + 0.92, 48,
-		Color(Palette.TEXT, 0.38), 5.0, true)
-	draw_arc(Vector2.ZERO, r + 5.0, shadow_a - 0.92, shadow_a + 0.92, 48,
-		Color(Palette.OUTLINE, 0.78), 9.0, true)
+		ci.draw_circle(at, o.z, Color(col, 0.12))
+		ci.draw_arc(at, o.z, 0.0, TAU, 48, Color(col, 0.95), 4.0, true)
 
 	# Oyunçunun BİR ekranda gördüyü sahə — miqyas üçün.
 	var w := Const.VIEW_SPAN_BASE
 	var h2 := w * 16.0 / 9.0
-	draw_rect(Rect2(Vector2(-w * 0.5, -h2 * 0.5), Vector2(w, h2)),
+	ci.draw_rect(Rect2(Vector2(-w * 0.5, -h2 * 0.5), Vector2(w, h2)),
 		Color(Palette.TEXT, 0.55), false, 5.0)
 
 
@@ -208,8 +234,8 @@ func _draw_legend() -> void:
 		y += r * 0.11
 
 
-## Növün rəngi. Oyunun özündə növ FORMA ilə oxunur (bax [const
-## Arena.BLOB_TEXTURE]) — burada isə rəng işlədilir, çünki stend yuxarıdan
+## Növün rəngi. Oyunun özündə növ FORMA ilə oxunur (bax [method
+## MapKit.base_name]) — burada isə rəng işlədilir, çünki stend yuxarıdan
 ## baxışdır və orada forma seçilmir.
 static func _kind_color(kind: int) -> Color:
 	match kind:

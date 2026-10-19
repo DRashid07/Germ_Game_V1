@@ -823,6 +823,7 @@ game/                    Godot layihəsi
       water_motes.gd     Suda asılı zərrəciklər — axını gözlə görünən edir
       minimap.gd         Petri qabının kiçik xəritəsi
       batch_draw.gd      Dairə və nazik halqa — bir çəkiliş çağırışına yığılan variant
+      map_kit.gd         Xəritə dəsti (V1 «Damla»): atlas manifesti, maneənin hüceyrəsi, divar və dodaq mesh-ləri
       touch_stick.gd     Üzən virtual joystick (hərəkət)
       fire_button.gd     Top atma düyməsi (basılı saxlananda davamlı atəş)
       super_button.gd    Super düyməsi — maye dolumu, hazır nəbzi və işıq zolağı
@@ -834,7 +835,7 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        645 headless test (`--simtest`)
+      sim_test.gd        654 headless test (`--simtest`)
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -851,12 +852,15 @@ game/                    Godot layihəsi
   shaders/germ.gdshader  Mikrobun bütün qatları — GDScript çəkilişinin bir-bir surəti
   shaders/germ_shape.gdshader  Mikrobun konturu — GPU-da, kadrda bir dəfə (kontur keçidi)
   shaders/water_motes.gdshader Su zərrəcikləri — GPU hissəcikləri, axın sahəsi ilə
+  shaders/map_floor.gdshader   Qabın döşəməsi — makro ton × tikişsiz detal, bir keçiddə
   assets/                SVG sprite-lar, UI, şriftlər, WAV səslər
     fonts/               Baloo 2 (başlıq) + Nunito (mətn) — bax «Şriftlər»
     ui/theme.tres        Şrift rolları; bütün Control-lar bunu oxuyur
-    sprites/             maneə sprite-ları: blob, bloom (SELİK) · crust ×3 (KÖVRƏK,
-                         zədə mərhələləri) · bush + bush_top (KOL) · vent (CƏRƏYAN)
-                         · dish_floor (qabın döşəməsi)
+    map/                 xəritə dəsti V1 «Damla» — atlas + manifest, döşəmə, detal,
+                         şüşə divar, bayır dekoru (bax «Xəritə — V1 Damla»)
+    sprites/             top, qida, qığılcım, partlayış; köhnə maneə SVG-ləri (blob,
+                         bloom, crust ×3, bush, bush_top, vent, dish_floor) V1-dən
+                         bəri oyunda işlənmir
     menu/                ana ekranın illüstrasiyaları (Codex): fon, podium, üç
                          növün qəhrəmanı — mənbə və promptlar design/menu_art/-da
   web/shell.html         Brauzer versiyasının HTML qabığı
@@ -919,7 +923,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (645 test)
+# Simulyasiya + World + dostluq/komanda testləri (654 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -2528,3 +2532,128 @@ səviyyəsini yox — `AUDIO_BIBLE`-ın üçpilləli tarazlığı (səviyyə 3 s
 oyunçu arenada effektləri qısıb düymə cavabını saxlaya bilər, ya da əksinə.
 Şinlər `default_bus_layout.tres` faylı ilə yox, kodda qurulur —
 [`Settings._ensure_buses`](game/scripts/shared/settings.gd).
+
+## Xəritə — V1 «Damla» (2.5D)
+
+Sahib 2026-10-19-da dörd versiyadan birincisini seçdi ([design/MAP_25D.md](design/MAP_25D.md)):
+hündürlük **ayaq izinin içində** qalır (cənub üzü, yuxarı-soldan işıq, kölgə
+aşağı-sağa), silueti isə toqquşma dairəsinin özüdür — ART_BIBLE §4b pozulmur.
+Rəsmlər Codex ilə çəkilib (`design/map_art/raw/v1/`, `raw/shared/`); oyuna
+birbaşa girmir, `build_map.gd` onları atlasa çevirir.
+
+### Qatlar, altdan yuxarı
+
+| Qat | Nə çəkir | Çağırış |
+|---|---|---|
+| `Arena._draw` | qabın bayırı — halqa mesh-i (`BG_OUTER` → `BG_VIGNETTE`) | 1 |
+| `_props` | şüşənin o tayında bulanıq koloniyalar | 0–1 |
+| `_ground` | döşəmə: makro ton × tikişsiz detal (`map_floor.gdshader`) | 1 |
+| `_grid` | şəbəkə — statik, bir dəfə çəkilir | 1 |
+| `_dry` | quruyan zona (yalnız matçda, snapshot ritmində) | 0–4 |
+| `_rim` | şimal şüşə divarı — dodaqdan bayıra, şimalda 70 px, yanlarda 8 px | 1 |
+| `_blobs` | bəzək, kölgə, kol döşəyi, dəlik, qırıntı, burulğan, gövdələr — **bir atlas** | 1 |
+| `_motes_deep`, `_motes`, `_ripples`, `_food_layer`, `_trails`, `_shot_layer`, `_aim_guide`, `_entities` | əvvəlki kimi; `_ripples` — su dalğası və sıçrantı | |
+| `_canopy` (z 2) | kol tacı — mikrobların **üstündə** | 1 |
+| `_lip` (z 2) | cənub şüşə dodağı və parıltılar — mikrobların üstündə | 1–2 |
+| `_fx` (z 3–4) | effektlər, atlasın qırıntı parçaları | |
+
+Əvvəl fon `_draw`-da 11–15 primitiv idi (iki tam ekran disk, döşəmə, şəbəkə, üç
+sediment qövsü, dörd divar qövsü, quruyan zona) və matçlı rejimdə hər snapshot-da
+hamısı yenidən qurulurdu. İndi statik qatlar bir dəfə çəkilir, yalnız `_dry`
+yenilənir; sediment zolaqları döşəmənin teksturasına bişib.
+
+### Atlas — `build_map.gd`
+
+```bash
+mkdir -p build/map_tool && printf 'config_version=5\n' > build/map_tool/project.godot
+GODOT --headless --path build/map_tool -s "$PWD/design/map_art/build_map.gd" -- "$PWD"
+GODOT --headless --path game --import
+```
+
+Skript (7 saniyə) yazır: `game/assets/map/map_atlas.png` + `map_atlas.json`,
+`map_floor.png`, `map_floor_detail.png`, `map_rim.png`, `map_props.png`;
+gözlə yoxlamaq üçün `build/map_review/atlas_on_floor.png`. Etdiyi iş:
+
+- **Oturtma.** Hər bərk maneənin alfa diski tapılır (mərkəz, sahədən radius, 72
+  şüa boyu sapma ≤ 2%) və master-in (512,512) r 384 dairəsinə gətirilir —
+  Codex radiusu 349..390 arasında çəkib.
+- **Maska + kontur.** Alfa = ayaq izinin örtüyüdür, Codex-in kənarı deyil; kənar
+  zolağı `#081A20` ilə yenidən çəkilir (L: 3.5% R, S: 6% R — kiçik daşda nazik
+  kontur itərdi).
+- **Ölçü sinifləri.** L (R > 60): 512² hüceyrə, ayaq izi 192 tekstel; S: 256², 96.
+  Hüceyrələr 512/256/128 şəbəkəsinə oturur — mip səviyyələri qonşunu qarışdırmır.
+- **Kölgə** Codex-dən deyil: bütün bərk siluetlər eyni dairədir, ona görə bir
+  kölgə + təmas kölgəsi hüceyrəsi hamısına yarayır (ellips 1.05×0.80 R,
+  sürüşmə +0.11/+0.22 R, alfa 0.36, σ 0.06 R; halqa 0.04 R, alfa 0.28). Kol və
+  cərəyan kölgə salmır.
+- **Kövrəyin mərhələləri** s0-ın redaktəsidir: yalnız dəyişən yer (8×8 bloklar,
+  yumşaq keçid) s0-ın üstünə köçürülür — mərhələ dəyişəndə qabığın qalanı oynamır.
+- **Kol tacı** 0.83 kiçildilir (Codex 1.2× böyük çəkib), boş mərkəzi r 134-dən
+  kiçik olmasın deyə kəsilir (örtük 2%).
+- **Burulğan** üç qatlı simmetriyanın oxuna — (527,558)-ə — gətirilir: Codex-in
+  mərkəzində fırlansaydı ~10 ekran px yırğalanardı. Boz, sonra kəhrəbaya boyanır.
+- **Tikişlər.** Döşəmə detalı yarım sürüşmə + histoqramı qoruyan qarışdırma, divar
+  zolağı 128 sütunluq üst-üstə düşmə ilə tikişsizdir.
+
+Hüceyrənin adı: `<növ>_<sinif>` (`brittle_s1_L`, `bush_canopy_S`), seçim
+[`MapKit.base_name`](game/scripts/client/map_kit.gd) — arena da, stend də onu işlədir.
+İdxal: atlas, detal, divar və dekor **mipmap-lı**, hamısı itkisiz (`compress/mode=0`).
+
+### Kol, top və nişan
+
+- **Yarpaq mikrobun üstündədir.** Əvvəl `_canopy` z 0-da idi, mikrob isə özünə 1/2
+  yazır — z ağac sırasından əvvəl gəlir, yəni ART_BIBLE-ın "yarpaq mikrobun
+  üstündən keçir" sözü ekranda heç vaxt olmamışdı. İndi tac z 2-dədir.
+- **Kola girən top yarpağın üstünə çıxır** (z 3), izi də — yoxsa koldan keçən top
+  görünməzdi və qaçmaq olmazdı. Top yalnız kolun içində və heç bir mikrobun
+  gövdəsində olmayanda qalxır: gövdədən çıxış və gövdəyə giriş yenə membranın
+  altındadır (ART_BIBLE §3c). Nişanın səkmə halqaları, oxu və kilid çərçivəsi də
+  yarpağın üstündədir; zolaq isə döşəmədə qalır.
+- **Öz mikrobun kolda** 0.45 yox, 0.70-ə sönür, içində olduğun kolun tacı isə
+  0.45-ə şəffaflaşır — başqa kolların tacı tutqun qalır.
+
+### Xəritənin canlılığı
+
+Hamısı kodladır, kadr animasiyası yoxdur, keyfiyyət səviyyəsindən asılı deyil:
+top dəyəndə maneə titrəyir (170 ms, yalnız şəkil — toqquşma dairəsi tərpənmir),
+şüşədən sıçrayanda dodaq parıldayır, suda dalğa qalır; top suya enəndə sıçrantı;
+koldan keçən top yarpağı silkələyir; kövrək mərhələ-mərhələ çatlayır, dağılanda
+qabığın öz parçaları səpilir və **sınıq qalır** (yastı qırıntı, kölgəsiz); top
+üstündən keçəndə döşəmə bəzəyi sıçrayır (46 parça, sabit toxum); bayırdakı
+koloniyalar yavaş üzür. Hər kadr hər top üçün iş 128 px-lik şəbəkə xanası ilə
+məhdudlaşdırılıb — bəzək və kol yalnız topun öz xanasında yoxlanır.
+
+### Ölçü (masaüstü, 1600×720, YÜKSƏK, TƏK QALAN, `--auto --frame-probe 25`)
+
+Eyni sessiyada HEAD ilə növbə-növbə, üç qaçışın ortası:
+
+| | Köhnə xəritə | V1 |
+|---|---|---|
+| Kadrın işi | 1.37 ms | 1.33 ms |
+| Proses (GDScript) | 0.48 ms | 0.48 ms |
+| Render (CPU) | 0.89 ms | 0.84 ms |
+| Pik çəkiliş çağırışı | 103–113 | 80–98 |
+
+Videokart yaddaşı ~+31 MB: atlas 2048² (mip ilə 21 MB), döşəmə 4, detal 4,
+divar 1, dekor 1.3; paketə ~3.8 MB əlavə olunur. Yaddaş üçün qrafika sadələşdirilmir
+(sahibin qərarı, 2026-10-17) — bütün səviyyələr eyni dəsti görür.
+
+### Yoxlama
+
+- `--simtest`: `_test_blob_textures` (hər maneənin hər iki sinifdə hüceyrəsi var,
+  seçim sabitdir) və `_test_map_atlas` (bloklar, pivot, siluet = toqquşma
+  dairəsi, divar və detal tikişsiz).
+- Bütün qab: `--map` stendi oyunla eyni qatları çəkir.
+- Kolun içi: `--practice --at "-190,610"` (bax «Xəritənin bir yerini gözlə yoxlamaq»).
+
+> ⚠️ **`_draw`-da `draw_texture_rect(load(...))` — ağ ekran.** `load()` resursu keşdən
+> qaytarır, amma keş onu TUTMUR: çağırışdan sonra heç kim istinad saxlamayanda
+> tekstura azad olunur, çəkiliş əmri isə yalnız RID saxlayır — GPU standart ağ
+> teksturanı çəkirdi. Döşəmə və divar ağ çıxırdı, atlas isə yox (Sprite2D
+> teksturanı özü tutur). İndi `_draw`-da tekstura çəkən hər node onu öz
+> dəyişənində tutur (`Arena._floor_tex`, `_rim_tex`); [`MapKit`](game/scripts/client/map_kit.gd)-in
+> keşi isə arena bağlananda buraxılır — menyuda ~31 MB videoyaddaş tutulu qalmır.
+
+> ⚠️ **`.import`-da `mipmaps/generate`-i dəyişmək idxalı təzələmir.** Godot
+> `.godot/imported/`-dakı köhnə faylı işlədir. `.godot/imported/<ad>.png-*`
+> silinməli və `--import` yenidən işə salınmalıdır.

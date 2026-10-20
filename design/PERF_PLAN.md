@@ -386,6 +386,18 @@ keçidlərinin hazırlığı da gedir.
 4. **Kadr seçimi AYARLAR-da:** 30 / 60 / 90 / 120 (cihaz nə dəstəkləyirsə).
    Qrafika seçimi yoxdur — görüntü hamıda eynidir.
 
+> **Vəziyyət (2026-10-20, README «Kadr ritmi və enerji siyasəti»):** plugin-siz edildi.
+> Godot 4.7-nin `AndroidRuntime` + `JavaClassWrapper`-i Android API-lərini birbaşa
+> GDScript-dən çağırır, yəni bu iş üçün 3-cü qərar (Kotlin/NDK) lazım deyil.
+> [`FramePacer`](../game/scripts/client/frame_pacer.gd): `Surface.setFrameRate`, ekrana
+> bölünən bərabər hədd (90 Hz-də 60 → 45), batareya qənaəti və qızma (thermal headroom
+> proqnozu) — 30. Emulyatorda: 90 Hz-də 60 həddinin 50% titrəməsi gedir; 60 Hz-də
+> 30 həddi (yüklü host) 61% → 26% ritmdən çıxır; 60 Hz-də 60 dəyişmir. Hələ edilməyib:
+> ADPF Performance Hint (işləyir, amma emulyatorda +0.3 ms/kadr, faydası yalnız real
+> telefonda ölçülər), Game Mode "batareya" (manifestdə `game_mode_config` — Gradle
+> build), Swappy (yalnız Vulkan render-də). Brauzer eyni bərabər ritmi `web/shell.html`-də
+> tətbiq edir.
+
 ### F6 — Yükləmə və ilişmələr (1 həftə)
 
 1. **Matç axtarışı ekranı** (Brawl Stars kimi): OYNA basılan kimi arena, onun
@@ -410,6 +422,12 @@ keçidlərinin hazırlığı da gedir.
    > shader-in ilk kompilyasiyası 3.6–4.9 s-dir (ikinci açılışda keşdən, ~50 ms).
    > Qalan: `map_floor`, `water_motes` və parlama keçidləri hələ arenanın ilk
    > kadrında kompilyasiya olunur.
+   > **Açılış (2026-10-20):** klient serverin siniflərini (Lobby, World, SocialHub,
+   > Bot) artıq kompilyasiya etmir — `boot.gd` və `friends.gd` onları adla çağırırdı.
+   > Brauzerdə (CPU 13×) menyu 25.8–26.3 → 24.0–24.8 s, APK emulyatorunda 4767 → 4454 ms.
+   > Məşq dünyası APK-da menyuda fonda yüklənir. Axınsız brauzerdə arenaya keçid hələ
+   > ana axındadır (13×-də ~19 s; yarıdan çoxu `arena.gd`-nin kompilyasiyası) — indi
+   > "Matç hazırlanır…" örtüyü ilə; axınlı veb build-i real telefonda yoxlanmalıdır.
 3. **Hovuzlar:** `BurstFx`, effekt node-ları, zərbə rəqəmləri — matçda yeni node
    yaranmır.
 4. **Android ixrac şablonu:** `disable_3d=yes`, `lto=full`, istifadə olunmayan

@@ -452,7 +452,10 @@ func party_ready(on: bool) -> void:
 		_hub().party_ready(_sender(), on)
 
 
-func _hub() -> SocialHub:
+## Serverin [SocialHub]-u; client-də `null`. Qaytarılan tip qəsdən yazılmayıb:
+## tipli istinad serverin sinfini hər telefonun açılışında kompilyasiya etdirirdi
+## (Friends autoload-dur).
+func _hub():
 	if not Net.is_server or Net.lobby == null:
 		return null
 	return Net.lobby.social

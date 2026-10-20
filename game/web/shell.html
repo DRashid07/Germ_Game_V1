@@ -129,12 +129,12 @@ body {
 	font-size: 0.85rem;
 }
 
-#status-prep .dots {
+#status-prep .dots, #entry-prep .dots {
 	display: flex;
 	gap: 10px;
 }
 
-#status-prep .dots i {
+#status-prep .dots i, #entry-prep .dots i {
 	width: 11px;
 	height: 11px;
 	border-radius: 50%;
@@ -143,8 +143,8 @@ body {
 	will-change: transform, opacity;
 }
 
-#status-prep .dots i:nth-child(2) { animation-delay: 0.18s; }
-#status-prep .dots i:nth-child(3) { animation-delay: 0.36s; }
+#status-prep .dots i:nth-child(2), #entry-prep .dots i:nth-child(2) { animation-delay: 0.18s; }
+#status-prep .dots i:nth-child(3), #entry-prep .dots i:nth-child(3) { animation-delay: 0.36s; }
 
 @keyframes prep-pulse {
 	0%, 80%, 100% { transform: scale(0.55); opacity: 0.4; }
@@ -152,7 +152,36 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	#status-prep .dots i { animation: none; opacity: 0.8; }
+	#status-prep .dots i, #entry-prep .dots i { animation: none; opacity: 0.8; }
+}
+
+/* "Matç hazırlanır…" — OYNA/MƏŞQ-dən arenanın İLK kadrına qədər (bax
+   Settings.web_show_prep). Axınsız build-də arena ana axında yüklənir: Chrome-un
+   telefon modelində CPU 4×-də 3–4 s, A04s modelində (13×) ~19 s. Örtüksüz ekranda
+   donmuş menyu qalırdı. Nöqtələr başlanğıc örtüyünün nöqtələridir — kompozitor
+   oynadır. z-index #rotate-dən aşağıdır: portret ekranda çevirmə xahişi üstdə qalır. */
+#entry-prep {
+	position: absolute;
+	inset: 0;
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.6rem;
+	background-color: rgba(7, 16, 18, 0.86);
+	color: #EAFBF6;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	text-align: center;
+	z-index: 1;
+}
+
+#entry-prep.show {
+	display: flex;
+}
+
+#entry-prep p {
+	margin: 0;
+	font-size: 1.05rem;
 }
 
 #status, #status-splash, #status-progress {
@@ -397,6 +426,11 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
+		<div id="entry-prep" role="status">
+			<div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+			<p>Matç hazırlanır…</p>
+		</div>
+
 		<div id="rotate">
 			<svg viewBox="0 0 48 48" fill="none" stroke="#7CFF5B" stroke-width="2.4"
 					stroke-linejoin="round" aria-hidden="true">
@@ -490,29 +524,122 @@ window.addEventListener('orientationchange', fitCanvas);
 // kadrı yalnız vaxtı çatanda çağırılır, arada əsas axın boşdur. Faza saxlanılır —
 // 60 Hz-də 30 kadr hər İKİNCİ, 90 Hz-də hər ÜÇÜNCÜ vsync-dir, sürüşmür.
 // Kadr özü həddən uzun çəkirsə, heç nə buraxılmır.
+//
+// Hədd ekranın tezliyinə BÖLÜNMÜRSƏ, bərabər ritm üçün kiçildilir: 90 Hz ekranda
+// 60 kadr bərabər çıxa bilməz (kadrların yarısı 1, yarısı 2 vsync ekranda qalır —
+// titrəmə; APK-da emulyatorda ölçülüb), 45 isə həmişə 2 vsync-dir. Ekranın tezliyi
+// requestAnimationFrame-in öz aralığından ölçülür. Qayda oyunun FramePacer.even_rate
+// funksiyası ilə eynidir (game/scripts/client/frame_pacer.gd): 30-dan aşağı enmək
+// lazım gəlirsə, hədd olduğu kimi qalır. Oyun HƏQİQİ tezliyi `germFrameRate`-dən
+// oxuyur (Settings.frame_cap) — kadr büdcəsi ondan hesablanır.
 // ---------------------------------------------------------------------------
 let frameCap = 0;
 window.germSetFrameCap = function (fps) {
 	frameCap = Math.max(0, Math.floor(Number(fps) || 0));
 };
+// Ekranın vsync aralığı (ms); 0 — hələ ölçülməyib.
+let vsyncPeriod = 0;
+const EVEN_FLOOR = 30;
+// Bir kadr neçə vsync ekranda qalır; 0 — bərabər ritm mümkün deyil, köhnə yol.
+// Nisbət tam ədədə 0.1-dən yaxındırsa, o götürülür (ölçü səhvi 240 Hz-də 60-ı
+// 48-ə çevirməsin), yoxsa yuxarı yuvarlaqlaşdırılır — hədd aşılmır.
+function evenStep(cap, period) {
+	if (!(cap > 0) || !(period > 0)) {
+		return 0;
+	}
+	const hz = 1000 / period;
+	const r = hz / cap;
+	const step = Math.max(1, Math.abs(r - Math.round(r)) < 0.1 ? Math.round(r) : Math.ceil(r));
+	return Math.round(hz / step) >= Math.min(cap, EVEN_FLOOR) ? step : 0;
+}
+window.germFrameRate = function () {
+	const step = evenStep(frameCap, vsyncPeriod);
+	return step > 0 ? Math.min(frameCap, Math.round(1000 / (step * vsyncPeriod))) : frameCap;
+};
 (function () {
 	const raf = window.requestAnimationFrame.bind(window);
 	let last = -1;
+	// Əvvəlki çağırış BURAXILIBSA (oyun işləməyib), onun vaxtı; yoxsa -1.
+	let idleFrom = -1;
+	const deltas = [];
+	// Ekranın aralığı yalnız BOŞ aralıqlardan ölçülür: buraxılan çağırışla növbəti
+	// çağırışın arasında oyun işləmir, yəni bu, təmiz bir vsync-dir. Hər iki çağırışın
+	// aralığı isə oyunun öz kadrını da daşıyır: 240 Hz monitorda 12 ms-lik kadr "80 Hz
+	// ekran" kimi görünür və hədd 60-dan 40-a enirdi (sınaqda tutuldu). Buraxma
+	// yoxdursa (oyun həddən yavaşdır), ölçü də yoxdur — köhnə yol qalır. Median
+	// götürülür; 20 ms-dən uzun nəticə ekran deyil (brauzerin öz kadr kəsməsi).
+	function notePeriod(d) {
+		if (!(d > 3 && d < 50)) {
+			return;
+		}
+		deltas.push(d);
+		if (deltas.length > 60) {
+			deltas.shift();
+		}
+		if (deltas.length >= 10) {
+			const sorted = deltas.slice().sort((a, b) => a - b);
+			const p = sorted[Math.floor(sorted.length * 0.5)];
+			if (p <= 20) {
+				vsyncPeriod = p;
+			}
+		}
+	}
 	window.requestAnimationFrame = function (callback) {
 		return raf(function tick(now) {
+			if (idleFrom >= 0) {
+				notePeriod(now - idleFrom);
+			}
+			idleFrom = -1;
 			if (frameCap > 0) {
-				const interval = 1000 / frameCap;
-				// 2 ms ehtiyat: vsync vaxtı tam bərabər gəlmir.
-				if (last >= 0 && now - last < interval - 2) {
-					raf(tick);
-					return;
+				const step = evenStep(frameCap, vsyncPeriod);
+				if (step > 0) {
+					// Yarım vsync ehtiyat: çağırışlar vsync-ə düşür, ±yarım aralıq
+					// səpələnməni udur, növbəti vsync-i isə heç vaxt tutmur.
+					const interval = step * vsyncPeriod;
+					if (last >= 0 && now - last < interval - vsyncPeriod * 0.5) {
+						idleFrom = now;
+						raf(tick);
+						return;
+					}
+					last = now;
+				} else {
+					const interval = 1000 / frameCap;
+					// 2 ms ehtiyat: vsync vaxtı tam bərabər gəlmir.
+					if (last >= 0 && now - last < interval - 2) {
+						idleFrom = now;
+						raf(tick);
+						return;
+					}
+					last = (last >= 0 && now - last < interval * 1.5) ? last + interval : now;
 				}
-				last = (last >= 0 && now - last < interval * 1.5) ? last + interval : now;
 			} else {
 				last = now;
 			}
 			callback(now);
 		});
+	};
+}());
+// "Matç hazırlanır…" — oyun keçiddən İKİ kadr əvvəl açır və arenanın ilk kadrından
+// sonra götürür (bax Settings.web_show_prep / web_hide_prep, MenuV2._enter_arena).
+// Oyun xəbər verməsə (xəta), örtük ENTRY_FALLBACK_MS sonra özü götürülür.
+(function () {
+	const ENTRY_FALLBACK_MS = 120000;
+	let timer = 0;
+	window.germShowPrep = function () {
+		const el = document.getElementById('entry-prep');
+		if (!el) {
+			return;
+		}
+		el.classList.add('show');
+		clearTimeout(timer);
+		timer = setTimeout(window.germHidePrep, ENTRY_FALLBACK_MS);
+	};
+	window.germHidePrep = function () {
+		clearTimeout(timer);
+		const el = document.getElementById('entry-prep');
+		if (el) {
+			el.classList.remove('show');
+		}
 	};
 }());
 // Uzun basanda mobil brauzerin kontekst menyusu çıxmasın — nişan alma jesti kəsilir.

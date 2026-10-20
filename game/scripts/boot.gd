@@ -353,7 +353,10 @@ func _start_server(args: PackedStringArray) -> void:
 		get_tree().quit(1)
 		return
 
-	var lobby := Lobby.new()
+	# `load` ilə, `Lobby.new()` yox: boot.gd klientin də ilk skriptidir və tipli
+	# istinad serverin bütün siniflərini (Lobby, World, SocialHub, Bot) hər telefonun
+	# açılışında kompilyasiya etdirirdi — brauzerdə (CPU 13×) menyu ~1.8 s gec açılırdı.
+	var lobby = load("res://scripts/server/lobby.gd").new()
 	lobby.name = "Lobby"
 	lobby.verbose = args.has("--verbose")
 	get_tree().root.add_child.call_deferred(lobby)

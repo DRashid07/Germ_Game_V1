@@ -924,7 +924,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (657 test)
+# Simulyasiya + World + dostluq/komanda testləri (698 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1404,6 +1404,117 @@ götürür; qiyməti menyuda bir uzanan kadrdır (GL-ə yükləmə ana axındad�
 +20–90 ms) və ~34 MB tekstura yaddaşı. Növbə ilə yükləmə sınanıb, pis çıxıb (5–7
 kadra yayılır). Telefonda (A55 nüvələri, ortaq yaddaş) açılma emulyatordan yavaş,
 GL-ə yükləmə isə ucuzdur — qazanc orada daha böyük olmalıdır; Mali-də ölçülməyib.
+
+### Kadr ritmi və enerji siyasəti (telefon)
+
+Oyunun öz ölçüsü ("60 FPS, 16.67 ms") kadrın ekranda NƏ QƏDƏR qaldığını görmür.
+Bunu SurfaceFlinger-in ekrana çıxış vaxtları göstərir və orada iki problem çıxdı:
+
+- **90/120 Hz ekranda 60 həddi titrəyir.** 90 Hz-də 60 kadr bərabər ola bilməz:
+  kadrların yarısı 11 ms, yarısı 22 ms ekranda qalır. Galaxy A04s-in ekranı 90 Hz-dir.
+  Android 15 oyunları özü 60 Hz-ə keçirir; problem Android 11–14-dədir.
+- **30 həddi (MİNİMUM) yüklü telefonda ritmdən çıxır.** `Engine.max_fps` kadrlar arasını öz
+  saatı ilə doldurur, vsync isə ayrı saatdır. Godot-un kadr ritmi kitabxanası (Swappy)
+  yalnız Vulkan render-dədir, bizim GLES3 yolunda yoxdur.
+
+[`FramePacer`](game/scripts/client/frame_pacer.gd) (Android; [`Settings`](game/scripts/shared/settings.gd)
+yaradır) yalnız KADR tezliyini idarə edir, qrafikaya toxunmur:
+
+1. Hədd sistemdən istənilir (`Surface.setFrameRate`, Android 11+). Sistem ekranı uyğun
+   rejimə keçirir və ya oyuna öz vsync-ini o tezlikdə verir.
+2. Hədd ekranın tezliyinə bölünmürsə, bərabər ritmə enir: 90 Hz-də 60 → 45, 144 Hz-də
+   60 → 48 ([`even_rate`](game/scripts/client/frame_pacer.gd)). Sistem oyuna ekrandan
+   AŞAĞI vsync veribsə (frame rate override), ritmi vsync saxlayır (`Engine.max_fps = 0`).
+   60 Hz ekranda 60 həddi əvvəlki kimidir.
+3. Enerji siyasəti, Brawl Stars kimi: batareya qənaəti, Game Mode "batareya" və qızma
+   (10 s-lik proqnoz ≥ 0.85 və ya status ≥ "orta") — kadr 30. Soyuma ardıcıl 30 s gözlənilir.
+4. `Settings.frame_cap()` HƏQİQİ tezliyi qaytarır (45, 30). Arenanın keyfiyyət
+   tənzimləyicisi büdcəni ondan hesablayır, hədd matçda dəyişəndə isə pəncərəsini
+   yenidən başlayır. Yoxsa 30-dan 60-a qayıdanda 33 ms-lik kadrları "yavaş" sayıb
+   qrafikanı endirərdi.
+
+Plugin, Kotlin və NDK lazım deyil: Godot 4.7-nin `AndroidRuntime` və `JavaClassWrapper`-i
+bu API-ləri birbaşa GDScript-dən çağırır. Bütün çağırışlar Godot axınındadır, hər
+addımın uğursuzluğu yalnız həmin addımı söndürür.
+
+Ölçülüb (emulyator, A04s ekranı, YÜKSƏK, TƏK QALAN; vsync-dən çıxan kadrların payı):
+
+| | köhnə | yeni | şərt |
+|---|---:|---:|---|
+| 60 Hz, hədd 60 | 13.2% | 13.1% | yüklü host, 4+4 qaçış |
+| 60 Hz, hədd 30 | 61% | 26% | yüklü host, 6+6 |
+| 90 Hz, hədd 60 | 50% (11/22 ms növbə) | 45 bərabər: 1–7% (hədd), 0.1% (sistem 45 verəndə) | yüngül host |
+| 90 Hz, hədd 30 | 5 qaçışın birində 48% | 0.6% (sistem 30 verəndə) | yüngül host |
+
+Kadrın işi dəyişmir (60 Hz: 7.79 → 7.52 ms, səs-küy daxilində). İstilik, batareya və
+fon emulyatorda yoxlanıb. `cmd thermalservice override-status 3` verəndə kadr növbəti
+yoxlamada (≤ 10 s) 30-a endi, 30 s soyuqdan sonra 60-a qayıtdı. Batareya qənaətində
+kadr ≤ 5 s ərzində 30 oldu. Fondan qayıdanda tezlik yenidən istənildi. Keyfiyyət heç
+vaxt avtomatik enmədi.
+
+İki şey edilməyib:
+- **ADPF Performance Hint.** Hər kadrın işini sistemə bildirmək GDScript-dən işləyir,
+  amma emulyatorda kadra ~0.3 ms əlavə etdi. Faydası yalnız real telefonda ölçülə bilər.
+- **Game Mode "batareya".** Android manifestdə `game_mode_config` istəyir (Gradle
+  build). Onsuz `cmd game mode battery` "not supported by com.germarena.game" deyir.
+  Kod bu halı keçir.
+
+Brauzer eyni qaydanı [`web/shell.html`](game/web/shell.html)-də (`evenStep`) tətbiq edir.
+Ekranın tezliyi requestAnimationFrame-in öz aralığından ölçülür (median; yalnız ≤ 20
+ms qəbul olunur, yoxsa yavaş telefon "30 Hz ekran" sanılardı). Oyun HƏQİQİ tezliyi
+`germFrameRate()`-dən oxuyur. Köhnə və yeni qabıq simulyasiyada yoxlanıb (vsync ±0.4 və
+±1.5 ms səpələnmə): 90 Hz-də 60 həddi 49.9% → 0%, 144 Hz-də 40% → 0% ritmdən çıxır;
+60, 120 və 240 Hz-də dəyişmir.
+
+Necə yoxlanır: emulyatorun `-vsync-rate 90` bayrağı 90 Hz ekran verir. AOSP-un standart
+siyasəti səs verməyən oyuna 45 verir, `settings put system min_refresh_rate 90.0` isə
+90-da saxlayır (sonra `settings delete`, emulyatoru `adb shell reboot -p` ilə söndür —
+`adb emu kill`-dən sonra silmə saxlanmır). Ekrana çıxış vaxtları:
+`dumpsys SurfaceFlinger --latency '<SurfaceView[com.germarena.game/...](BLAST)#N>'`
+(adı `--list`-dən). Pacer-in qərarları logcat-da `[pacer]` sətirləridir.
+
+### Brauzerdə arenaya keçid: «Matç hazırlanır…»
+
+Axınsız brauzer build-ində (`variant/thread_support=false`) arena ana axında yüklənir.
+Chrome-un telefon modelində, MƏŞQ basılanda ekran CPU 4×-də 3.0–3.8 s, A04s modelində
+(13×) 18.5–19.2 s donurdu. 13×-də donmanın tərkibi: `arena.gd`-nin kompilyasiyası 8.3 s
+(bu kompüterdə native 0.22–0.25 s), xəritənin 5 teksturası 2.1–2.7 s, qalan skriptlər ~1.5 s.
+
+İndi [`MenuV2._enter_arena`](game/scripts/client/menu_v2.gd) əvvəl HTML örtüyü açır
+(`Settings.web_show_prep`) və keçidi İKİ kadr gecikdirir: örtük çəkilməmiş yükləmə
+başlasa, donmuş menyu görünərdi. Nöqtələri brauzerin kompozitoru oynadır, ana axın
+məşğul ikən də hərəkət edirlər. Arena ilk kadrını çəkəndə örtük götürülür
+(`Settings.web_hide_prep`). Oyun xəbər verməsə, örtük 120 s sonra özü götürülür.
+Yoxlanıb: `_practice()` çağırışı əvvəl yükləmə boyu blok edirdi (13×-də 17–77 s), indi
+2–393 ms-də qayıdır. MƏŞQ və onlayn keçid (yerli server) işləyir, konsolda xəta yoxdur.
+APK-da və axınlı build-də örtük açılmır, orada arena fonda yüklənir.
+
+Donmanın özü qalır, dəyişən onun görünüşüdür. Kökündən həll üçün iki yol var:
+- **Axınlı veb build:** nginx-də COOP/COEP artıq var. 4×-də keçid 3.0–3.8 → 0.22–0.24 s,
+  amma 13×-də fon yükləməsi 83–114 s çəkdi — real telefonda yoxlanmalıdır.
+- **`arena.gd`-ni bölmək:** keçidin ən böyük tək parçası odur.
+
+### Açılışda serverin sinifləri yüklənmir
+
+`boot.gd`-dəki `Lobby.new()` və `friends.gd`-dəki `-> SocialHub` tipi hər telefonun
+açılışında serverin siniflərini (Lobby, World, SocialHub, Bot) kompilyasiya etdirirdi.
+Menyu açılanda onlar artıq yüklənmiş olurdu. İndi `load()` ilə yüklənirlər.
+Arenanın məşq dünyası da tipsizdir (`Arena.WORLD_SCRIPT`). APK-da menyu `world.gd`-ni
+fonda əvvəlcədən yükləyir (`_preload_arena`) və keçid onu gözləyir.
+
+| | köhnə | yeni |
+|---|---:|---:|
+| Brauzer, CPU 13×, menyuya qədər (3+3) | 25.8–26.3 s | 24.0–24.8 s |
+| APK emulyatoru, menyuya qədər (7+7, orta) | 4767 ms | 4454 ms |
+| APK, birinci MƏŞQ keçid kadrı (4+4, orta) | 86.6 ms | 92.2 ms (səs-küy daxilində) |
+
+Brauzerdə məşq dünyası indi MƏŞQ basılanda kompilyasiya olunur (örtüyün altında).
+Onlayn oyunda isə heç kompilyasiya olunmur. Qoruyucu test: `_test_lazy_server_classes`
+klient skriptlərində bu sinif adlarını axtarır.
+
+İxrac presetlərinin hamısında indi `build/*` çıxarılır. Yerli ixrac `game/build/shots`-dakı
+38 ekran şəklini (~5 MB idxal olunmuş tekstura) APK-ya və pck-yə salırdı. Render-in
+build-i təmiz klondur, ona təsir yox idi.
 
 ### Brauzerdə (Android) donma və kəsilmə
 

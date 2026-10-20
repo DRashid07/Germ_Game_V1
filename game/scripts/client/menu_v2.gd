@@ -68,6 +68,9 @@ extends Control
 const ARENA_SCENE := "res://scenes/game/arena.tscn"
 ## Mikrobun GPU çəkilişi — isinmə üçün (bax [method _warm_up]).
 const GERM_GPU := "res://scripts/client/germ_gpu.gd"
+## Məşqin yerli dünyası — `Arena.WORLD_SCRIPT` ilə eyni yol (arena onu tipsiz
+## yükləyir, ona görə səhnənin asılılığı deyil; bax [method _preload_arena]).
+const WORLD_SCRIPT := "res://scripts/server/world.gd"
 
 ## Kənar boşluq. Yatayda kənarlar barmağın altında qalır, ona görə heç bir
 ## düymə ekranın lap kənarına yapışmır.
@@ -328,6 +331,11 @@ var _pending_roster = null
 var _map_paths := PackedStringArray()
 var _map_hold: Array[Resource] = []
 var _map_requested := false
+## Məşqin `world.gd`-si fonda yüklənirmi (bax [method _preload_arena]).
+var _world_requested := false
+## Brauzerdə "Matç hazırlanır…" örtüyü açılandan sonra keçidə qədər qalan kadrlar;
+## -1 = örtük açılmayıb (bax [method _enter_arena]).
+var _prep_frames := -1
 
 const _ICONS := {
 	Const.Species.CILIATE: "res://assets/ui/species_ciliate.svg",
@@ -421,9 +429,15 @@ func _warm_up() -> void:
 ## kadrı emulyatorda 20–40 ms uzanırdı. Yalnız axınlı build-də: brauzerin axınsız
 ## build-ində sorğu yükləməni çağırışın İÇİNDƏ edir və menyunu dondurardı (orada
 ## arena əvvəlki kimi OYNA-da yüklənir).
+##
+## Məşqin yerli dünyası ([constant WORLD_SCRIPT]) da: arena onu tipsiz yükləyir ki,
+## onlayn oyun və klientin açılışı serverin siniflərini kompilyasiya etməsin. Fonda
+## yüklənməsəydi, MƏŞQ-də ana axında kompilyasiya olunardı (masaüstündə ~90 ms,
+## zəif telefonda ~1 s).
 func _preload_arena() -> void:
 	if OS.has_feature("threads") and not _arena_requested:
 		_arena_requested = ResourceLoader.load_threaded_request(ARENA_SCENE) == OK
+		_world_requested = ResourceLoader.load_threaded_request(WORLD_SCRIPT) == OK
 
 
 ## Xəritənin teksturaları da fonda — arena səhnəsi yüklənəndən SONRA.
@@ -448,10 +462,14 @@ func _preload_map() -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
-	# OYNA/MƏŞQ fon yükləməsi bitməmiş basılıbsa (bax [method _enter_arena]).
+	# OYNA/MƏŞQ fon yükləməsi bitməmiş basılıbsa, və ya brauzerdə "Matç
+	# hazırlanır…" örtüyü hələ çəkilir (bax [method _enter_arena]).
 	if _pending_entry.is_valid() and not _background_loading():
-		_enter_arena(_pending_entry)
-		return
+		if _prep_frames > 0:
+			_prep_frames -= 1
+		else:
+			_enter_arena(_pending_entry)
+			return
 	if _arena_requested and not _map_requested and ResourceLoader.load_threaded_get_status(
 			ARENA_SCENE) == ResourceLoader.THREAD_LOAD_LOADED:
 		_preload_map()
@@ -2567,16 +2585,29 @@ func _on_world_joined(info: Dictionary) -> void:
 ## yükləmə bir neçə saniyədir). İndi menyu bu arada işləyir, ən uzun kadr keçidin
 ## özüdür (~0.1 s). Onlayn rejimdə gözləmə vaxtı gələn ad cədvəli saxlanır və
 ## arenaya verilir — reyestr yalnız dəyişəndə göndərilir, itsəydi adlar görünməzdi.
+##
+## Axınsız brauzerdə isə arena ana axında yüklənir və ekran donur (Chrome-un telefon
+## modelində ölçülüb, MƏŞQ: CPU 4×-də 3.0–3.8 s, A04s modelində, 13×, 18.5–19.2 s;
+## yarıdan çoxu `arena.gd`-nin kompilyasiyasıdır). Ona görə əvvəl "Matç
+## hazırlanır…" örtüyü açılır ([method Settings.web_show_prep]) və keçid İKİ kadr
+## gözləyir: örtük çəkilmədən yükləmə başlasa, ekranda donmuş menyu qalardı. Örtüyün
+## nöqtələrini brauzerin kompozitoru oynadır — ana axın məşğul ikən də hərəkət
+## edirlər. Arena ilk kadrını çəkəndə örtük götürülür ([method Settings.web_hide_prep]).
 func _enter_arena(configure: Callable) -> void:
 	# OYNA isinmədən əvvəl basılıbsa, arena hələ istənməyib — fon yükləməsi indi başlayır
 	# (yoxsa ana axında yüklənib menyunu ~0.5 s dondururdu).
 	_preload_arena()
-	if _background_loading():
+	var wait := _background_loading()
+	if not wait and _prep_frames < 0 and Settings.web_show_prep():
+		_prep_frames = 2
+		wait = true
+	if wait:
 		if not Net.roster_arrived.is_connected(_buffer_roster):
 			Net.roster_arrived.connect(_buffer_roster)
 		_pending_entry = configure
 		return
 	_pending_entry = Callable()
+	_prep_frames = -1
 	if Net.roster_arrived.is_connected(_buffer_roster):
 		Net.roster_arrived.disconnect(_buffer_roster)
 	var arena = _arena_scene().instantiate()
@@ -2595,6 +2626,8 @@ func _background_loading() -> bool:
 		paths.append(ARENA_SCENE)
 	if _germ_requested:
 		paths.append(GERM_GPU)
+	if _world_requested:
+		paths.append(WORLD_SCRIPT)
 	for path in paths:
 		if ResourceLoader.load_threaded_get_status(path) == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
 			return true
@@ -2619,6 +2652,13 @@ func _arena_scene() -> PackedScene:
 		if res != null:
 			_map_hold.append(res)
 	_map_paths.clear()
+	# Məşqin `world.gd`-si də menyu silinənə qədər tutulur: arena onu elə bu kadrda,
+	# `configure_practice`-də `load` edir və keşdən hazır alır.
+	if _world_requested:
+		_world_requested = false
+		var world := ResourceLoader.load_threaded_get(WORLD_SCRIPT)
+		if world != null:
+			_map_hold.append(world)
 	if _arena_requested:
 		_arena_requested = false
 		var scene := ResourceLoader.load_threaded_get(ARENA_SCENE) as PackedScene

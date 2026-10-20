@@ -104,6 +104,8 @@ var _silent := false
 ## Kadr həddini ƏMR SƏTRİ verib. Onda ayar ona toxunmur — `--max-fps 60` ilə
 ## çəkilən ölçmələr və kadrlar təkrarlana bilən qalmalıdır (bax `README`).
 var _fps_locked := false
+## Android-də kadr ritmi və enerji siyasəti (bax [FramePacer]); başqa yerdə `null`.
+var _pacer: Node = null
 
 
 func _ready() -> void:
@@ -111,6 +113,11 @@ func _ready() -> void:
 	var argv := OS.get_cmdline_args()
 	_fps_locked = argv.has("--max-fps") or argv.has("--fixed-fps")
 	load_from_disk()
+	if OS.has_feature("android") and not _silent and not _fps_locked:
+		# `load` ilə: server, masaüstü və brauzer bu skripti kompilyasiya etmir.
+		_pacer = load("res://scripts/client/frame_pacer.gd").new()
+		add_child(_pacer)
+	set_process(OS.has_feature("web") and not _silent)
 	apply()
 
 
@@ -257,22 +264,54 @@ func apply() -> void:
 ## kadr buraxmaqla tətbiq olunur: arada əsas axın BOŞDUR.
 ##
 ## Köhnə səhifə (funksiyası olmayan qabıq) gəlsə, köhnə yol işləyir.
+##
+## Android-də həddi [FramePacer] tətbiq edir: tezliyi sistemdən istəyir, ekrana
+## bölünməyən həddi bərabər ritmə endirir, sistem oyuna aşağı vsync veribsə
+## ritmi vsync-ə verir (bax orada).
 func _apply_frame_cap(cap: int) -> void:
 	if OS.has_feature("web") and _web_pacing():
 		Engine.max_fps = 0
 		JavaScriptBridge.eval("window.germSetFrameCap(%d)" % cap)
 		_web_cap = cap
+		_web_rate = 0
+		_web_poll = 0.0
+		return
+	if _pacer != null:
+		_pacer.request(cap)
 		return
 	Engine.max_fps = cap
 
 
 ## Oyunun HƏQİQƏTƏN işlədiyi kadr həddi (0 = həddsiz) — kadr büdcəsini hesablayan
 ## kod `Engine.max_fps`-i yox, bunu oxumalıdır: brauzerdə orada 0 durur (bax
-## [method _apply_frame_cap]).
+## [method _apply_frame_cap]), Android-də isə vsync ritmi saxlayanda da 0-dır.
+##
+## Bu, oyunçunun seçdiyi rəqəm olmaya bilər: 90 Hz ekranda 60 həddi 45 olur
+## (bərabər ritm), telefon qızanda və ya batareya qənaətində 30 (bax [FramePacer]).
+## Büdcə bundan hesablanmasa, arena 45 kadrı "yavaş" sayıb keyfiyyəti endirərdi.
 func frame_cap() -> int:
 	if OS.has_feature("web") and _web_cap >= 0:
-		return _web_cap
+		return _web_rate if _web_cap > 0 and _web_rate > 0 else _web_cap
+	if _pacer != null:
+		return _pacer.rate()
 	return Engine.max_fps
+
+
+## Brauzerdə səhifənin hesabladığı HƏQİQİ kadr tezliyi (bax `web/shell.html`,
+## `germFrameRate`). Kadr büdcəsi ([method frame_cap]) kadrda dəfələrlə oxunur,
+## ona görə JavaScript-ə hər dəfə yox, [constant WEB_RATE_POLL] saniyədən bir müraciət olunur.
+func _process(delta: float) -> void:
+	_web_poll -= delta
+	if _web_poll > 0.0:
+		return
+	_web_poll = WEB_RATE_POLL
+	var v = JavaScriptBridge.eval("window.germFrameRate ? window.germFrameRate() : 0", true)
+	_web_rate = int(round(float(v))) if (v is int or v is float) else 0
+
+
+const WEB_RATE_POLL := 2.0
+var _web_rate := 0
+var _web_poll := 0.0
 
 
 ## Səhifə kadr həddini özü tətbiq edə bilirmi — bir dəfə soruşulur.
@@ -311,6 +350,32 @@ func _hide_web_status() -> void:
 
 
 var _page_shown := false
+
+
+## Brauzerdə arenaya keçid örtüyünü ("Matç hazırlanır…") açır; açıldısa `true`.
+##
+## Yalnız axınsız build-də: orada arena ana axında yüklənir və ekran saniyələrlə
+## donur (bax [method MenuV2._enter_arena]). Axınlı build-də və telefon tətbiqində
+## arena fonda yüklənir — örtük lazım deyil. Köhnə səhifə funksiyanı bilmirsə,
+## keçid əvvəlki kimi örtüksüz gedir.
+func web_show_prep() -> bool:
+	if not OS.has_feature("web") or OS.has_feature("threads"):
+		return false
+	var ok = JavaScriptBridge.eval(
+		"typeof window.germShowPrep === 'function' ? (window.germShowPrep(), 1) : 0", true)
+	return (ok is int or ok is float or ok is bool) and float(ok) >= 1.0
+
+
+## Keçid örtüyünü arenanın İLK kadrı çəkiləndən sonra götürür (arena `_ready`-də
+## çağırır; örtük açıq deyilsə heç nə etmir).
+func web_hide_prep() -> void:
+	if not OS.has_feature("web") or RenderingServer.frame_post_draw.is_connected(_hide_web_prep):
+		return
+	RenderingServer.frame_post_draw.connect(_hide_web_prep, CONNECT_ONE_SHOT)
+
+
+func _hide_web_prep() -> void:
+	JavaScriptBridge.eval("window.germHidePrep && window.germHidePrep()", true)
 
 
 ## İşlək kadr həddi. MİNİMUM-da oyunçu özü seçməyibsə 30: simulyasiya onsuz

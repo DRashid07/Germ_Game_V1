@@ -120,6 +120,17 @@ static func run() -> int:
 	_test_germ_redraw_rate()
 	_test_batch_draw()
 	_test_frame_cap()
+	_test_frame_pacer_even_rate()
+	_test_frame_pacer_power()
+	_test_frame_pacer_thermal()
+	_test_frame_pacer_vsync()
+	_test_frame_pacer_settings()
+	_test_frame_pacer_web_mirror()
+	_test_budget_follows_rate()
+	_test_lazy_server_classes()
+	_test_menu_preloads_world()
+	_test_web_entry_prep()
+	_test_export_excludes_build()
 	_test_germ_gpu_contract()
 	_test_germ_gpu_rows()
 	_test_germ_gpu_shape_sync()
@@ -2215,6 +2226,228 @@ static func _test_frame_cap() -> void:
 	var src := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
 	_check(not src.is_empty() and not src.contains("Engine.max_fps"),
 		"arena kadr büdcəsini Settings.frame_cap()-dan oxuyur, Engine.max_fps-dən yox")
+
+
+## Bərabər ritm: hədd ekranın tezliyinə BÖLÜNƏN ən böyük qiymətdir (bax
+## [method FramePacer.even_rate]). 90 Hz ekranda 60 kadrın yarısı 1, yarısı 2 vsync
+## ekranda qalırdı (emulyatorda ölçülüb) — 45 isə həmişə 2 vsync-dir.
+static func _test_frame_pacer_even_rate() -> void:
+	# [hədd, ekran Hz, gözlənilən]
+	var table := [
+		[60, 60.0, 60], [60, 59.94, 60], [60, 90.0, 45], [60, 89.9, 45], [60, 120.0, 60],
+		[60, 144.0, 48], [60, 240.0, 60], [30, 60.0, 30], [30, 90.0, 30], [30, 120.0, 30],
+		[120, 90.0, 90], [120, 60.0, 60], [90, 120.0, 60], [45, 90.0, 45], [60, 45.0, 45],
+		# Ekranın tezliyi tam ədəd olmaya bilər: hədd aşılmır, bir vsync itmir.
+		[60, 61.0, 60], [60, 119.8, 60], [30, 59.5, 30], [60, 241.0, 60],
+		# 45 Hz-lik ekranda 30 bərabər ola bilməz, 22.5-ə də enmirik — hədd qalır.
+		[30, 45.0, 30],
+		# Ekran bilinmir — hədd olduğu kimi; hədd yoxdur — 0.
+		[60, 0.0, 60], [0, 90.0, 0], [0, 0.0, 0],
+	]
+	var bad := []
+	for row in table:
+		var got := FramePacer.even_rate(int(row[0]), float(row[1]))
+		if got != int(row[2]):
+			bad.append("%d@%s→%d (gözlənilən %d)" % [row[0], row[1], got, row[2]])
+	_check(bad.is_empty(), "bərabər ritm cədvəli (%d hal) %s" % [table.size(), bad])
+
+
+## Enerji siyasəti yalnız KADRI endirir: batareya qənaəti, Game Mode "batareya",
+## qızma — 30 (Brawl Stars kimi). Oyunçunun öz həddi daha aşağıdırsa, o qalır.
+static func _test_frame_pacer_power() -> void:
+	_check(FramePacer.power_cap(false, 1, false) == 0, "adi rejim — enerji tavanı yoxdur")
+	_check(FramePacer.power_cap(true, 1, false) == 30, "batareya qənaəti — 30")
+	_check(FramePacer.power_cap(false, FramePacer.GAME_MODE_BATTERY, false) == 30, "Game Mode batareya — 30")
+	_check(FramePacer.power_cap(false, 2, false) == 0, "Game Mode performans — tavan yoxdur")
+	_check(FramePacer.power_cap(false, 1, true) == 30, "telefon qızıb — 30")
+	_check(FramePacer.combine(60, 0) == 60 and FramePacer.combine(0, 30) == 30
+			and FramePacer.combine(60, 30) == 30 and FramePacer.combine(30, 60) == 30
+			and FramePacer.combine(0, 0) == 0 and FramePacer.combine(-1, 30) == 30,
+		"iki həddin sərti götürülür, 0 — hədd yoxdur")
+
+
+## Qızma: istiləşmə DƏRHAL, soyuma yalnız ardıcıl 30 s sonra — sərhəddə 60 ↔ 30
+## titrəməsin. Ehtiyat bilinməyəndə (köhnə Android) status oxunur.
+static func _test_frame_pacer_thermal() -> void:
+	var st := {}
+	_check(not FramePacer.thermal_step(st, 0.40, 0, 0.0), "soyuq telefon — hədd dəyişmir")
+	_check(FramePacer.thermal_step(st, 0.90, 0, 10.0), "proqnozlaşdırılan ehtiyat 0.85-i keçir — dərhal isti")
+	_check(FramePacer.thermal_step(st, 0.80, 1, 20.0), "ehtiyat 0.80 — hələ soyumayıb")
+	_check(FramePacer.thermal_step(st, 0.60, 1, 30.0) and FramePacer.thermal_step(st, 0.60, 1, 50.0),
+		"soyuyur, amma 30 s keçməyib — 30 kadr qalır")
+	_check(not FramePacer.thermal_step(st, 0.60, 1, 60.0), "30 s ardıcıl soyuq — hədd qayıdır")
+
+	var st2 := {}
+	_check(FramePacer.thermal_step(st2, NAN, 2, 0.0), "ehtiyat bilinmir, status orta — isti")
+	_check(FramePacer.thermal_step(st2, NAN, 1, 10.0) and FramePacer.thermal_step(st2, NAN, 1, 39.0),
+		"status yüngülə endi — 30 s gözlənilir")
+	_check(not FramePacer.thermal_step(st2, NAN, 0, 41.0), "status yüngül 30 s — hədd qayıdır")
+
+	var st3 := {}
+	FramePacer.thermal_step(st3, 0.90, 0, 0.0)
+	FramePacer.thermal_step(st3, 0.60, 0, 10.0)
+	FramePacer.thermal_step(st3, 0.75, 0, 25.0)
+	_check(FramePacer.thermal_step(st3, 0.60, 0, 45.0) and not FramePacer.thermal_step(st3, 0.60, 0, 75.0),
+		"soyuma kəsiləndə saat sıfırdan başlayır")
+
+
+## Ritmi vsync yalnız sistem oyuna ekranın öz tezliyindən AŞAĞI vsync verəndə
+## saxlayır (frame rate override). 60 Hz ekranda 60 həddi köhnə yoldur: orada vsync
+## ritmi emulyatorda yuxu ilə həddən bir az pis çıxdı (bax [FramePacer]).
+static func _test_frame_pacer_vsync() -> void:
+	_check(FramePacer.vsync_paces(30, 30.0, 60.0), "60 Hz ekranda oyuna 30 Hz vsync verilib — ritmi vsync saxlayır")
+	_check(FramePacer.vsync_paces(45, 45.0, 90.0), "90 Hz ekranda 45 Hz vsync — ritmi vsync saxlayır")
+	_check(not FramePacer.vsync_paces(60, 60.0, 60.0), "60 Hz ekranda 60 — köhnə yol")
+	_check(not FramePacer.vsync_paces(45, 90.0, 90.0), "90 Hz-də override yoxdur — 45 yuxu ilə")
+	_check(not FramePacer.vsync_paces(30, 45.0, 90.0), "oyuna verilən vsync hədd deyil — köhnə yol")
+	_check(not FramePacer.vsync_paces(0, 30.0, 60.0) and not FramePacer.vsync_paces(30, 0.0, 0.0),
+		"hədd və ya ekran bilinmir — köhnə yol")
+
+
+## Settings ilə FramePacer-in müqaviləsi: büdcə ([method Settings.frame_cap])
+## oyunun HƏQİQİ tezliyidir — 90 Hz ekranda 45, batareya qənaətində 30 — və
+## sistem oyuna aşağı vsync verəndə ritmi vsync saxlayır (`Engine.max_fps` 0).
+## Telefon olmadan: pacer ağaca əlavə olunmur, Android API-sinə müraciət etmir
+## (`_sdk` 0-dır).
+static func _test_frame_pacer_settings() -> void:
+	var keep_fps := Engine.max_fps
+	var keep_pacer = Settings._pacer
+	var pacer := FramePacer.new()
+	Settings._pacer = pacer
+	Settings._apply_frame_cap(60)
+	_check(Settings.frame_cap() == 60 and Engine.max_fps == 60,
+		"ekran bilinmir: hədd 60, köhnə yol (%d / %d)" % [Settings.frame_cap(), Engine.max_fps])
+	pacer._activity = pacer
+	pacer._display_hz = 90.0
+	pacer._mode_hz = 90.0
+	pacer._update(false)
+	_check(Settings.frame_cap() == 45 and Engine.max_fps == 45,
+		"90 Hz ekran istəyi qəbul etmədi: bərabər 45, büdcə də 45 (%d / %d)"
+			% [Settings.frame_cap(), Engine.max_fps])
+	pacer._saver = true
+	pacer._apply_power()
+	_check(Settings.frame_cap() == 30 and Engine.max_fps == 30,
+		"batareya qənaəti: kadr 30-a enir (%d / %d)" % [Settings.frame_cap(), Engine.max_fps])
+	pacer._saver = false
+	pacer._apply_power()
+	pacer._display_hz = 60.0
+	pacer._mode_hz = 60.0
+	pacer._update(false)
+	_check(Settings.frame_cap() == 60 and Engine.max_fps == 60,
+		"ekran 60-a keçdi: köhnə yol, büdcə 60 (%d / %d)" % [Settings.frame_cap(), Engine.max_fps])
+	Settings._apply_frame_cap(30)
+	pacer._display_hz = 30.0
+	pacer._update(false)
+	_check(Settings.frame_cap() == 30 and Engine.max_fps == 0,
+		"sistem oyuna 30 Hz vsync verdi: ritmi vsync saxlayır, büdcə 30 (%d / %d)"
+			% [Settings.frame_cap(), Engine.max_fps])
+	Settings._apply_frame_cap(60)
+	pacer._display_hz = 45.0
+	pacer._mode_hz = 90.0
+	pacer._update(false)
+	_check(Settings.frame_cap() == 45 and Engine.max_fps == 0,
+		"60 Hz rejimi yoxdur, sistem 45 verdi: vsync, büdcə 45 (%d / %d)"
+			% [Settings.frame_cap(), Engine.max_fps])
+	pacer._activity = null
+	Settings._apply_frame_cap(0)
+	_check(Settings.frame_cap() == 0 and Engine.max_fps == 0, "sərbəst: hədd yoxdur")
+	Settings._pacer = keep_pacer
+	pacer.free()
+	Engine.max_fps = keep_fps
+
+
+## Brauzer eyni qaydanı `web/shell.html`-də özü tətbiq edir (`evenStep`) — iki
+## nüsxə bir-birindən ayrılmamalıdır.
+static func _test_frame_pacer_web_mirror() -> void:
+	var shell := FileAccess.get_file_as_string("res://web/shell.html")
+	var gd := FileAccess.get_file_as_string("res://scripts/client/frame_pacer.gd")
+	_check(shell.contains("const EVEN_FLOOR = %d;" % FramePacer.EVEN_FLOOR)
+			and shell.contains("Math.abs(r - Math.round(r)) < 0.1 ? Math.round(r) : Math.ceil(r)")
+			and gd.contains("roundi(r) if absf(r - roundf(r)) < 0.1 else ceili(r)")
+			and shell.contains("window.germFrameRate"),
+		"brauzerin bərabər ritmi FramePacer.even_rate ilə eyni qaydadır")
+
+
+## Kadr büdcəsi həddin özündən çıxır: 90 Hz ekranda 45 kadrlıq ritmdə 25 ms-lik
+## kadr normaldır, 60 həddində isə yavaşdır. Büdcə səhv həddən hesablansaydı,
+## arena keyfiyyəti — qrafikanı — boş yerə endirərdi.
+static func _test_budget_follows_rate() -> void:
+	var f25 := PackedFloat32Array()
+	for i in 300:
+		f25.append(0.025)
+	_check(Arena.too_slow(f25, 60), "60 həddində 25 ms kadr yavaşdır")
+	_check(not Arena.too_slow(f25, 45), "45 həddində 25 ms kadr büdcənin içindədir")
+	var src := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	_check(src.contains("if cap != _perf_cap:") and src.contains("if cap != _res_cap:"),
+		"hədd matçda dəyişəndə (qızma, batareya) tənzimləyicilər pəncərəni yenidən başlayır")
+
+
+## Klientin skriptləri serverin siniflərini (Lobby, World, SocialHub, Bot) ADLA
+## çağırmır: tipli istinad onları hər telefonun açılışında kompilyasiya etdirirdi
+## (brauzerdə, CPU 13×, menyu ~1.8 s gec açılırdı). Lazım olanda `load` ilə
+## yüklənirlər (bax `boot.gd`, [method Friends._hub], [constant Arena.WORLD_SCRIPT]).
+static func _test_lazy_server_classes() -> void:
+	var names := RegEx.new()
+	names.compile("\\b(Lobby|SocialHub|World|Bot)\\b")
+	var strings := RegEx.new()
+	strings.compile("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")
+	var files := ["res://scripts/boot.gd"]
+	for dir in ["res://scripts/client", "res://scripts/shared"]:
+		for f in DirAccess.get_files_at(dir):
+			# Bot serverin sinfidir, sadəcə `shared/`-dədir.
+			if f.ends_with(".gd") and f != "bot.gd":
+				files.append(dir.path_join(f))
+	var hits := []
+	for path in files:
+		var lines := FileAccess.get_file_as_string(path).split("\n")
+		for i in lines.size():
+			var code := strings.sub(lines[i], "\"\"", true)
+			var cut := code.find("#")
+			if cut >= 0:
+				code = code.substr(0, cut)
+			if names.search(code) != null:
+				hits.append("%s:%d" % [path.get_file(), i + 1])
+	_check(files.size() > 20 and hits.is_empty(),
+		"klient skriptləri serverin siniflərini adla çağırmır (%d fayl) %s" % [files.size(), hits])
+
+
+## Məşqin yerli dünyası arenanın asılılığı deyil (tipsiz yüklənir) — ona görə menyu
+## onu fonda ayrıca yükləyir və keçid onu gözləyir. Yoxsa telefonda MƏŞQ-də ana
+## axında kompilyasiya olunardı (masaüstündə ~90 ms).
+static func _test_menu_preloads_world() -> void:
+	_check(MenuV2.WORLD_SCRIPT == Arena.WORLD_SCRIPT and ResourceLoader.exists(Arena.WORLD_SCRIPT),
+		"menyu ilə arena eyni dünya skriptini göstərir")
+	var src := FileAccess.get_file_as_string("res://scripts/client/menu_v2.gd")
+	_check(src.contains("load_threaded_request(WORLD_SCRIPT)") and src.contains("paths.append(WORLD_SCRIPT)")
+			and src.contains("load_threaded_get(WORLD_SCRIPT)"),
+		"menyu məşqin dünyasını fonda yükləyir, keçid onu gözləyir və tutur")
+
+
+## Axınsız brauzerdə arenaya keçid örtüyü: menyu açır, arena ilk kadrından sonra
+## götürür, səhifədə hər ikisinin funksiyası var. Brauzer olmayanda açılmır.
+static func _test_web_entry_prep() -> void:
+	_check(not Settings.web_show_prep(), "brauzer deyil — keçid örtüyü açılmır")
+	var menu := FileAccess.get_file_as_string("res://scripts/client/menu_v2.gd")
+	var arena := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	var shell := FileAccess.get_file_as_string("res://web/shell.html")
+	_check(menu.contains("Settings.web_show_prep()") and arena.contains("Settings.web_hide_prep()"),
+		"menyu örtüyü açır, arena götürür")
+	_check(shell.contains("window.germShowPrep") and shell.contains("window.germHidePrep")
+			and shell.contains("id=\"entry-prep\""),
+		"səhifədə keçid örtüyü və onun funksiyaları var")
+
+
+## Yerli ixrac `game/build/`-dəki ekran şəkillərini (idxal olunmuş PNG-lər, ~5 MB)
+## APK-ya və brauzerin pck-sinə salmırdı — `all_resources` hamısını götürürdü.
+static func _test_export_excludes_build() -> void:
+	var cfg := ConfigFile.new()
+	_check(cfg.load("res://export_presets.cfg") == OK, "ixrac presetləri oxunur")
+	var missing := []
+	for section in cfg.get_sections():
+		if section.begins_with("preset.") and not section.ends_with(".options"):
+			if not str(cfg.get_value(section, "exclude_filter", "")).contains("build/*"):
+				missing.append(str(cfg.get_value(section, "name", section)))
+	_check(missing.is_empty(), "hər ixrac presetində `build/*` çıxarılır %s" % [missing])
 
 
 ## Mikrobun GPU yolu (bax [GermGPU]): shader və skript EYNİ sətir quruluşunu,

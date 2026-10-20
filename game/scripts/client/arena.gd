@@ -412,7 +412,12 @@ var _token := ""
 var _reconnecting := false
 var _rejoin_left := 0
 
-var _local_world: World = null      ## Yalnız məşq rejimində
+## Yalnız məşq rejimində — serverin [World]-u. Tipsizdir və `load` ilə yaradılır:
+## tipli istinad `World`-u (və onunla [Bot]-u) onlayn oyunda da, klientin
+## açılışında da kompilyasiya etdirərdi (bax [constant WORLD_SCRIPT]).
+var _local_world = null
+## Menyu onu fonda əvvəlcədən yükləyir ([method MenuV2._preload_arena]).
+const WORLD_SCRIPT := "res://scripts/server/world.gd"
 
 # ---------------------------------------------------------------- vizual
 
@@ -688,8 +693,8 @@ var start_charged := false
 func configure_practice() -> void:
 	practice = true
 	my_id = 1000
-	_local_world = World.new(1, Net.mode)
-	var g := _local_world.add_player(my_id, Net.nickname, Net.species)
+	_local_world = load(WORLD_SCRIPT).new(1, Net.mode)
+	var g: Sim.GermState = _local_world.add_player(my_id, Net.nickname, Net.species)
 	my_color = g.color
 	if start_at.is_finite():
 		g.pos = start_at
@@ -740,6 +745,8 @@ func _ready() -> void:
 	Sfx.play("spawn")
 	# Menyusuz açılışda (məşq, test client-i) brauzerin yükləmə örtüyü buradan götürülür.
 	Settings.web_page_ready()
+	# Menyudan gəlibsə — "Matç hazırlanır…" örtüyü (bax [method MenuV2._enter_arena]).
+	Settings.web_hide_prep()
 	# Menyudan gəlməyibsə, mikrobun shader-ləri hələ kompilyasiya olunmayıb (bax
 	# [method GermGPU.warm_up]); menyudan gəlibsə bu çağırış heç nə etmir.
 	GermGPU.warm_up(self)
@@ -1397,7 +1404,7 @@ func _do_tick() -> void:
 
 	if _local_world != null:
 		_local_world.accept_input(my_id, inp.to_array())
-		var bursts := _local_world.tick(Const.TICK_DELTA)
+		var bursts: Array = _local_world.tick(Const.TICK_DELTA)
 		# Məşq rejimində şəbəkə yoxdur, ona görə reyestri birbaşa götürürük.
 		# Yalnız dəyişəndə: hər tick sözlük qurmaq boş yükdür.
 		if _local_world.roster_rev != _roster_rev:
@@ -2848,14 +2855,27 @@ func _remote_redraw_step() -> int:
 ## Oyunçu keyfiyyəti AYARLAR-da özü seçibsə, tənzimləyici toxunmur.
 const PERF_WARMUP := 4.0
 const PERF_WINDOW := 5.0
+## Kadr həddi dəyişəndən sonra ölçülməyən müddət — ritm yeni həddə keçənə qədər.
+const PERF_SETTLE := 2.0
 var _perf_wait := PERF_WARMUP
 var _perf_frames := PackedFloat32Array()
 var _perf_time := 0.0
+var _perf_cap := -1
 
 
 func _watch_performance(delta: float) -> void:
 	if Settings.quality_chosen or Net.quality == Const.Quality.MINIMUM or _finished:
 		return
+	# Hədd matçın ortasında dəyişə bilir (telefon qızdı, batareya qənaəti, 90 Hz
+	# ekranda 60 → 45; bax [FramePacer]). Yığılan kadrlar köhnə büdcəyə aiddir:
+	# 30-dan 60-a qayıdanda 33 ms-lik kadrlar "yavaş" sayılıb keyfiyyəti — yəni
+	# qrafikanı — boş yerə endirərdi.
+	var cap := Settings.frame_cap()
+	if cap != _perf_cap:
+		_perf_cap = cap
+		_perf_frames.clear()
+		_perf_time = 0.0
+		_perf_wait = maxf(_perf_wait, PERF_SETTLE)
 	if _perf_wait > 0.0:
 		_perf_wait -= delta
 		return
@@ -2935,6 +2955,7 @@ var _res_time := 0.0
 ## Tənzimləyicinin yaddaşı (bax [method resolution_step]); səviyyə dəyişəndə sıfırlanır.
 var _res_state := {}
 var _res_tier := -1
+var _res_cap := -1
 var _res_report := RES_REPORT
 ## Son pəncərənin ölçüsü: `[kadr p50, kadr p90, CPU işi p50, orta kadr]` (ms) — konsol sətri.
 var res_stats := Vector4.ZERO
@@ -2946,6 +2967,14 @@ func _watch_resolution(delta: float) -> void:
 	if int(Net.quality) != _res_tier:
 		_res_tier = int(Net.quality)
 		_res_state = {}
+	# Kadr həddi dəyişibsə (bax [method _watch_performance]) pəncərə yenidən başlayır.
+	var cap := Settings.frame_cap()
+	if cap != _res_cap:
+		_res_cap = cap
+		_res_frames.clear()
+		_res_cpu.clear()
+		_res_time = 0.0
+		_res_wait = maxf(_res_wait, PERF_SETTLE)
 	if _res_wait > 0.0:
 		_res_wait -= delta
 		return

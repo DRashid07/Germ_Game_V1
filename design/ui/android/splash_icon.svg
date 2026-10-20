@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <!-- Android 12+ sistem açılış ekranının ikonu (export: splash_screen/icon).
+       Hazır (gradle-siz) APK-da açılış ekranının FONU dəyişmir: Godot-un şablonu
+       ona rəng yerinə şəkil verir və Android onu oxumayıb ağ (və ya tünd rejimdə
+       boz) fon çəkir. Ona görə ikon öz tünd diskini daşıyır — istənilən fonda
+       eyni görünür. Disk görünən dairəni (432-nin 2/3-ü, r=144) tam doldurur. -->
+  <defs>
+    <radialGradient id="dish" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#10262C"/>
+      <stop offset="100%" stop-color="#050D10"/>
+    </radialGradient>
+    <radialGradient id="germ" cx="38%" cy="32%" r="72%">
+      <stop offset="0%" stop-color="#9BFF7E"/>
+      <stop offset="55%" stop-color="#49CB63"/>
+      <stop offset="100%" stop-color="#155632"/>
+    </radialGradient>
+  </defs>
+  <circle cx="216" cy="216" r="144" fill="url(#dish)"/>
+  <g transform="translate(216 216) scale(0.643) translate(-256 -256)">
+    <circle cx="256" cy="256" r="196" fill="none" stroke="#1E4650" stroke-width="10"/>
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#2FE8E0" stroke-width="4" opacity="0.2"/>
+    <circle cx="256" cy="256" r="122" fill="url(#germ)"/>
+    <circle cx="256" cy="256" r="122" fill="none" stroke="#D6FFC9" stroke-width="9" opacity="0.9"/>
+    <g fill="#F2FFF0">
+      <circle cx="218" cy="220" r="24"/>
+      <circle cx="292" cy="234" r="19"/>
+      <circle cx="232" cy="292" r="21"/>
+      <circle cx="296" cy="298" r="16"/>
+      <circle cx="262" cy="252" r="13" opacity="0.8"/>
+    </g>
+  </g>
+</svg>

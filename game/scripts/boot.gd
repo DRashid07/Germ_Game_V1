@@ -44,6 +44,10 @@ func _ready() -> void:
 		get_tree().root.add_child.call_deferred(demo)
 		_setup_screenshot(args)
 	else:
+		# Açılış loqosu menyu çəkilənə qədər ekranda qalır (bax [BootLogo]).
+		# Səhnə dəyişimindən ƏVVƏL əlavə olunur: menyunun yüklənməsi ilk kadrı
+		# bloklayır və o kadr artıq loqo ilə çəkilməlidir, boş ekranla yox.
+		get_tree().root.add_child.call_deferred(BootLogo.new())
 		# `_ready` icra olunarkən ağac hələ məşğuldur — səhnə dəyişimi
 		# növbəti kadra təxirə salınmalıdır.
 		get_tree().change_scene_to_file.call_deferred("res://scenes/ui/menu.tscn")

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <!-- Android adaptiv ikonunun ARXA qatı (bax design/menu_art/README.md, «Loqo»).
+       Petri qabının dibi — app_icon.svg-nin fonu ilə eyni qradiyent, künclər yoxdur:
+       formanı (dairə, damla, kvadrat) telefonun öz maskası kəsir. -->
+  <defs>
+    <radialGradient id="dish" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#10262C"/>
+      <stop offset="100%" stop-color="#050D10"/>
+    </radialGradient>
+  </defs>
+  <rect width="432" height="432" fill="url(#dish)"/>
+</svg>

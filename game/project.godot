@@ -18,6 +18,12 @@ config/icon="res://icon.svg"
 ; açır (bax [Arena._notification]), menyuda isə əvvəl açıq vərəqi/ayarları
 ; bağlayır və yalnız ana ekranda oyundan çıxır (bax [MenuV2._notification]).
 config/quit_on_go_back=false
+; Açılış ekranı — Godot loqosu yox, oyunun öz loqosu (bax design/menu_art/README.md,
+; «Loqo»). Fon `default_clear_color` ilə EYNİDİR: mühərrikin açılış şəkli menyu
+; çəkilənə qədər oyunun içində də davam edir ([BootLogo]) və ikisi arasında keçid
+; görünməməlidir. Şəkil 16:9-dur, `Keep` rejimində ekrana sığır.
+boot_splash/bg_color=Color(0.027451, 0.058824, 0.070588, 1)
+boot_splash/image="res://assets/ui/boot_splash.png"
 
 [autoload]
 

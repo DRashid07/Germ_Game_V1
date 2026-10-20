@@ -371,7 +371,7 @@ func _ready() -> void:
 	_refresh_party()
 
 	_probe_server()
-	_play_intro()
+	_play_intro(BootLogo.hold_time())
 
 	# Matçdan qayıdanda cavabsız dəvət varsa, kart yenidən göstərilir.
 	if not Friends.invites.is_empty():
@@ -2192,7 +2192,10 @@ func _home_ui() -> Array[Control]:
 ## Ardıcıllıq təsadüfi deyil: əvvəl PODİUM qurulur, sonra QƏHRƏMAN doğulur,
 ## sonra SEÇİM, ən sonda OYNA sıçrayır. Göz sonuncu hərəkətə yönəlir, ona görə
 ## sonuncu hərəkət düz basılası düymədə olmalıdır.
-func _play_intro() -> void:
+##
+## Oyunun açılışında menyu əvvəl loqonun altında qalır (bax [BootLogo]) —
+## animasiya `delay` qədər gec başlayır ki, loqo çəkilərkən görünsün.
+func _play_intro(delay: float = 0.0) -> void:
 	var groups: Array[Control] = []
 	for child in get_children():
 		if child is Control:
@@ -2203,22 +2206,23 @@ func _play_intro() -> void:
 	# Podium öz `_draw`-ındadır, qəhrəman isə ayrıca node — ikisi ayrı gəlir.
 	# Fon isə HEÇ sönmür: qara kadrdan açılan menyu "yüklənir" kimi oxunur.
 	var t := create_tween()
+	t.tween_interval(delay)
 	t.tween_method(func(v: float) -> void: _intro = v, 0.0, 1.0, INTRO_TIME * 0.55) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
-	_pop_hero(INTRO_TIME * 0.28)
+	_pop_hero(delay + INTRO_TIME * 0.28)
 
 	var step := INTRO_TIME / maxf(float(groups.size()), 1.0)
 	for i in groups.size():
 		var g := groups[i]
 		var fade := create_tween()
-		fade.tween_interval(step * float(i) * 0.55)
+		fade.tween_interval(delay + step * float(i) * 0.55)
 		fade.tween_property(g, "modulate:a", 1.0, 0.22)
 
 	# OYNA sonuncu və yeganə SIÇRAYAN elementdir.
 	_play.scale = Vector2(0.86, 0.86)
 	var pop := create_tween()
-	pop.tween_interval(INTRO_TIME * 0.72)
+	pop.tween_interval(delay + INTRO_TIME * 0.72)
 	pop.tween_property(_play, "scale", Vector2.ONE, 0.3) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 

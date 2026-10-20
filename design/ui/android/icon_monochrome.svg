@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <!-- Android 13+ «temalı ikon» qatı: yalnız forma, rəngi telefon verir. Mikrob
+       dolu dairədir, içindəki toplar DƏLİKDİR (evenodd) — ön qatla eyni yerdə. -->
+  <g transform="translate(216 216) scale(0.643) translate(-256 -256)" fill="#FFFFFF">
+    <circle cx="256" cy="256" r="196" fill="none" stroke="#FFFFFF" stroke-width="12"/>
+    <path fill-rule="evenodd" d="M256 130a126 126 0 1 0 0.01 0z
+      M218 196a24 24 0 1 0 0.01 0z
+      M292 215a19 19 0 1 0 0.01 0z
+      M232 271a21 21 0 1 0 0.01 0z
+      M296 282a16 16 0 1 0 0.01 0z"/>
+  </g>
+</svg>

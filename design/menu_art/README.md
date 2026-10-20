@@ -91,6 +91,86 @@ ikonlarının rəngi `MenuV2.MODE_TINT` ilə eynidir — ana ekrandakı rejim ka
 da həmin rəngə boyanır. Brif: `brief/BRIEF_ICONS.md` və `brief/BRIEF_ICONS2.md`, promptlar:
 `brief/PROMPTS_ICONS.md` və `brief/PROMPTS_ICONS2.md`.
 
+## Loqo və açılış ekranı
+
+Oyun əvvəl Godot loqosu ilə açılırdı. İndi açılışda oyunun öz loqosudur — iki
+sətirli söz nişanı: iri laym **GERM**, altında fil sümüyü rəngli **ARENA**, qalın
+tünd kontur və qısa tünd-firuzəyi dərinlik. Parıltı, işıq şüası, metal, nişan
+lövhəsi yoxdur: sahib "sadə, süni intellekt loqosu kimi şatafatlı olmayan,
+premium oyun hissi verən" loqo istədi.
+
+| Fayl (oyunda) | Mənbə | Nə |
+|---|---|---|
+| `game/assets/ui/boot_splash.png` | `raw/logo/logo_c2.png` | Açılış şəkli: 1920×1080, şəffaf, loqo hündürlüyün 38%-i, mərkəzdə. Solda petri halqasında mikrob nişanı, sağda iki sətir — sahib C2-ni seçib |
+| — | `raw/logo/logo_a2.png` | Variant A2: yalnız iki sətirlik söz nişanı (alternativ) |
+| — | `raw/logo/logo_a.png`, `logo_b.png`, `logo_c.png` | 1-ci turun variantları (A əvvəl oyunda idi) |
+
+Codex ilə çəkilib (`gpt-6.1-sol`, reasoning effort **`max`**, Codex CLI 0.159.2), iki
+turda. İstinadlar: ana ekranın kadrı, dörd təsdiqlənmiş şəkil və "GERM ARENA"
+sözünün oyunun öz başlıq şriftində (Baloo 2, `wght` 800) çəkilmiş nümunəsi — hərflər
+menyudakı OYNA, AMÖB yazıları ilə eyni ailədən görünür. Yuxarıdakı 3-cü sərt qayda
+(yazı yoxdur) loqoya aid deyil — loqonun işi elə addır.
+
+- **1-ci tur** — üç istiqamət (A iki sətir, B bir sətir + mikrob, C nişan + iki
+  sətir). Brif: `brief/BRIEF_LOGO.md`, hesabat və promptlar: `brief/PROMPTS_LOGO.md`.
+- **2-ci tur** — A və C cilalanıb. A-da dərinlik dənəli idi, ARENA-nın parıltıları
+  ləkə kimi oxunurdu, kontur nazik, A-ların dəliyi kiçik idi; A2-də kontur ~1.4×
+  qalın və bərabər, doqquz hərfdə eyni kapsul parıltı, dərinlik düz #0E3A40,
+  dəliklər açıq. C-də halqa tünd fonda itirdi; C2-də görünən şüşə-firuzəyi halqa,
+  sakit amöb. Brif: `brief/BRIEF_LOGO2.md`, hesabat: `brief/PROMPTS_LOGO2.md`.
+
+2-ci turda Codex-in **son ixracı işlənmir** — onun öz PowerShell "təmizləməsi"
+dərinliyi demək olar görünməz etdi. Oyuna onun image_gen QARALAMASI girir
+(`raw/logo/src/*_key.png`, çəhrayı fonda): fon `process.gd -- keyc` ilə çıxarılır,
+şəklin dəni `ffmpeg nlmeans` ilə yığılır (kənarlara toxunmur). `keyc` açar rəngini
+künclərdən götürür: image_gen-in "magentası" əslində ~#FC40C1-dir və köhnə `key`
+rejimi (#FF00FF) onu səhv oxuyur. Ağ və sarı fonda yoxlanılıb — çəhrayı haşiyə qalmır.
+
+Şəkil üç yerdə görünür, üçündə də **eyni fonda** (`#070F12`, oyunun
+`default_clear_color`-u):
+
+1. Mühərrikin açılış ekranı — `project.godot` → `application/boot_splash/*`.
+   `Keep` rejimi bütün kətanı ekrana sığdırır, ona görə loqonun ölçüsünü kətan təyin edir.
+2. Brauzerin yükləmə ekranı — ixrac şəkli `index.png` kimi yazır, `shell.html`
+   onu `fullsize--true` ilə (`object-fit: contain`) eyni ölçüdə göstərir.
+3. Oyunun içində [`BootLogo`] — menyu yüklənənə qədər həmin şəkli saxlayır, sonra əvvəl
+   loqo tünd fonda sönür (0.25 s), sonra fon əriyib menyunu açır (0.3 s). Mühərrik
+   şəkli yalnız ilk kadra qədər göstərir; onsuz loqo kəsilib menyu birdən çıxırdı.
+
+`boot_splash.png.import` → `skip`: şəkil teksturaya çevrilmir. İxrac açılış şəklini onsuz
+da xam PNG kimi saxlayır və `BootLogo` onu baytlarla oxuyur — APK-da bir nüsxədir.
+
+**Android.** Android 12+ mühərrikdən ƏVVƏL öz açılış ekranını göstərir. Godot-un hazır
+şablonunda orada Godot robotu, mavi fon, "temalı ikon" qatında da Godot robotu idi.
+İxrac seçimləri (`export_presets.cfg`, iki Android profili):
+
+| Seçim | Fayl | Niyə |
+|---|---|---|
+| `launcher_icons/adaptive_foreground_432x432` | `game/assets/ui/android/icon_foreground.png` | Mikrob + halqalar, 264 px-lik zəmanətli dairənin içində |
+| `launcher_icons/adaptive_background_432x432` | `…/icon_background.png` | Petri qabının dibi; şablonun mavi fonunu əvəz edir |
+| `launcher_icons/adaptive_monochrome_432x432` | `…/icon_monochrome.png` | Temalı ikon (Android 13+); şablonda Godot robotu idi |
+| `splash_screen/icon` | `…/splash_icon.png` | Açılış ekranının ikonu — ÖZ tünd diski ilə |
+| `screen/background_color` | `#070F12` | İlk kadra qədər pəncərənin rəngi (əvvəl qara idi) |
+
+Tələ: hazır (gradle-siz) APK-da sistem açılış ekranının FONU dəyişmir — şablon ona
+rəng yerinə şəkil (`@mipmap/icon_background`) verir, Android onu oxumur və ağ (tünd
+rejimdə boz) fon çəkir. `splash_screen/background_color` yalnız gradle build-də işləyir.
+Ona görə ikon öz tünd diskini daşıyır və istənilən fonda eyni görünür. Emulyatorda
+(Android 14) yazılıb: ağ fonda ikon → tünd-firuzəyi → loqo → menyu, Godot loqosu yoxdur.
+
+Mənbələr `design/ui/android/*.svg`-dir (`app_icon.svg`-nin mikrobu, 0.643 miqyasında).
+`.import` → `skip`: onları yalnız ixrac oxuyur, oyuna lazım deyil.
+
+```bash
+# Loqo: çəhrayı fonlu qaralamadan şəffaf fayla, sonra dəni yığmaq
+GODOT --headless --path <boş_layihə> -s process.gd -- keyc raw/logo/src/logo_c2_key.png c2_keyed.png 1536
+ffmpeg -i c2_keyed.png -filter_complex "[0]format=rgba,split[x][y];[x]alphaextract[a];[y]format=gbrp,nlmeans=s=3:p=5:r=11[c];[c][a]alphamerge,format=rgba" raw/logo/logo_c2.png
+# Açılış şəkli (loqo hündürlüyün 38%-i — C2 enlidir, A2 üçün 0.44 idi):
+GODOT --headless --path <boş_layihə> -s process.gd -- splash raw/logo/logo_c2.png game/assets/ui/boot_splash.png 1920 1080 0.38
+# Android ikon qatları:
+GODOT --headless --path <boş_layihə> -s process.gd -- png design/ui/android/icon_foreground.svg game/assets/ui/android/icon_foreground.png
+```
+
 ## Sərt qaydalar
 
 Bunlar `brief/STYLE.md`-dədir və hər yeni şəkil üçün keçərlidir:

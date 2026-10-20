@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <!-- Android adaptiv ikonunun ÖN qatı: app_icon.svg-nin mikrobu və halqaları,
+       0.643 miqyasında. Maska 432-nin ortadakı 288 px-ini göstərir, hər formada
+       görünməsi zəmanətli olan isə 264 px-lik dairədir — xarici halqa onun içindədir.
+       Android 12+ açılış ekranı da ikon kimi bunu göstərir. -->
+  <defs>
+    <radialGradient id="germ" cx="38%" cy="32%" r="72%">
+      <stop offset="0%" stop-color="#9BFF7E"/>
+      <stop offset="55%" stop-color="#49CB63"/>
+      <stop offset="100%" stop-color="#155632"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(216 216) scale(0.643) translate(-256 -256)">
+    <circle cx="256" cy="256" r="196" fill="none" stroke="#1E4650" stroke-width="10"/>
+    <circle cx="256" cy="256" r="150" fill="none" stroke="#2FE8E0" stroke-width="4" opacity="0.2"/>
+    <circle cx="256" cy="256" r="122" fill="url(#germ)"/>
+    <circle cx="256" cy="256" r="122" fill="none" stroke="#D6FFC9" stroke-width="9" opacity="0.9"/>
+    <g fill="#F2FFF0">
+      <circle cx="218" cy="220" r="24"/>
+      <circle cx="292" cy="234" r="19"/>
+      <circle cx="232" cy="292" r="21"/>
+      <circle cx="296" cy="298" r="16"/>
+      <circle cx="262" cy="252" r="13" opacity="0.8"/>
+    </g>
+  </g>
+</svg>

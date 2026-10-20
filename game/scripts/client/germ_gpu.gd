@@ -157,17 +157,24 @@ static func warm_up(host: CanvasItem, done := Callable()) -> void:
 			done.call()
 		return
 	_warmed = true
-	var row := acquire(null)
-	var layers: Array[Node2D] = [
-		layer(body_mesh(Const.Species.AMOEBA), false, row),
-		layer(front_mesh(Const.Species.HELIOZOAN), false, row),
-	]
-	for l in layers:
-		l.modulate = Color(1.0, 1.0, 1.0, 0.01)
-		set_extent(l, 100000.0)
-		host.add_child(l)
-	_dirty = true
 	var tree := host.get_tree()
+	# Üç iş ayrı kadrlarda: mesh-lərin qurulması (GDScript), kontur keçidinin shader-i
+	# (`acquire` keçidi yaradır, o hər kadr çəkilir), sonra əsas shader (qatlar). Bir
+	# kadrda olanda menyunun isinmə donması üçünün cəmi idi.
+	var body := body_mesh(Const.Species.AMOEBA)
+	var front := front_mesh(Const.Species.HELIOZOAN)
+	await tree.process_frame
+	var row := acquire(null)
+	_dirty = true
+	for i in 2:
+		await tree.process_frame
+	var layers: Array[Node2D] = []
+	if is_instance_valid(host) and host.is_inside_tree():
+		layers = [layer(body, false, row), layer(front, false, row)]
+		for l in layers:
+			l.modulate = Color(1.0, 1.0, 1.0, 0.01)
+			set_extent(l, 100000.0)
+			host.add_child(l)
 	for i in 3:
 		await tree.process_frame
 	for l in layers:
@@ -194,6 +201,17 @@ static func warm_up(host: CanvasItem, done := Callable()) -> void:
 				[Const.Species.AMOEBA, 0]]:
 			await tree.process_frame
 			SuperFx._mesh_for(m[0], m[1])
+	# Mikrobun qalan mesh-ləri də (hər növün gövdəsi və ön qatı) — arenanın ilk
+	# kadrlarında on mikrob doğulanda qurulmasın. Hər biri öz kadrında.
+	for kind in [Const.Species.CILIATE, Const.Species.HELIOZOAN, Const.Species.AMOEBA]:
+		for key in ["body%d" % kind, "front%d" % kind]:
+			if _meshes.has(key):
+				continue
+			await tree.process_frame
+			if key.begins_with("body"):
+				body_mesh(kind)
+			else:
+				front_mesh(kind)
 	await tree.process_frame
 	if done.is_valid():
 		done.call()
@@ -283,13 +301,19 @@ static func set_extent(l: CanvasItem, ext: float) -> void:
 
 
 ## Superdən ƏVVƏL çəkilən hər şey: kölgədən təhlükə çatlarına qədər.
+##
+## Keş massivlərdən ƏVVƏL yoxlanır: hər mikrobun doğuşu ([method GermVisual._gpu_attach])
+## bunu çağırır və massivlər əvvəl hər dəfə qurulub atılırdı — masaüstündə növ
+## başına 1.6–3.3 ms, telefonda ~13 dəfə çox, TƏK QALAN-ın başlanğıcında on dəfə.
 static func body_mesh(kind: int) -> ArrayMesh:
-	return _mesh("body%d" % kind, body_arrays(kind))
+	var key := "body%d" % kind
+	return _meshes[key] if _meshes.has(key) else _mesh(key, body_arrays(kind))
 
 
 ## Superdən SONRA çəkilənlər: yoldaş və doğuş halqaları, qığılcımlar, parıltı.
 static func front_mesh(kind: int) -> ArrayMesh:
-	return _mesh("front%d" % kind, front_arrays(kind))
+	var key := "front%d" % kind
+	return _meshes[key] if _meshes.has(key) else _mesh(key, front_arrays(kind))
 
 
 ## Gövdə mesh-inin massivləri (testlər mesh-siz yoxlayır — başsız rejimdə

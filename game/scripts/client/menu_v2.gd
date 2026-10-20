@@ -66,6 +66,8 @@ extends Control
 ## oyun kodu menyunun özü ilə birlikdə kompilyasiya olunurdu — oyunçu OYNA-ya
 ## basmamışdan, menyu açılarkən. Brauzerdə bu, açılış donmasının bir hissəsi idi.
 const ARENA_SCENE := "res://scenes/game/arena.tscn"
+## Mikrobun GPU çəkilişi — isinmə üçün (bax [method _warm_up]).
+const GERM_GPU := "res://scripts/client/germ_gpu.gd"
 
 ## Kənar boşluq. Yatayda kənarlar barmağın altında qalır, ona görə heç bir
 ## düymə ekranın lap kənarına yapışmır.
@@ -315,6 +317,12 @@ var _joining := false
 var _probe_token := 0
 ## Arena səhnəsi fonda yüklənirmi (bax [method _arena_scene]).
 var _arena_requested := false
+## `germ_gpu.gd` isinmə üçün fonda yüklənirmi (bax [method _warm_up]).
+var _germ_requested := false
+## Fon yükləməsi bitməmiş basılmış OYNA/MƏŞQ — arenanı quran funksiya (bax
+## [method _enter_arena]) və bu arada gələn ad cədvəli.
+var _pending_entry := Callable()
+var _pending_roster = null
 ## Xəritənin fonda yüklənən teksturaları (bax [method _preload_map]): sorğusu
 ## verilmiş yollar və arenaya keçəndə götürülən resurslar.
 var _map_paths := PackedStringArray()
@@ -376,9 +384,31 @@ func _ready() -> void:
 	Settings.web_page_ready()
 	# Mikrobun shader-ləri menyu göründükdən SONRA kompilyasiya olunur, arenanın ilk
 	# anında yox (bax [method GermGPU.warm_up]). `load` ilə: tipli istinad
-	# GermVisual-ı da menyunun açılışında kompilyasiya etdirərdi.
-	get_tree().create_timer(0.4).timeout.connect(func() -> void:
-		load("res://scripts/client/germ_gpu.gd").warm_up(self, _preload_arena))
+	# GermVisual-ı da menyunun açılışında kompilyasiya etdirərdi. Skriptin özü fonda
+	# yüklənir (bax [method _warm_up]).
+	if OS.has_feature("threads"):
+		_germ_requested = ResourceLoader.load_threaded_request(GERM_GPU) == OK
+	get_tree().create_timer(0.4).timeout.connect(_warm_up)
+
+
+## Mikrobun shader-lərinin isinməsi — `germ_gpu.gd` (və onunla [GermVisual],
+## [SuperFx]…) fonda yüklənib qurtarandan sonra.
+##
+## Əvvəl skript isinmə kadrında ana axında yüklənirdi: emulyatorda o kadrın 60–68
+## ms-i (telefonda ~4 dəfə çox). Fon yükləməsi hələ bitməyibsə, növbəti kadrda
+## yenidən baxılır — ana axın gözləmir. Axınsız brauzerdə əvvəlki kimi `load`.
+func _warm_up() -> void:
+	if _germ_requested:
+		if ResourceLoader.load_threaded_get_status(GERM_GPU) \
+				== ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			get_tree().process_frame.connect(_warm_up, CONNECT_ONE_SHOT)
+			return
+		_germ_requested = false
+		var script = ResourceLoader.load_threaded_get(GERM_GPU)
+		if script != null:
+			script.warm_up(self, _preload_arena)
+			return
+	load(GERM_GPU).warm_up(self, _preload_arena)
 
 
 ## Arena (skriptləri, teksturaları) menyu açıq ikən fonda yüklənir, OYNA-da yox
@@ -418,6 +448,10 @@ func _preload_map() -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
+	# OYNA/MƏŞQ fon yükləməsi bitməmiş basılıbsa (bax [method _enter_arena]).
+	if _pending_entry.is_valid() and not _background_loading():
+		_enter_arena(_pending_entry)
+		return
 	if _arena_requested and not _map_requested and ResourceLoader.load_threaded_get_status(
 			ARENA_SCENE) == ResourceLoader.THREAD_LOAD_LOADED:
 		_preload_map()
@@ -2486,9 +2520,7 @@ func _practice() -> void:
 	# Yoxlama üçün açılmış bağlantı məşqdə lazım deyil — açıq qalsa server
 	# oyunçunu onlayn sayardı.
 	Net.disconnect_from_server()
-	var arena = _arena_scene().instantiate()
-	arena.configure_practice()
-	_swap_to(arena)
+	_enter_arena(func(arena) -> void: arena.configure_practice())
 
 
 func _on_connected() -> void:
@@ -2520,9 +2552,53 @@ func _on_join_rejected(reason: String) -> void:
 
 
 func _on_world_joined(info: Dictionary) -> void:
+	_enter_arena(func(arena) -> void: arena.configure_online(info))
+
+
+## Arenaya keçid. Fon yükləməsi (bax [method _background_loading]) hələ gedirsə,
+## keçid onun sonuna qədər TƏXİRƏ salınır və hər kadr yoxlanır ([method _process]).
+##
+## Əvvəl ana axın `load_threaded_get`-də gözləyirdi və menyu yükləmənin qalanı qədər
+## donurdu (masaüstü debug-da MƏŞQ menyu açılan kimi basılanda 0.5–0.7 s; telefonda
+## yükləmə bir neçə saniyədir). İndi menyu bu arada işləyir, ən uzun kadr keçidin
+## özüdür (~0.1 s). Onlayn rejimdə gözləmə vaxtı gələn ad cədvəli saxlanır və
+## arenaya verilir — reyestr yalnız dəyişəndə göndərilir, itsəydi adlar görünməzdi.
+func _enter_arena(configure: Callable) -> void:
+	# OYNA isinmədən əvvəl basılıbsa, arena hələ istənməyib — fon yükləməsi indi başlayır
+	# (yoxsa ana axında yüklənib menyunu ~0.5 s dondururdu).
+	_preload_arena()
+	if _background_loading():
+		if not Net.roster_arrived.is_connected(_buffer_roster):
+			Net.roster_arrived.connect(_buffer_roster)
+		_pending_entry = configure
+		return
+	_pending_entry = Callable()
+	if Net.roster_arrived.is_connected(_buffer_roster):
+		Net.roster_arrived.disconnect(_buffer_roster)
 	var arena = _arena_scene().instantiate()
-	arena.configure_online(info)
+	configure.call(arena)
 	_swap_to(arena)
+	if _pending_roster != null:
+		arena.call("_on_roster", _pending_roster)
+		_pending_roster = null
+
+
+## Fonda yüklənən bir şey hələ bitməyibmi: arena səhnəsi, xəritənin teksturaları,
+## isinmənin `germ_gpu.gd`-si.
+func _background_loading() -> bool:
+	var paths := _map_paths.duplicate()
+	if _arena_requested:
+		paths.append(ARENA_SCENE)
+	if _germ_requested:
+		paths.append(GERM_GPU)
+	for path in paths:
+		if ResourceLoader.load_threaded_get_status(path) == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			return true
+	return false
+
+
+func _buffer_roster(table: Dictionary) -> void:
+	_pending_roster = table
 
 
 ## Arena səhnəsi — fonda yüklənibsə ([method _preload_arena]) oradan, yoxsa indi.

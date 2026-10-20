@@ -1075,10 +1075,30 @@ qığılcımlar, zərbə parıltısı) → ad. Node-un öz `_draw`-ı GPU yolund
 
 Shader-lər ilk çəkilişdə kompilyasiya olunur; zəif telefonda bu, arenanın ilk
 anında donma olardı. Müasir oyunlardakı kimi (shader / PSO precache) bu iş qabağa
-çəkilib: menyu göründükdən 0.4 saniyə sonra üç kadr boyunca demək olar şəffaf iki
-qat və kontur keçidi çəkilir ([`GermGPU.warm_up`](game/scripts/client/germ_gpu.gd));
-menyusuz açılışda bunu arena edir. Sürücü kompilyasiya olunmuş shader-i diskdə
-saxladığı üçün bu, əsasən quraşdırmadan sonrakı ilk açılışda hiss olunur.
+çəkilib: menyu göründükdən 0.4 saniyə sonra demək olar şəffaf iki qat və kontur
+keçidi çəkilir ([`GermGPU.warm_up`](game/scripts/client/germ_gpu.gd)); menyusuz
+açılışda bunu arena edir. Sürücü kompilyasiya olunmuş shader-i diskdə saxladığı
+üçün bu, əsasən quraşdırmadan sonrakı ilk açılışda hiss olunur.
+
+İsinmə bir kadr deyil, hissələrdir: `germ_gpu.gd` (və onunla `GermVisual`, `SuperFx`)
+menyu açılan kimi **fon axınında** yüklənir (`MenuV2._warm_up`; axınsız brauzerdə
+əvvəlki kimi `load`), sonra ayrı-ayrı kadrlarda mesh-lər qurulur, kontur keçidinin
+shader-i, əsas shader, super effektinin shader-i kompilyasiya olunur və qalan
+növlərin mesh-ləri qurulur. Əvvəl bunların hamısı bir kadrda idi. Masaüstü release,
+telefon ssenarisi (6 qaçış): menyunun isinmə kadrı 72–103 → **16–27 ms**; emulyatorda
+(kompüter yüklü, yalnız fon yükləməsi) 167–185 → 120–142 ms; Chrome-da 13 dəfə yavaş
+prosessorla (A04s modeli, shader keşi isti) menyunun ən uzun kadrı 3.5–3.6 → 2.5–2.7 s
+(brauzerdə skript yenə ana axında yüklənir — o hissə qalır). Mikrob stendi iki
+versiyada piksel-piksel eynidir. Mesh-in keşi də
+massivlərdən ƏVVƏL yoxlanır: hər mikrobun doğuşu `body_mesh`/`front_mesh`-i çağırır
+və massivlər əvvəl hər dəfə qurulub atılırdı (masaüstündə növ başına 1.6–3.3 ms,
+telefonda ~13 dəfə çox; TƏK QALAN-ın başlanğıcında on dəfə, SONSUZ ARENA-da hər
+dirilmədə).
+
+Brauzerdə (Chrome, ANGLE/D3D11) əsas shader-in kompilyasiyası **3.6–4.9 s**-dir —
+menyu açılandan 0.3 s sonra ekran o qədər donur (F1-dən bəri belədir, bu ölçü ilə
+tapıldı). Chrome kompilyasiyanı diskdə saxlayır: eyni profillə ikinci açılışda o
+kadr 38–53 ms-dir, yəni donma yalnız ilk açılışda (və shader dəyişəndən sonra) olur.
 
 **Görüntü itmir.** Shader-lər GDScript formullarının bir-bir surətidir; antialias-lı
 xətlər Godot-un öz `canvas_item_add_polyline` həndəsəsidir (en kompensasiyası,
@@ -1336,6 +1356,16 @@ axında kompilyasiya edərdi. (3) Brauzerin axınsız build-ində
 (`variant/thread_support=false`) sorğu yükləməni çağırışın İÇİNDƏ edir və menyunu
 dondurardı (Chrome-da 312 ms) — orada arena əvvəlki kimi OYNA-da yüklənir
 (`OS.has_feature("threads")`).
+
+OYNA/MƏŞQ fon yükləməsi bitməmiş basılsa (menyu açılan kimi; telefonda bu, bir neçə
+saniyəlik pəncərədir), keçid gözləyir, amma menyunu bloklamır (`MenuV2._enter_arena`):
+yükləmə bitənə qədər hər kadr yoxlanır, arena hələ istənməyibsə, elə o an fonda
+istənir. Əvvəl ana axın `load_threaded_get`-də və ya sinxron `load`-da gözləyirdi —
+masaüstü debug-da menyu 520–800 ms donurdu, indi ən uzun kadr keçidin özüdür
+(95–125 ms). Onlayn rejimdə bu arada gələn ad cədvəli saxlanıb arenaya verilir
+(reyestr yalnız dəyişəndə göndərilir). Yoxlanıb: MƏŞQ menyu açılandan 0.02–1.5 s
+sonra, arena səhnəsi yüklənərkən, onlayn cavab yüklənərkən və MİKROBLAR səhifəsi
+`germ_gpu.gd` fonda yüklənərkən — ilişmə yoxdur, cədvəl çatır.
 
 Ölçülüb (2026-10-19, menyudan MƏŞQ-ə keçid kadrı, menyunun öz `_practice()`-i ilə):
 

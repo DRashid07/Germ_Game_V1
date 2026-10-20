@@ -401,6 +401,15 @@ keçidlərinin hazırlığı da gedir.
    > uzanan kadr (+20–90 ms) və ~34 MB tekstura yaddaşıdır.
 2. **Shader qızdırma** — axtarış ekranında hər material bir dəfə ekrandan kənarda
    çəkilir. Mobile render-ə keçilsə, Shader Baker bunu ixracda edir.
+   > **Menyunun isinməsi hissələrə bölünüb (2026-10-20, README «Mikrob GPU-da çəkilir»).**
+   > `germ_gpu.gd` fonda yüklənir, mesh-lər və hər shader ayrı kadrdadır; masaüstü
+   > release-də isinmə kadrı 72–103 → 16–27 ms, Chrome-un A04s modelində (13×) ən uzun
+   > kadr 3.5 → 2.5 s. Mesh keşi massivlərdən əvvəl yoxlanır (hər doğuşda boş yerə
+   > qurulurdu). Fon yükləməsi bitməmiş OYNA menyunu bloklamır (520–800 → ~100 ms,
+   > masaüstü debug). Tapıldı: Chrome-da (ANGLE) əsas
+   > shader-in ilk kompilyasiyası 3.6–4.9 s-dir (ikinci açılışda keşdən, ~50 ms).
+   > Qalan: `map_floor`, `water_motes` və parlama keçidləri hələ arenanın ilk
+   > kadrında kompilyasiya olunur.
 3. **Hovuzlar:** `BurstFx`, effekt node-ları, zərbə rəqəmləri — matçda yeni node
    yaranmır.
 4. **Android ixrac şablonu:** `disable_3d=yes`, `lto=full`, istifadə olunmayan

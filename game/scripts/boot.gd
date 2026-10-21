@@ -75,27 +75,30 @@ func _start_practice(args: PackedStringArray) -> void:
 	if not mode.is_empty():
 		Net.mode = Const.mode_from(int(mode))
 
-	# `--quality <0|1|2>` — qrafika səviyyəsi (0 yüksək, 1 aşağı, 2 minimum).
-	#
-	# `--species` və `--mode` ilə eyni səbəb: məşq menyunu keçir, yəni
-	# `settings.cfg` oxunmur. Onsuz aşağı keyfiyyətin görüntüsünü təkrarlana
-	# bilən şəkildə yoxlamaq mümkün deyil.
-	#
-	# Səviyyə yalnız çəkilişi yox, kadr həddini və render ölçüsünü də dəyişir
-	# (MİNİMUM: 30 kadr, 1280×720) — ona görə ayarlar yenidən tətbiq olunur.
-	# Avtomatika da söndürülür: seçilmiş səviyyə ölçmə boyu sabit qalmalıdır.
+	_quality_arg(args)
+	_spawn_practice(args)
+
+	_setup_screenshot(args)
+	_setup_perf(args)
+	_setup_frame_probe(args, _spawn_practice.bind(args))
+	_setup_super_probe(args)
+
+
+## `--quality <0|1|2>` — qrafika səviyyəsi (0 yüksək, 1 aşağı, 2 minimum).
+##
+## `--species` və `--mode` ilə eyni səbəb: məşq menyunu keçir, yəni
+## `settings.cfg` oxunmur. Onsuz aşağı keyfiyyətin görüntüsünü təkrarlana
+## bilən şəkildə yoxlamaq mümkün deyil.
+##
+## Səviyyə yalnız çəkilişi yox, kadr həddini və render ölçüsünü də dəyişir
+## (MİNİMUM: 30 kadr, 1280×720) — ona görə ayarlar yenidən tətbiq olunur.
+## Avtomatika da söndürülür: seçilmiş səviyyə ölçmə boyu sabit qalmalıdır.
+func _quality_arg(args: PackedStringArray) -> void:
 	var q := _arg_value(args, "--quality", "")
 	if not q.is_empty():
 		Net.quality = Const.quality_from(int(q))
 		Settings.quality_chosen = true
 		Settings.apply()
-
-	_spawn_practice(args)
-
-	_setup_screenshot(args)
-	_setup_perf(args)
-	_setup_frame_probe(args)
-	_setup_super_probe(args)
 
 
 ## Məşq arenasını yaradıb səhnə edir. Ayrıca funksiyadır: kadr probu oyunçu
@@ -258,15 +261,16 @@ func _setup_perf(args: PackedStringArray) -> void:
 
 
 ## `--frame-probe <saniyə> [--probe-phases]` — kadrın işini hissələrə bölür, fazalarda
-## qatları növbə ilə gizlədib payını ölçür (bax `tools/frame_probe.gd`).
-func _setup_frame_probe(args: PackedStringArray) -> void:
+## qatları növbə ilə gizlədib payını ölçür (bax `tools/frame_probe.gd`). [param respawn]
+## oyunçu partlayanda yeni arena açır: məşqdə yeni yerli dünya, onlaynda yenidən giriş.
+func _setup_frame_probe(args: PackedStringArray, respawn: Callable) -> void:
 	var secs := _arg_value(args, "--frame-probe", "")
 	if secs.is_empty():
 		return
 	var probe = _tool("frame_probe").new()
 	probe.duration = maxf(float(secs), 5.0)
 	probe.phases = args.has("--probe-phases")
-	probe.respawn = _spawn_practice.bind(args)
+	probe.respawn = respawn
 	get_tree().root.add_child.call_deferred(probe)
 
 
@@ -316,6 +320,12 @@ func _start_auto_client(args: PackedStringArray) -> void:
 	# `--net-probe [--net-probe-csv <fayl>]` — şəbəkə ölçüsü (bax `tools/net_probe.gd`).
 	client.net_probe = args.has("--net-probe")
 	client.net_probe_csv = _arg_value(args, "--net-probe-csv", "")
+	_quality_arg(args)
+	# `--frame-probe` onlayn matçda da (bax `tools/frame_probe.gd`): mikrob partlayanda
+	# client çıxmır — prob arenanı bağlayır və client dünyaya yenidən girir.
+	if args.has("--frame-probe"):
+		client.keep_playing = true
+		_setup_frame_probe(args, client.rejoin)
 	get_tree().root.add_child.call_deferred(client)
 	_setup_super_probe(args)
 

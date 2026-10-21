@@ -847,7 +847,7 @@ game/                    Godot layihəsi
       species_preview.gd Növün görüntü stendi — tək mikrob, böyüdülmüş
       map_preview.gd     Xəritə düzümünün stendi — bütün qab yuxarıdan
       perf_probe.gd      Kadr vaxtı və çəkiliş çağırışı ölçmə
-      frame_probe.gd     Kadrın işi hissələrlə, qatların payı, canlar boyu (`--frame-probe`)
+      frame_probe.gd     Kadrın işi hissələrlə, qatların payı, canlar boyu — məşqdə və onlayn (`--frame-probe`)
       germ_bench.gd      Mikrob stendi: çəkilişin qiyməti, köhnə və GPU yolu yan-yana (`--germ-bench`)
   shaders/germ.gdshader  Mikrobun bütün qatları — GDScript çəkilişinin bir-bir surəti
   shaders/germ_shape.gdshader  Mikrobun konturu — GPU-da, kadrda bir dəfə (kontur keçidi)
@@ -924,7 +924,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (698 test)
+# Simulyasiya + World + dostluq/komanda testləri (700 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1001,7 +1001,48 @@ Orta, **1% ən pis** kadr, çəkiliş çağırışı və yaddaş yazılır.
 # Kadrın işi hissələrlə (fizika / proses / render), ilişmələr, yalnız canlı matç
 GermArena.console.exe --resolution 1600x720 --disable-vsync --max-fps 0 \
     -- --practice --mode 1 --quality 0 --auto --frame-probe 60 [--probe-phases]
+
+# Onlayn matç: server ayrıca prosesdə (botlar boş yerləri tutur), mikrob partlayanda
+# client çıxmır — eyni bağlantı ilə yeni matça girir və ölçmə davam edir
+GermArena.console.exe --resolution 1600x720 --disable-vsync \
+    -- --autoclient --host ws://127.0.0.1:27015 --mode 1 --quality 0 --frame-probe 60
 ```
+
+Onlayn matçın ölçüsü (2026-10-21, TƏK QALAN, YÜKSƏK):
+
+| | Emulyator (A04s ekranı, APK) | Masaüstü release, ölçü nöqtələri ilə (60 FPS, 5 qaçış) |
+|---|---|---|
+| FPS / 1% ən pis kadr | 59.5 / 25.9 ms | — |
+| Məşğulluq (orta) | 5.87 ms | 2.6–3.0 ms |
+| Fizika | 0.19 ms | 0.03–0.05 ms |
+| Proses | 2.17 ms | 1.0–1.3 ms |
+| Render | 3.51 ms | 1.5–1.8 ms |
+| 50 ms-dən uzun ilişmə | yoxdur | yoxdur |
+
+"Fizika" hissəsinə şəbəkə paketlərinin açılması da düşür: Godot `multiplayer.poll()`-u
+`process_frame`-dən ƏVVƏL çağırır. Masaüstündə bu, kadrda 0.05 ms idi.
+
+Oyunda fizika qovşağı yoxdur. Buna görə boş fizika və naviqasiya serverlərini
+söndürmək də sınandı (`PhysicsServer2D/3D` və `NavigationServer2D/3D`, `set_active(false)`).
+Nəticə: fizika hissəsi yenə 0.03 ms qalır (iki qaçış). O vaxt server addımı deyil,
+`SceneTree`-nin öz işidir. Ona görə bu dəyişiklik edilmədi.
+
+Masaüstündə proses hissəsinin bölgüsü (kadr başına):
+
+| İş | Kadr başına |
+|---|---|
+| Arena skripti, cəmi | 0.65 ms |
+| — snapshot-ların emalı | 0.11 ms |
+| — topların çəkilməsi | 0.10 ms |
+| — tick | 0.09 ms (bir tick 0.18 ms) |
+| — mikrobların yerləşdirilməsi | 0.08 ms |
+| — öz topların proqnozu | 0.05–0.07 ms |
+| — mühitin animasiyası | 0.06 ms |
+| — qida | 0.03–0.04 ms |
+| `GermVisual._process` | 0.04 ms (3–4 mikrob) |
+| Zərrəciklər, izlər, effektlər | ~0.07 ms |
+
+Tək böyük yer yoxdur. Səhnə də kiçikdir: 269 node, 156 görünən sprite.
 
 [`tools/frame_probe.gd`](game/scripts/tools/frame_probe.gd) kadrın ana axında
 keçən bütün vaxtını (məşğulluq) ölçür — vsync-dən və kadr həddindən asılı deyil,
@@ -1099,6 +1140,33 @@ Brauzerdə (Chrome, ANGLE/D3D11) əsas shader-in kompilyasiyası **3.6–4.9 s**
 menyu açılandan 0.3 s sonra ekran o qədər donur (F1-dən bəri belədir, bu ölçü ilə
 tapıldı). Chrome kompilyasiyanı diskdə saxlayır: eyni profillə ikinci açılışda o
 kadr 38–53 ms-dir, yəni donma yalnız ilk açılışda (və shader dəyişəndən sonra) olur.
+
+**Arenanın özünə qalan proqramlar da isidilir (2026-10-21).** Godot hər kompilyasiya
+olunmuş proqramı `user://shader_cache`-ə yazır. Soyuq keşlə əvvəl yalnız menyu, sonra
+matç işlədilib fayllar müqayisə olundu. Matçlar 60–100 s idi, 3–6 ölümlə, hər iki
+rejimdə, üç keyfiyyətdə, onlayn da; Android-də də yoxlanıb (emulyator, root ilə).
+Parlama, post-proses və su zərrəcikləri menyuda onsuz da kompilyasiya olunur. Matça
+yalnız iki proqram qalırdı: xəritənin döşəməsi (`map_floor.gdshader`) və nazik
+xətlərin "primitive" variantı (Godot 4.7-də hər `draw_line` belədir). İndi isinmənin
+son iki kadrında onlar da ekrandan kənarda çəkilir: element kəsilmir, həndəsəsi isə
+görünən sahədən çöldədir, yəni heç bir piksel dəyişmir. Bundan sonra matç heç bir yeni
+proqram kompilyasiya etmir. Döşəmənin shader resursu isinmədə saxlanılır. Bunun səbəbi
+axınsız brauzerdir: orada arena OYNA-da yüklənir və döşəməni yeni resurs kimi yenidən
+kompilyasiya edirdi.
+
+Arenaya giriş kadrı (menyudan MƏŞQ, soyuq keş):
+
+| Platforma | Köhnə | Yeni |
+|---|---|---|
+| Chrome, təmiz profil — kadrın render hissəsi | 64–68 ms | 17–30 ms |
+| Emulyator, APK, `pm clear`, 7 cüt (median) — bütün kadr | 53 ms | 39 ms |
+| Emulyator — render hissəsi | 22.5 ms | 7 ms |
+| Masaüstü — bütün kadr | 19.5 ms | 15.5 ms |
+
+Qiyməti menyuda bir əlavə kadrdır (~20 ms). Real Mali-də kompilyasiya daha yavaşdır,
+ona görə qazanc orada daha böyük olmalıdır (ölçülməyib). Emulyatorda Godot-un keşi
+ümumiyyətlə işləmir ("Failed to load cached shader, recompiling"), ona görə orada hər
+açılış soyuqdur. Qoruyucu test: `_test_warm_up_covers_arena`.
 
 **Görüntü itmir.** Shader-lər GDScript formullarının bir-bir surətidir; antialias-lı
 xətlər Godot-un öz `canvas_item_add_polyline` həndəsəsidir (en kompensasiyası,

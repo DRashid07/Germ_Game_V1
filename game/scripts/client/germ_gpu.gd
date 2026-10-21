@@ -36,6 +36,8 @@ extends RefCounted
 
 const SHADER := preload("res://shaders/germ.gdshader")
 const SHAPE_SHADER := preload("res://shaders/germ_shape.gdshader")
+## Xəritənin döşəməsi — [method warm_up] onu da isidir (arena `preload` edir).
+const MAP_FLOOR := "res://shaders/map_floor.gdshader"
 
 ## Məlumat sətri (texel; bir texel 4 float, 16 bayt): başlıq və konturun
 ## ədədləri 20 texel ([method GermVisual.gpu_row_bytes]), sonra 13 ayaq.
@@ -131,6 +133,8 @@ static var _blank := PackedByteArray()
 static var _meshes := {}
 static var _driver: Driver
 static var _warmed := false
+## İsinmədə yüklənmiş resurslar — proses boyu saxlanılır (bax [method warm_up]).
+static var _hold: Array[Resource] = []
 ## Sətirlərin qurulmasına və yüklənməyə gedən vaxt (mikrosaniyə, yığılır) —
 ## ölçmə stendi oxuyub sıfırlayır (bax `tools/germ_bench.gd`).
 static var spent_rows_usec := 0
@@ -212,6 +216,38 @@ static func warm_up(host: CanvasItem, done := Callable()) -> void:
 				body_mesh(kind)
 			else:
 				front_mesh(kind)
+	# Menyudan sonra arenanın özünə qalan son iki proqram: xəritənin döşəməsi və
+	# nazik xətlər (Godot 4.7-də hər `draw_line` "primitive" çəkilişdir, standart
+	# shader-in ayrıca variantı). Soyuq keşdə — APK-nın ilk açılışında, brauzerdə ilk
+	# dəfə — arenanın ilk kadrı onları kompilyasiya edirdi; parlama, post-proses və su
+	# zərrəcikləri menyuda onsuz da hazır olur (keş faylları ilə yoxlanıb, README
+	# «Mikrob GPU-da çəkilir»). Hər biri öz kadrında, ekrandan kənarda: element
+	# kəsilmir ([method set_extent]), həndəsəsi isə görünən sahədən çöldədir — heç bir
+	# piksel dəyişmir. Döşəmənin shader-i saxlanılır: arena eyni resursu `preload`
+	# edir — yeni resurs olsaydı, brauzer onu matçın başında yenidən kompilyasiya
+	# edərdi (orada Godot-un disk keşi yoxdur).
+	for step in 2:
+		await tree.process_frame
+		if not is_instance_valid(host) or not host.is_inside_tree():
+			break
+		var probe := Node2D.new()
+		if step == 0:
+			var shader: Shader = load(MAP_FLOOR)
+			_hold.append(shader)
+			var mat := ShaderMaterial.new()
+			mat.shader = shader
+			probe.material = mat
+			probe.draw.connect(func() -> void:
+				probe.draw_rect(Rect2(-100000.0, -100000.0, 4.0, 4.0), Color.WHITE))
+		else:
+			probe.draw.connect(func() -> void:
+				probe.draw_line(Vector2(-100000.0, -100000.0), Vector2(-99996.0, -100000.0),
+					Color.WHITE, 1.0))
+		host.add_child(probe)
+		set_extent(probe, 100000.0)
+		await tree.process_frame
+		if is_instance_valid(probe):
+			probe.queue_free()
 	await tree.process_frame
 	if done.is_valid():
 		done.call()

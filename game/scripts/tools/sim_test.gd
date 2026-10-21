@@ -130,6 +130,7 @@ static func run() -> int:
 	_test_lazy_server_classes()
 	_test_menu_preloads_world()
 	_test_web_entry_prep()
+	_test_warm_up_covers_arena()
 	_test_export_excludes_build()
 	_test_germ_gpu_contract()
 	_test_germ_gpu_rows()
@@ -2435,6 +2436,21 @@ static func _test_web_entry_prep() -> void:
 	_check(shell.contains("window.germShowPrep") and shell.contains("window.germHidePrep")
 			and shell.contains("id=\"entry-prep\""),
 		"səhifədə keçid örtüyü və onun funksiyaları var")
+
+
+## Menyunun isinməsi ([method GermGPU.warm_up]) arenanın özünə qalan iki proqramı da
+## kompilyasiya edir: döşəmənin shader-i (arenanın `preload` etdiyi EYNİ resurs, isinmədə
+## saxlanılır) və nazik xətlərin "primitive" variantı. Soyuq keşdə matçın ilk kadrı
+## onları kompilyasiya edirdi (Chrome-da giriş kadrının render-i 64–68 → 17–30 ms).
+static func _test_warm_up_covers_arena() -> void:
+	var arena := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	var gpu := FileAccess.get_file_as_string("res://scripts/client/germ_gpu.gd")
+	_check(ResourceLoader.exists(GermGPU.MAP_FLOOR)
+			and arena.contains("preload(\"%s\")" % GermGPU.MAP_FLOOR),
+		"isinmə arenanın döşəmə shader-ini göstərir")
+	_check(gpu.contains("load(MAP_FLOOR)") and gpu.contains("_hold.append(shader)")
+			and gpu.contains(".draw_line(") and gpu.contains("set_extent(probe"),
+		"isinmə döşəməni və nazik xətti ekrandan kənarda çəkir, shader-i saxlayır")
 
 
 ## Yerli ixrac `game/build/`-dəki ekran şəkillərini (idxal olunmuş PNG-lər, ~5 MB)

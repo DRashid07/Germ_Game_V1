@@ -20,6 +20,9 @@ var quit_after := 0.0
 var mode := int(Const.Mode.ENDLESS)
 ## Hansı növlə girsin (bax [enum Const.Species]).
 var species := int(Const.Species.CILIATE)
+## Kadr probu ilə (`--frame-probe`): mikrob partlayanda proses çıxmır — prob arenanı
+## bağlayıb [method rejoin]-i çağırır və ölçmə növbəti canda davam edir.
+var keep_playing := false
 
 var _joined := false
 ## Oyun ekranı — çıxışda vuruş statistikası buradan oxunur.
@@ -143,6 +146,8 @@ func _on_burst(result: Dictionary) -> void:
 			result["pops"], result["cap"], result["age"],
 			result["killer"] if not str(result["killer"]).is_empty() else "aclıq"])
 
+	if keep_playing:
+		return
 	# Oyun bitdi — DƏRHAL çıxırıq.
 	#
 	# [Arena] normalda menyuya qayıdır, menyu isə serveri yoxlamaq üçün şəbəkəyə
@@ -150,6 +155,19 @@ func _on_burst(result: Dictionary) -> void:
 	# "server yatıb" xətaları ilə doldururdu.
 	_log_hits()
 	get_tree().quit(0)
+
+
+## Eyni bağlantı ilə yeni matça girir (kadr probu köhnə arenanı bağlayandan sonra).
+## Əvvəl çıxış: matçı SAĞ bitirən oyunçu dünya bağlanana qədər onda sayılır və
+## giriş sorğusu sükutla rədd olunardı (bax [method Lobby.join]).
+func rejoin() -> void:
+	_joined = false
+	if is_instance_valid(_probe):
+		_probe.queue_free()
+	_probe = null
+	_log("yeni matça girir")
+	Net.request_leave.rpc_id(1)
+	Net.request_join.rpc_id(1, label, int(species), int(mode))
 
 
 ## Öz dəymələrin proqnozu serverlə nə qədər üst-üstə düşdü (bax [member Arena.hit_stats]).

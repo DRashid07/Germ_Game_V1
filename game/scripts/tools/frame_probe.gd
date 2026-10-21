@@ -5,6 +5,11 @@ extends Node
 ##   GermArena.console.exe --resolution 1600x720 --disable-vsync --max-fps 0 \
 ##       -- --practice --mode 1 --quality 0 --auto --frame-probe 72 --probe-phases
 ##
+## Onlayn matç (server ayrıca prosesdə, botlar boş yerləri tutur):
+##
+##   GermArena.console.exe ... -- --autoclient --host ws://127.0.0.1:27015 --mode 1 \
+##       --quality 0 --frame-probe 60
+##
 ## Hər kadr üçün: MƏŞĞULLUQ — kadrın ilk fizika/proses anından `frame_post_draw`-a
 ## qədər, yəni ana axının bu kadra sərf etdiyi bütün vaxt. O üç hissəyə bölünür:
 ## fizika, proses (skriptlər və `_draw`) və render (mühərrikin CPU işi). Kadr
@@ -30,9 +35,10 @@ var duration := 40.0
 ## Arena açılandan sonra ölçülməyən müddət: yükləmə və ilk kadrlar.
 var warmup := 3.0
 var phases := false
-## Yeni məşq arenası açan funksiya (boot.gd verir). Avtomatik oyunçu TƏK QALAN-da
-## çox vaxt 15–25 saniyə yaşayır; matç bitəndə arena menyuya qayıdardı. Bu varsa,
-## prob köhnə arenanı bağlayıb yenisini açır və ölçmə növbəti canda davam edir.
+## Yeni arena açan funksiya (boot.gd verir): məşqdə yeni yerli dünya, onlaynda
+## ([AutoClient]) eyni bağlantı ilə yeni matç. Avtomatik oyunçu TƏK QALAN-da çox
+## vaxt 15–25 saniyə yaşayır; matç bitəndə arena menyuya qayıdardı. Bu varsa, prob
+## köhnə arenanı bağlayıb yenisini açır və ölçmə növbəti canda davam edir.
 var respawn := Callable()
 
 ## [ad, gizlədilən qatlar]. "@glow" — arenanın parlaması (glow + HDR bufer, F2).
@@ -149,7 +155,7 @@ func _alive() -> bool:
 
 
 func _next_life() -> void:
-	print("[frame] %d-ci can bitdi (ölçülüb %.1f s) — yeni məşq arenası" % [_lives, _elapsed])
+	print("[frame] %d-ci can bitdi (ölçülüb %.1f s) — yeni arena" % [_lives, _elapsed])
 	_show_all()
 	if is_instance_valid(_arena):
 		# Arenanın menyuya qayıtma taymeri onunla birlikdə ölür.

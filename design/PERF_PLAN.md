@@ -420,8 +420,14 @@ keçidlərinin hazırlığı da gedir.
    > qurulurdu). Fon yükləməsi bitməmiş OYNA menyunu bloklamır (520–800 → ~100 ms,
    > masaüstü debug). Tapıldı: Chrome-da (ANGLE) əsas
    > shader-in ilk kompilyasiyası 3.6–4.9 s-dir (ikinci açılışda keşdən, ~50 ms).
-   > Qalan: `map_floor`, `water_motes` və parlama keçidləri hələ arenanın ilk
-   > kadrında kompilyasiya olunur.
+   > **Qalan proqramlar da isidilir (2026-10-21, README «Mikrob GPU-da çəkilir»).**
+   > Godot-un shader keşinin faylları ilə ölçüldü: `water_motes` və parlama menyuda onsuz
+   > da kompilyasiya olunurdu. Arenaya yalnız `map_floor` və nazik xətlərin "primitive"
+   > variantı qalırdı. İndi onları da isinmə ekrandan kənarda çəkir və matç heç bir yeni
+   > proqram kompilyasiya etmir (masaüstü GL, Android, onlayn və üç keyfiyyət yoxlanıb).
+   > Soyuq keşlə giriş kadrı:
+   > - Chrome: render 64–68 → 17–30 ms;
+   > - emulyator: 53 → 39 ms (render 22.5 → 7).
    > **Açılış (2026-10-20):** klient serverin siniflərini (Lobby, World, SocialHub,
    > Bot) artıq kompilyasiya etmir — `boot.gd` və `friends.gd` onları adla çağırırdı.
    > Brauzerdə (CPU 13×) menyu 25.8–26.3 → 24.0–24.8 s, APK emulyatorunda 4767 → 4454 ms.

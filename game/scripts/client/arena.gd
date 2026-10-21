@@ -32,8 +32,29 @@ const FX_GROW_RATIO := 0.35
 const REJOIN_ATTEMPTS := 5
 const REJOIN_INTERVAL := 3.0
 
-## Qida sprite-ının miqyası — 32 px-lik şəkil FOOD_RADIUS ilə uyğunlaşdırılır.
-const FOOD_SCALE := 0.85
+## Qida ilə uçan top EYNİ şey kimi görünürdü: ikisi də ~10 px-lik parlaq dairə
+## idi, top sahibinin rəngində, qida solğun yaşıl (öz rəngin laym olanda lap
+## eyni). Oyunun ən vacib sualı isə budur: "bu, təhlükədir, yoxsa yem?"
+## İndi fərq ÜÇ kanaldadır: forma (top kometdir, qida dairə), ölçü (qida
+## kiçikdir) və işıq (top parlayır, qida tutqundur).
+##
+## Qida sprite-ının miqyası: 32 px-lik şəklin görünən radiusu ~7.8 px — topun
+## başından (9.6) kiçik. Udma radiusu ([constant Const.FOOD_RADIUS] = 10)
+## dəyişmir: görüntü ondan bir az kiçikdir, yəni mikrob qidanı membranı ona
+## toxunmamış udur — bu, toxunuşdan "səxavətli" hiss olunur, əksi yox.
+const FOOD_SCALE := 0.68
+## Spor (iri qida yığını) KİÇİLMİR və tutqunlaşmır: o, tutum verən mükafatdır
+## və uzaqdan seçilməlidir. Miqyası köhnə qidanınkından çıxır (0.85 × 22/10).
+const SPORE_SCALE := 0.85
+## Qidanın tutqunluğu: ən açıq kanalı xətti fəzada glow həddindən (0.62, bax
+## [method _build_glow]) aşağı salır — YÜKSƏK-də qida artıq işıq saçmır, top saçır.
+const FOOD_DIM := Color(0.78, 0.78, 0.78)
+## Komet sprite-ı ([code]shot_comet.svg[/code]) 2× sıxlıqda idxal olunur və yarım
+## miqyasla çəkilir: fırlanan sprite 1×-də pilləli görünür, telefonun ekranında
+## isə dünya ~1.9× böyüdülür. Başı teksturanın mərkəzindən sağdadır (46/64) —
+## `offset` onu node-un nöqtəsinə, yəni topun həqiqi yerinə qoyur.
+const SHOT_SCALE := 0.5
+const SHOT_HEAD := Vector2(-28.0, 0.0)
 
 ## Serverin artıq bildirmədiyi obyektin görüntüsü bu qədər saniyə saxlanılır.
 ##
@@ -499,6 +520,8 @@ var _motes: WaterMotes
 ## Dərin su qatı — maneələrin üstündə, qidanın altında (bax [method _build_world]).
 var _motes_deep: WaterMotes
 var _hud: Hud
+## Öz mikrobunun altındakı top zolağı (bax [AmmoBar]).
+var _ammo: AmmoBar
 ## Bioluminessensiya mühiti — keyfiyyətdən asılı olaraq yandırılır/söndürülür
 ## (bax [method _apply_quality]).
 var _glow: WorldEnvironment
@@ -740,8 +763,11 @@ func _ready() -> void:
 	Net.world_joined.connect(_on_rejoin_accepted)
 	Net.rejoin_failed.connect(_on_rejoin_rejected)
 
-	_hud.show_message("DÜNYAYA GİRDİN", "Qida ye, rəqibi doldur, partlat")
-	get_tree().create_timer(2.0).timeout.connect(_hud.hide_message)
+	# Öyrədici mesajdır — ilk bir neçə girişdə (bax [constant Settings.TIP_SHOWS]).
+	if Settings.tip_due("enter"):
+		Settings.tip_shown("enter")
+		_hud.show_message("DÜNYAYA GİRDİN", "Qida ye, rəqibi doldur, partlat")
+		get_tree().create_timer(2.0).timeout.connect(_hud.hide_message)
 	Sfx.play("spawn")
 	# Menyusuz açılışda (məşq, test client-i) brauzerin yükləmə örtüyü buradan götürülür.
 	Settings.web_page_ready()
@@ -827,7 +853,7 @@ func _apply_quality() -> void:
 func _load_textures() -> void:
 	_tex = {
 		"food": preload("res://assets/sprites/food_ball.svg"),
-		"shot": preload("res://assets/sprites/shot_ball.svg"),
+		"shot": preload("res://assets/sprites/shot_comet.svg"),
 		"spark": preload("res://assets/sprites/spark.svg"),
 		"burst": preload("res://assets/sprites/burst.svg"),
 		"stick_base": preload("res://assets/ui/joystick_base.svg"),
@@ -973,6 +999,11 @@ func _build_world() -> void:
 	_juice = JuiceFx.new()
 	_juice.setup(Const.is_light(int(Net.quality)))
 	_fx.add_child(_juice)
+
+	# Effektlərdən SONRA: eyni z-də (4) olsalar da partlayış qığılcımı öz sayını örtməsin.
+	_ammo = AmmoBar.new()
+	_ammo.visible = false
+	add_child(_ammo)
 
 	_cam = Camera2D.new()
 	_cam.enabled = true
@@ -1482,6 +1513,7 @@ func _do_tick() -> void:
 			me.pos.length() > _wet_radius,
 			_score_us, _score_em, _score_us + _score_em + 1)
 	_hud.update_gauge(me.balls, me.capacity)
+	_ammo.set_value(me.balls, me.capacity)
 
 
 ## Joystick-dən bir tick-lik giriş yığır.
@@ -2401,6 +2433,7 @@ func _render(delta: float) -> void:
 	_flush_fx(render_time)
 	_sweep_views()
 	_update_camera(delta)
+	_update_ammo_bar()
 	_update_minimap(delta)
 	_apply_freeze()
 	_watch_capacity()
@@ -2464,6 +2497,23 @@ func _update_camera(delta: float) -> void:
 	_motes_deep.span = mote_span
 
 
+## Top zolağını öz mikrobunun altına qoyur (bax [AmmoBar]).
+##
+## Kameradan SONRA: miqyas bu kadrın zoom-unun əksidir, yəni zolaq ekranda həmişə
+## eyni ölçüdədir, mövqe isə mikrobun özündən gəlir — zərbə və silkələnmədə onunla
+## birlikdə tərpənir. Mikrob partlayanda və matç bitəndə zolaq susur.
+func _update_ammo_bar() -> void:
+	var entry: Dictionary = _visuals.get(my_id, {})
+	var mine: GermVisual = entry.get("node")
+	_ammo.visible = mine != null and mine.visible and not mine.burst and not _finished
+	if not _ammo.visible:
+		return
+	var k := maxf(_cam.zoom.x, 0.001)
+	_ammo.scale = Vector2.ONE / k
+	_ammo.position = mine.position \
+		+ Vector2(0.0, Const.germ_radius(mine.capacity) + AmmoBar.GAP / k)
+
+
 ## Kameranın zərbə cavabı. Gücü oyunçunun ayarındadır ([member Settings.shake]).
 ##
 ## Ayar YALNIZ kameraya toxunur: donmuş kadr, ağ parıltı və səs olduğu kimi
@@ -2525,7 +2575,14 @@ func _on_phase_changed() -> void:
 			# ÜÇLÜK-də yeni raund: hamı yeni doğuş yerindədir — öz mikrobun sürüşmədən köçür.
 			_snap_next = true
 		Const.Phase.PLAYING:
-			_hud.show_message("BAŞLADI", Const.mode_goal(int(_mode)))
+			# "BAŞLADI" siqnaldır — həmişə. Altındakı məqsəd cümləsi isə öyrədicidir:
+			# hər rejimdə yalnız ilk bir neçə matçda (bax [constant Settings.TIP_SHOWS]).
+			var goal_tip := "goal_%d" % int(_mode)
+			var goal := ""
+			if Settings.tip_due(goal_tip):
+				Settings.tip_shown(goal_tip)
+				goal = Const.mode_goal(int(_mode))
+			_hud.show_message("BAŞLADI", goal)
 			get_tree().create_timer(1.4).timeout.connect(_hud.hide_message)
 			Sfx.play("level_up")
 		_:
@@ -2646,8 +2703,11 @@ func _watch_bush() -> void:
 	if v != null:
 		var tw := create_tween()
 		tw.tween_property(v, "modulate:a", OWN_HIDDEN_ALPHA if inside else 1.0, 0.22)
-	if inside and not _bush_taught:
+	# Matçda bir dəfə, ümumilikdə ilk bir neçə matçda (bax [constant Settings.TIP_SHOWS]).
+	# Sonra qaydanı yalnız görüntü deyir: mikrobun şəffaflaşır, tac aralanır.
+	if inside and not _bush_taught and Settings.tip_due("bush"):
 		_bush_taught = true
+		Settings.tip_shown("bush")
 		_hud.show_message("GİZLƏNDİN", "Kolun içində rəqiblər səni görmür")
 		get_tree().create_timer(2.2).timeout.connect(_hud.hide_message)
 
@@ -3221,6 +3281,8 @@ func _ensure_germ(gid: int, germ_name: String, color: int,
 	if not entry.is_empty():
 		return entry["node"]
 	var v := GermVisual.new()
+	# Öz adın yazılmır — sən həmişə mərkəzdəsən (bax [member GermVisual.show_name]).
+	v.show_name = gid != my_id
 	v.setup(color, germ_name, gid == my_id, species)
 	v.lod = 1 if Net.quality == Const.Quality.MINIMUM else 0
 	# Gövdə toqquşma ellipsindən bayıra çıxmasın: mərkəzi gövdədən keçən top
@@ -3352,8 +3414,7 @@ func _render_shots(render_time: float) -> void:
 					view = {"node": null, "ghost": ghost}
 				else:
 					var spr := _take(_shot_pool, _shot_layer)
-					spr.texture = _tex["shot"]
-					spr.modulate = Palette.germ_color(color)
+					_dress_shot(spr, color)
 					view = {"node": spr, "mine": color == my_color, "color": color}
 				_shot_views[sid] = view
 			view["seen"] = _clock
@@ -3379,6 +3440,8 @@ func _render_shots(render_time: float) -> void:
 			view["dies"] = float(view["t"]) + float(view["life"])
 		if bool(view.get("absorbed", false)):
 			continue
+		# Komet uçduğu tərəfə baxır — sıçrayışdan sonra serverin yeni istiqaməti ilə.
+		spr.rotation = Vector2(view["dir"]).angle()
 		if not view.get("mine", false):
 			spr.position = _remote_shot_pos(sid, view, spr, render_time)
 			continue
@@ -3780,10 +3843,11 @@ func _render_ghosts() -> void:
 		var spr: Sprite2D = _ghost_nodes.get(g.id)
 		if spr == null:
 			spr = _take(_shot_pool, _shot_layer)
-			spr.texture = _tex["shot"]
+			_dress_shot(spr, my_color)
 			_ghost_nodes[g.id] = spr
 		spr.modulate = color
 		spr.position = g.pos
+		spr.rotation = g.dir.angle()
 		_trails.push(-g.id, g.pos, color)
 	for gid in _ghost_nodes.keys():
 		if live.has(gid):
@@ -4183,8 +4247,7 @@ func _undo_own_soft() -> void:
 			continue
 		if view["node"] == null:
 			var spr := _take(_shot_pool, _shot_layer)
-			spr.texture = _tex["shot"]
-			spr.modulate = Palette.germ_color(my_color)
+			_dress_shot(spr, my_color)
 			view["node"] = spr
 			view["mine"] = true
 			view["color"] = my_color
@@ -4277,7 +4340,9 @@ func _render_food(_render_time: float) -> void:
 			# olunmur.
 			var k := FOOD_SCALE
 			if fid < 0:
-				k *= Const.SPORE_RADIUS / Const.FOOD_RADIUS
+				k = SPORE_SCALE * Const.SPORE_RADIUS / Const.FOOD_RADIUS
+			else:
+				spr.modulate = FOOD_DIM
 			spr.scale = Vector2(k, k)
 			spr.position = target
 			view = {"node": spr}
@@ -4301,6 +4366,15 @@ func _take(pool: Array[Sprite2D], layer: Node) -> Sprite2D:
 	spr.rotation = 0.0
 	spr.scale = Vector2.ONE
 	return spr
+
+
+## Uçan topun görünüşü: komet, sahibinin rəngində (bax [constant SHOT_HEAD]).
+## Fırlanma hər kadr mövqe ilə birlikdə yazılır — istiqamət sıçrayışda dəyişir.
+func _dress_shot(spr: Sprite2D, color: int) -> void:
+	spr.texture = _tex["shot"]
+	spr.modulate = Palette.germ_color(color)
+	spr.scale = Vector2(SHOT_SCALE, SHOT_SCALE)
+	spr.offset = SHOT_HEAD
 
 
 ## Sprite-ı hovuza qaytarır — ağacda qalır, sadəcə gizlənir.

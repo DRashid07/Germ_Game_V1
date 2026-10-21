@@ -8,9 +8,10 @@ extends CanvasLayer
 ## Sol yarı hərəkət joystickinin zonasıdır — barmağı hara qoysan, idarə orada
 ## yaranır. Sağ aşağı küncdə top atma düyməsi dayanır.
 ##
-## HUD-un ƏSAS işi bir rəqəmi göstərməkdir: neçə topun var və tutumun nə qədərdir.
-## Oyunun bütün qərarları bu rəqəmdən asılıdır, ona görə o, ekranın ən görünən
-## yerindədir və rəngi vəziyyəti özü izah edir.
+## Oyunun ƏSAS rəqəmi: neçə topun var və tutumun nə qədərdir. Bütün qərarlar
+## ondan asılıdır, ona görə gözün olduğu yerdədir — öz mikrobunun altında
+## zolaq kimi ([AmmoBar]). Burada, sol yuxarıda, onun dəqiq sayı qalır; rəngi
+## vəziyyəti özü izah edir.
 
 const STICK_ZONE_TOP := 0.34     ## Hərəkət zonası ekranın bu hündürlüyündən aşağı başlayır
 
@@ -28,7 +29,6 @@ const SUPER_BOX := 108.0
 const SUPER_GAP := 14.0
 
 const GAUGE_W := 250.0
-const BAR_H := 16.0
 const MAP_SIZE := 132.0
 
 ## Liderlər cədvəlinin sətir sayı və bir sətrin hündürlüyü.
@@ -63,8 +63,6 @@ var _root: Control
 var _safe_root: Control
 var _gauge_lbl: Label
 var _level_lbl: Label
-var _bar: ColorRect
-var _bar_bg: ColorRect
 var _warn_lbl: Label
 var _drying := false
 var _board_lbl: Label
@@ -89,13 +87,9 @@ var _fps_t := 0.0
 
 var _local_color := Palette.TEXT
 var _warn_t := 0.0
-var _bar_fill_target := 0.0
 ## Son yazılan top sayı və tutum (bax [method update_gauge]).
 var _gauge_balls := -1
 var _gauge_cap := -1
-var _bar_fill_shown := 0.0
-var _gauge_danger := false
-var _gauge_t := 0.0
 var _message_tween: Tween = null
 ## ÜÇLÜK-ün raund hesabı — nəticə ekranı da onu göstərməlidir, ona görə
 ## [method set_match]-dan saxlanılır.
@@ -169,36 +163,27 @@ func _apply_safe_area() -> void:
 
 # ---------------------------------------------------------------- qurulma
 
-## Sol yuxarı: "top / tutum" — oyunun bütün məntiqi bu rəqəmdədir.
+## Sol yuxarı: "top / tutum" — dəqiq say.
+##
+## Rəqəm KİÇİKDİR (30 px, əvvəl 46) və altında zolaq yoxdur: doluluğun özü
+## öz mikrobunun altındadır ([AmmoBar]) — döyüşdə göz oradadır. Böyük künc
+## rəqəmi gözü mərkəzdən küncə çəkirdi; burada qalan say "dəqiq neçə?" sualı
+## üçündür və rəngi zolaqla eynidir.
 func _build_gauge() -> void:
-	_gauge_lbl = _make_label(46, Palette.TEXT)
+	_gauge_lbl = _make_label(30, Palette.TEXT)
 	_gauge_lbl.theme_type_variation = "Heading"
 	_gauge_lbl.position = Vector2(20, 12)
-	_gauge_lbl.size = Vector2(GAUGE_W, 56)
+	_gauge_lbl.size = Vector2(GAUGE_W, 38)
 	_safe_root.add_child(_gauge_lbl)
 
-	_bar_bg = ColorRect.new()
-	_bar_bg.color = Color(Palette.PANEL, 0.9)
-	_bar_bg.position = Vector2(22, 70)
-	_bar_bg.size = Vector2(GAUGE_W, BAR_H)
-	_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_safe_root.add_child(_bar_bg)
-
-	_bar = ColorRect.new()
-	_bar.color = Palette.SAFE
-	_bar.position = _bar_bg.position
-	_bar.size = Vector2(0, BAR_H)
-	_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_safe_root.add_child(_bar)
-
 	_level_lbl = _make_label(20, Palette.TEXT_MUTED)
-	_level_lbl.position = Vector2(22, 92)
+	_level_lbl.position = Vector2(22, 50)
 	_level_lbl.size = Vector2(GAUGE_W, 28)
 	_safe_root.add_child(_level_lbl)
 
 	# Xəbərdarlıq zolağı — yalnız təhlükə anında görünür.
 	_warn_lbl = _make_label(24, Palette.DANGER)
-	_warn_lbl.position = Vector2(22, 118)
+	_warn_lbl.position = Vector2(22, 76)
 	_warn_lbl.size = Vector2(420, 32)
 	_warn_lbl.visible = false
 	_safe_root.add_child(_warn_lbl)
@@ -283,9 +268,10 @@ func _build_center() -> void:
 	_center_lbl.anchor_right = 1.0
 	# 0.30 DEYİL, 0.20.
 	#
-	# Oyunçunun mikrobu ekranın tam mərkəzindədir və adı ondan ~65 px yuxarıda
-	# çəkilir. 0.30-da alt sətir məhz o adın üstünə düşürdü: sayımda
-	# "TƏK QALAN · 10 mikrob" ilə "Mikrob" bir-birinə qarışırdı.
+	# Oyunçunun mikrobu ekranın tam mərkəzindədir. 0.30-da alt sətir onun düz
+	# üstünə düşürdü: sayımda "TƏK QALAN · 10 mikrob" ilə öz adın ("Mikrob")
+	# bir-birinə qarışırdı. Öz adın indi heç yazılmır ([member GermVisual.show_name]),
+	# amma mikrobun özü və kirpikləri yenə oradadır.
 	_center_lbl.anchor_top = 0.20
 	_center_lbl.anchor_bottom = 0.20
 	_center_lbl.offset_bottom = 72
@@ -605,19 +591,6 @@ func _process(delta: float) -> void:
 				minf(Settings.web_dpr(), Settings.device_dpr())] \
 				if OS.has_feature("web") else "%d FPS" % Engine.get_frames_per_second()
 
-	# Snapshot 30 Hz, ekran isə 60+ Hz-dir. Zolaq hədəfə eksponensial yaxınlaşır
-	# ki, doluluq pillə-pillə sıçramasın; sabit sürət böyük artımda gecikirdi.
-	_bar_fill_shown = lerpf(_bar_fill_shown, _bar_fill_target,
-		1.0 - exp(-delta * 10.0))
-	_bar.size.x = GAUGE_W * _bar_fill_shown
-	_gauge_t += delta
-	if _gauge_danger:
-		# 2 piksel ekranı oxunmaz etmir, amma DANGER rəngini hərəkətlə də deyir.
-		_bar.position = _bar_bg.position + Vector2(
-			sin(_gauge_t * 35.0) * 1.9, sin(_gauge_t * 47.0) * 0.8)
-	else:
-		_bar.position = _bar_bg.position
-
 	if _hint_t > 0.0:
 		_hint_t = maxf(0.0, _hint_t - delta)
 
@@ -649,11 +622,7 @@ func update_gauge(balls: int, capacity: int) -> void:
 		_gauge_cap = capacity
 		_gauge_lbl.text = "%d / %d" % [balls, capacity]
 		var fill := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
-		var col := Palette.fill_color(fill)
-		_gauge_lbl.add_theme_color_override("font_color", col)
-		_bar.color = col
-		_bar_fill_target = fill
-		_gauge_danger = fill >= 0.85
+		_gauge_lbl.add_theme_color_override("font_color", Palette.fill_color(fill))
 		_level_lbl.text = "Səviyyə %d" % Const.level_of(capacity)
 
 	# Üç təhlükə var və üçü də ölümcüldür: dolub partlamaq, acından partlamaq,

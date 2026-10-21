@@ -45,8 +45,9 @@ signal broke_through(local: bool)
 ## əlavə olunmur.
 ##
 ## Oyunçu bir baxışda üç şeyi görməlidir:
-##   1. Nə qədər doluyam        → membranın gərginliyi (öz dəqiq sayın HUD-dadır)
-##   2. Rəqib partlamağa yaxındırmı → membranı bərk titrəyir və qırmızıya çalır
+##   1. Nə qədər doluyam        → membranın gərginliyi + altındakı top zolağı ([AmmoBar])
+##   2. Rəqib partlamağa yaxındırmı → arxasında qırmızı ürək döyüntüsü ([constant RIPE_FILL]),
+##                                 lap dolanda membranı bərk titrəyir və qırmızıya çalır
 ##   3. Kim mənəm               → kamera HƏMİŞƏ sənin mikrobunun üstündədir
 ##
 ## Mikrobun ətrafında HALQA YOXDUR — nə doluluq, nə fokus halqası. Hər ikisi
@@ -55,8 +56,8 @@ signal broke_through(local: bool)
 ##
 ## Əvəzinə hər ikisinin işini onsuz da mövcud olan bir şey görür:
 ##   • doluluq → membranın öz gərginliyi (dəqiq rəqəm HUD-dadır);
-##   • "bu, mənəm" → kamera. Öz mikrobun həmişə ekranın mərkəzindədir,
-##     adı da parlaq yazılır (rəqiblərinki sönükdür).
+##   • "bu, mənəm" → kamera. Öz mikrobun həmişə ekranın mərkəzindədir, ona
+##     görə adı da yazılmır ([member show_name]); rəqiblərin adı sönükdür.
 
 ## Membran çoxbucaqlısının nöqtə sayı. 24 kifayətdir: kiçik ekranda fərq
 ## görünmür, amma çəkiliş yükü iki dəfə azdır.
@@ -423,6 +424,14 @@ const STAR_MAX := 14
 var color_index := 0
 var germ_name := ""
 var is_local := false
+## Ad yazılsınmı — [method setup]-dan ƏVVƏL qoyulur.
+##
+## Oyunda öz mikrobunun adı YAZILMIR ([method Arena._ensure_germ]): sən həmişə
+## ekranın mərkəzindəsən, adı isə məhz orada sayım və mesaj yazıları ilə
+## üst-üstə yığılırdı ("2", "TƏK QALAN · 10 mikrob", "Mikrob" — üç sətir bir
+## yerdə) və maneələrin üstünə düşürdü. Komandalı rejimdə yoldaşların adı qalır.
+## Stendlər (`--preview`, müqayisə stendi) adı başlıq kimi işlədir — onlarda qalır.
+var show_name := true
 var species := Const.Species.CILIATE
 
 var balls := Const.START_BALLS
@@ -445,6 +454,30 @@ var _ready_fade := 0.0
 ## Hazır auranın fırlanan qığılcımları. Say qəsdən kiçikdir: qığılcım
 ## işarədir, bəzək deyil — çox olsa kirpik və ayaqlarla yarışar.
 const READY_SPARKS := 3
+
+## Rəqib PARTLAMAĞA YAXINDIR — "indi vur" (yalnız rəqibdə).
+##
+## Oyunun ən çaşdıran qaydası budur: dəyən top mikroba +2 top verir, yəni zəifi
+## vurmaq onu yedizdirməkdir. Doğru hədəf DOLU rəqibdir, bunu isə ekranda heç
+## nə demirdi: membranın gərginliyi 60%-dən yavaş-yavaş artır və yalnız 90%-də
+## (çatlar, qırmızı kontur) seçilir — o da yaxından.
+##
+## Doluluq bu həddi keçəndə rəqibin ARXASINDA qırmızı işıq ürək kimi döyünür
+## ("lub-dub"), dolduqca tezləşir. Ad yox, gövdə dəyişir: döyüşdə göz
+## gövdələrə baxır, adlara yox (bax [member is_ally]). Halqa deyil, yumşaq
+## işıqdır — mikrobun ətrafına halqa qoymamaq qaydası burada da qüvvədədir.
+##
+## Öz mikrobun və yoldaşların döyünmür: onlar hədəf deyil. Öz doluluğun
+## altındakı zolaqdadır ([AmmoBar]).
+const RIPE_FILL := 0.8
+## Döyüntünün tezliyi (Hz): həddə sakit nəbz, tam doluda təşviş.
+const RIPE_RATE_MIN := 1.3
+const RIPE_RATE_MAX := 2.6
+var _ripe: Sprite2D
+var _ripe_fade := 0.0
+var _ripe_phase := 0.0
+static var _ripe_material: CanvasItemMaterial
+static var _ripe_texture: GradientTexture2D
 
 ## Superin görüntü ağırlığı 0..1 — bayrağın ARDINCA sürünür.
 ##
@@ -769,16 +802,27 @@ func setup(p_color: int, p_name: String, p_is_local: bool,
 		_step.resize(LEGS_MAX)
 		_hold.resize(LEGS_MAX)
 
-	_label = Label.new()
-	_label.text = p_name
-	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_label.size = Vector2(200, 24)
-	_label.add_theme_font_size_override("font_size", 16)
-	_label.add_theme_color_override("font_color", Palette.TEXT if p_is_local else Palette.TEXT_MUTED)
-	_label.add_theme_color_override("font_outline_color", Palette.OUTLINE)
-	_label.add_theme_constant_override("outline_size", 5)
-	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_label)
+	# Döyüntü hər şeyin ARXASINDADIR — gövdə qatından da əvvəl (bax [method _beat_ripe]).
+	# Yalnız rəqib ola biləndə qurulur: öz mikrobun heç vaxt "hədəf" deyil.
+	if not p_is_local:
+		_ripe = Sprite2D.new()
+		_ripe.texture = _shared_ripe_texture()
+		_ripe.material = _ripe_blend()
+		_ripe.show_behind_parent = true
+		_ripe.visible = false
+		add_child(_ripe)
+
+	if show_name:
+		_label = Label.new()
+		_label.text = p_name
+		_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_label.size = Vector2(200, 24)
+		_label.add_theme_font_size_override("font_size", 16)
+		_label.add_theme_color_override("font_color", Palette.TEXT if p_is_local else Palette.TEXT_MUTED)
+		_label.add_theme_color_override("font_outline_color", Palette.OUTLINE)
+		_label.add_theme_constant_override("outline_size", 5)
+		_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_label)
 
 	# Öz mikrobun həmişə başqalarının üstündə çəkilir — itirməmək üçün.
 	z_index = 2 if is_local else 1
@@ -1204,8 +1248,79 @@ func _process(delta: float) -> void:
 
 	var target := clampf(float(balls) / float(maxi(capacity, 1)), 0.0, 1.0)
 	_shown_fill = move_toward(_shown_fill, target, delta * 2.5)
+	_beat_ripe(delta, target)
 	if on_screen and _redraw_due():
 		_refresh()
+
+
+## Dolu rəqibin döyüntüsü (bax [constant RIPE_FILL]).
+##
+## Hədd [member _shown_fill]-dən yox, HƏQİQİ doluluqdan oxunur: yumşaldılmış
+## rəqəm zərbədən sonra həddə yarım saniyə gec çatırdı, işarə isə elə zərbə
+## anında "bir də vur" deməlidir. Yumşaqlıq sönmə-yanmadadır ([member _ripe_fade]).
+func _beat_ripe(delta: float, fill: float) -> void:
+	if _ripe == null:
+		return
+	# Doğuş qalxanındakı mikroba top dəymir — onu hədəf kimi göstərmək yalandır.
+	var want := 1.0 if fill >= RIPE_FILL and not is_ally and not safe else 0.0
+	_ripe_fade = move_toward(_ripe_fade, want, delta * 5.0)
+	_ripe.visible = _ripe_fade > 0.004
+	if not _ripe.visible:
+		return
+	var k := clampf((fill - RIPE_FILL) / (1.0 - RIPE_FILL), 0.0, 1.0)
+	_ripe_phase = fposmod(_ripe_phase + delta * lerpf(RIPE_RATE_MIN, RIPE_RATE_MAX, k), 1.0)
+	var beat := heartbeat(_ripe_phase)
+	var r := Const.germ_radius(capacity)
+	# Halodan geniş başlayır və zərbədə şişir — işıq gövdənin kənarından bayıra çıxır.
+	var size := (r + SHIELD_GAP * HALO_GAP_SCALE) * (1.25 + 0.20 * beat)
+	_ripe.scale = Vector2.ONE * (size * 2.0 / float(_ripe.texture.get_width()))
+	_ripe.modulate = Color(Palette.DANGER,
+		(0.40 + 0.60 * beat) * lerpf(0.80, 1.0, k) * _ripe_fade)
+
+
+## Ürək döyüntüsünün forması; [param phase] 0..1 — iki zərbə ("lub-dub") və sükut.
+##
+## Sinus deyil: sinus nəfəs kimi oxunur və hər mikrobun boşdayanma nəfəsi ilə
+## ([constant IDLE_BREATH]) qarışırdı. İki qısa zərbə və ardınca fasilə isə
+## həyəcan siqnalıdır.
+static func heartbeat(phase: float) -> float:
+	var lub := exp(-pow((phase - 0.10) / 0.07, 2.0))
+	var dub := 0.65 * exp(-pow((phase - 0.32) / 0.08, 2.0))
+	return clampf(lub + dub, 0.0, 1.0)
+
+
+## Döyüntünün teksturası — hazır ultinin aurasından ([method _shared_aura_texture])
+## AYRIDIR. Aura sıxlığı mərkəzə yığır və orası gövdənin altında qalır: eyni
+## tekstura ilə döyüntü kadrda demək olar görünmürdü (yoxlanılıb). Burada işıq
+## gövdənin KƏNARINDA (radiusun ~35–50%-i) cəmlənir və bayıra sönür.
+static func _shared_ripe_texture() -> GradientTexture2D:
+	if _ripe_texture == null:
+		var gradient := Gradient.new()
+		gradient.offsets = PackedFloat32Array([0.0, 0.32, 0.50, 0.74, 1.0])
+		gradient.colors = PackedColorArray([
+			Color(1.0, 1.0, 1.0, 0.85),
+			Color(1.0, 1.0, 1.0, 1.0),
+			Color(1.0, 1.0, 1.0, 0.80),
+			Color(1.0, 1.0, 1.0, 0.25),
+			Color(1.0, 1.0, 1.0, 0.0),
+		])
+		_ripe_texture = GradientTexture2D.new()
+		_ripe_texture.gradient = gradient
+		_ripe_texture.width = 128
+		_ripe_texture.height = 128
+		_ripe_texture.fill = GradientTexture2D.FILL_RADIAL
+		_ripe_texture.fill_from = Vector2(0.5, 0.5)
+		_ripe_texture.fill_to = Vector2(1.0, 0.5)
+	return _ripe_texture
+
+
+## Döyüntü İŞIQDIR, boya deyil: rəngi altındakına ƏLAVƏ olunur. Beləcə tünd
+## döşəmədə parlaq qırmızı kənar verir və YÜKSƏK-də glow onu götürür.
+static func _ripe_blend() -> CanvasItemMaterial:
+	if _ripe_material == null:
+		_ripe_material = CanvasItemMaterial.new()
+		_ripe_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	return _ripe_material
 
 
 ## Bu kadr gövdə yenidən çəkilməlidirmi (bax [member redraw_step]).

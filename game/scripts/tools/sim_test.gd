@@ -148,6 +148,11 @@ static func run() -> int:
 	_test_blob_textures()
 	_test_map_atlas()
 	_test_germ_flash()
+	_test_own_name_hidden()
+	_test_ripe_enemy()
+	_test_ammo_bar()
+	_test_shot_and_food_differ()
+	_test_tips_limit()
 	_test_germ_freeze()
 	_test_shot_trails()
 	_test_spawn_safety()
@@ -6160,6 +6165,107 @@ static func _test_render_clock_shift() -> void:
 		_check(not back and extra_late <= base_frames + 12,
 			"%.1f s davamlı sürüşmə: 3 s sonra ekstrapolyasiya sürüşməsizdəki qədərdir (%d / %d kadr), geri getmir"
 				% [shift, extra_late, base_frames])
+
+
+## Öz adın yazılmır, rəqibinki yazılır (bax [member GermVisual.show_name]).
+## Adsız mikrobda adla işləyən yollar (reyestr gecikib gələndə, yoldaş bayrağı) çökmür.
+static func _test_own_name_hidden() -> void:
+	var me := GermVisual.new()
+	me.show_name = false
+	me.setup(0, "Sən", true, Const.Species.CILIATE)
+	me.set_identity("Başqa", 0)
+	me.is_ally = true
+	me.apply(Vector2.ZERO, 0.0, 6, 10, false, true)
+	_check(me._label == null, "öz mikrobunun adı yazılmır, adla işləyən yollar adsız da işləyir")
+	me.free()
+	var them := GermVisual.new()
+	them.setup(3, "Rəqib", false, Const.Species.CILIATE)
+	_check(them._label != null and them._label.text == "Rəqib", "rəqibin adı yazılır")
+	them.free()
+
+
+## Dolu rəqib döyünür ([constant GermVisual.RIPE_FILL]); boşu, yoldaş, doğuş qalxanındakı
+## və öz mikrobun döyünmür. Hədd yumşaldılmış doluluqdan yox, həqiqi saydan oxunur.
+static func _test_ripe_enemy() -> void:
+	var g := GermVisual.new()
+	g.setup(4, "Rəqib", false, Const.Species.CILIATE)
+	var steps := func(balls: int, safe: bool) -> bool:
+		g.apply(Vector2.ZERO, 0.0, balls, 10, safe, true)
+		for i in 30:
+			g._process(1.0 / 60.0)
+		return g._ripe.visible
+	var below: bool = steps.call(7, false)
+	var at: bool = steps.call(8, false)
+	g.is_ally = true
+	var ally: bool = steps.call(9, false)
+	g.is_ally = false
+	var shielded: bool = steps.call(9, true)
+	_check(not below and at and not ally and not shielded,
+		"dolu rəqib döyünür (7/10 yox, 8/10 bəli; yoldaş və qalxanlı yox)")
+	g.free()
+	var me := GermVisual.new()
+	me.setup(0, "Sən", true, Const.Species.CILIATE)
+	_check(me._ripe == null, "öz mikrobunun döyüntüsü heç qurulmur")
+	me.free()
+	_check(GermVisual.heartbeat(0.10) > 0.95 and GermVisual.heartbeat(0.32) > 0.6
+		and GermVisual.heartbeat(0.75) < 0.01, "döyüntü iki zərbə və sükutdur (lub-dub)")
+
+
+## Top zolağı: ilk dəyər animasiyasız oturur, sonrakılar sürünür; dolu və ac halları.
+static func _test_ammo_bar() -> void:
+	var bar := AmmoBar.new()
+	bar.set_value(6, 10)
+	var first := is_equal_approx(bar._shown, 0.6) and not bar._danger() and not bar._starving()
+	bar.set_value(9, 10)
+	var full := bar._danger() and is_equal_approx(bar._shown, 0.6)
+	bar.set_value(2, 10)
+	_check(first and full and bar._starving(),
+		"top zolağı: ilk say dərhal, sonrakı sürünür; 9/10 dolu, 2/10 ac")
+	bar.free()
+
+
+## Uçan top qidadan seçilir: komet başı node-un nöqtəsindədir (2× idxal, yarım
+## miqyas), qida isə topun başından kiçikdir və YÜKSƏK-in glow həddinə çatmır.
+static func _test_shot_and_food_differ() -> void:
+	var tex := load("res://assets/sprites/shot_comet.svg") as Texture2D
+	var head := tex != null and tex.get_width() == 128 \
+		and is_equal_approx(Arena.SHOT_HEAD.x, -(46.0 / 64.0 - 0.5) * float(tex.get_width())) \
+		and is_equal_approx(Arena.SHOT_SCALE * float(tex.get_width()), 64.0)
+	_check(head, "kometin başı topun həqiqi yerindədir (tekstura %d px)"
+		% (tex.get_width() if tex != null else -1))
+	var food_r := 11.5 * Arena.FOOD_SCALE
+	var lit := (Palette.FOOD_CORE * Arena.FOOD_DIM).srgb_to_linear()
+	_check(food_r < 9.6 and maxf(lit.r, maxf(lit.g, lit.b)) < 0.62,
+		"qida topun başından kiçikdir (%.1f px) və glow həddinə çatmır (%.2f)"
+			% [food_r, maxf(lit.r, maxf(lit.g, lit.b))])
+
+
+## Öyrədici mesaj ilk [constant Settings.TIP_SHOWS] dəfə göstərilir, sonra yox;
+## say fayldan oxunur. Başsız prosesdə (bu test) diskə yazılmır.
+static func _test_tips_limit() -> void:
+	var path := "user://_test_tips.cfg"
+	var keep := [Settings.tips.duplicate(), Net.quality, Settings.fps_cap,
+		Settings.quality_chosen, Settings.fps_chosen, Settings.auto_quality, Settings.auto_dpr,
+		Net.nickname, int(Net.species), int(Net.mode)]
+	var cfg := ConfigFile.new()
+	cfg.set_value("tips", "bush", Settings.TIP_SHOWS - 1)
+	cfg.save(path)
+	Settings.load_from_disk(path)
+	var due := Settings.tip_due("bush") and Settings.tip_due("enter")
+	Settings.tip_shown("bush")
+	_check(due and not Settings.tip_due("bush") and Settings.tip_due("enter"),
+		"ipucu %d dəfədən sonra susur, başqa ipucu öz sayı ilə gedir" % Settings.TIP_SHOWS)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	Settings.tips = keep[0]
+	Net.quality = keep[1]
+	Settings.fps_cap = keep[2]
+	Settings.quality_chosen = keep[3]
+	Settings.fps_chosen = keep[4]
+	Settings.auto_quality = keep[5]
+	Settings.auto_dpr = keep[6]
+	Net.nickname = keep[7]
+	Net.species = Const.species_from(keep[8])
+	Net.mode = Const.mode_from(keep[9])
 
 
 static func _check(ok: bool, label: String) -> void:

@@ -98,6 +98,14 @@ var haptics := true
 # ---------- şəbəkə ----------
 var address := Const.default_server()
 
+# ---------- öyrədici mesajlar ----------
+## Öyrədici mesaj neçə dəfə göstərilib — `{açar: say}` (bax [method tip_due]).
+var tips := {}
+## Bu prosesdə sayğac diskə YAZILMIR: `--practice` menyunu keçən sınaq yoludur
+## (kadr, ölçmə, stend). Yazsaydı, sahibin öz kompüterindəki üç dənə sınaq
+## açılışı ipucularını onun oyunu üçün də birdəfəlik söndürərdi.
+var _tips_frozen := false
+
 ## Headless (server, `--simtest`, `--autoclient`) — səs və kadr həddi
 ## tətbiq olunmur: o proseslərin nə audio cihazı var, nə də ekranı.
 var _silent := false
@@ -112,6 +120,7 @@ func _ready() -> void:
 	_silent = DisplayServer.get_name() == "headless"
 	var argv := OS.get_cmdline_args()
 	_fps_locked = argv.has("--max-fps") or argv.has("--fixed-fps")
+	_tips_frozen = OS.get_cmdline_user_args().has("--practice")
 	load_from_disk()
 	if OS.has_feature("android") and not _silent and not _fps_locked:
 		# `load` ilə: server, masaüstü və brauzer bu skripti kompilyasiya etmir.
@@ -180,6 +189,11 @@ func load_from_disk(path := PATH) -> void:
 	if Const.OLD_DEFAULT_SERVERS.has(address.strip_edges()):
 		address = Const.default_server()
 
+	tips = {}
+	if cfg.has_section("tips"):
+		for key in cfg.get_section_keys("tips"):
+			tips[key] = maxi(int(cfg.get_value("tips", key, 0)), 0)
+
 
 func save() -> void:
 	var cfg := ConfigFile.new()
@@ -205,6 +219,8 @@ func save() -> void:
 	cfg.set_value("controls", "haptics", haptics)
 
 	cfg.set_value("net", "address", address.strip_edges())
+	for key in tips:
+		cfg.set_value("tips", key, int(tips[key]))
 	cfg.save(PATH)
 
 
@@ -218,7 +234,42 @@ func commit() -> void:
 	changed.emit()
 
 
-## Hər şeyi ilkin dəyərlərə qaytarır.
+## Öyrədici mesaj neçə dəfə göstərilir. Sonra HEÇ VAXT.
+##
+## Oyunçu qaydanı ilk iki-üç dəfədə öyrənir; ondan sonra eyni cümlə ekranın
+## ortasında yalnız döyüşü örtür ("GİZLƏNDİN — Kolun içində rəqiblər səni
+## görmür" hər matçda bir dəfə çıxırdı). Görüntü işarəsi isə həmişə qalır —
+## kolda mikrobun şəffaflaşır və yarpaq xışıldayır.
+const TIP_SHOWS := 3
+
+
+## [param key] ipucusu hələ göstərilməlidirmi.
+func tip_due(key: String) -> bool:
+	return int(tips.get(key, 0)) < TIP_SHOWS
+
+
+## İpucu göstərildi — say artır və dərhal diskə gedir.
+##
+## Faylın YALNIZ `tips` bölməsi yazılır, [method save] çağırılmır: arena
+## komanda sətri ilə də açılır (`--species`, `--mode`) və tam yazı o sınaq
+## seçimlərini oyunçunun öz ayarlarının üstünə yazardı.
+func tip_shown(key: String) -> void:
+	tips[key] = int(tips.get(key, 0)) + 1
+	_write_one("tips", key, int(tips[key]))
+
+
+## Faylın YALNIZ bir açarını yazır (bax [method tip_shown]); başsız və `--practice`
+## prosesində heç nə yazmır.
+func _write_one(section: String, key: String, value: int) -> void:
+	if _silent or _tips_frozen:
+		return
+	var cfg := ConfigFile.new()
+	cfg.load(PATH)
+	cfg.set_value(section, key, value)
+	cfg.save(PATH)
+
+
+## Hər şeyi ilkin dəyərlərə qaytarır. İpucu sayğacı ayar deyil — toxunulmur.
 func reset() -> void:
 	master = 0.9
 	sfx = 1.0

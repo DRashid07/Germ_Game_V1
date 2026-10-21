@@ -166,7 +166,8 @@ ekranda 10 mikrob var və tək kanal (məsələn, yalnız səs) itir:
 | **Uçan rəqəm** | `+2` zərbədə, `+5 TUTUM` mükafatda | [`Arena._pop_text`](game/scripts/client/arena.gd) |
 | **Titrəmə** (telefonda) | zərbə 22 ms · super 45 · tutum 60 · ölüm 160 | [`Settings.vibrate`](game/scripts/shared/settings.gd) |
 
-Uçan toplar da iz buraxır — [`ShotTrails`](game/scripts/client/shot_trails.gd).
+Uçan toplar kometdir və iz buraxır — [`ShotTrails`](game/scripts/client/shot_trails.gd)
+(bax [«Döyüş ekranı — az və aydın»](#döyüş-ekranı--az-və-aydın)).
 
 Titrəmə BEŞİNCİ kanaldır və qalanlarını əvəz etmir: səs kəsilə bilər (səssiz
 rejim, qulaqlıqsız oyun), parıltı isə barmağın altında qala bilər. Ayarlardan
@@ -201,6 +202,44 @@ gələn ox boyunca ən çox 16 px təpik alır; yaxın rəqibin ölümü mövcud
 > qalır, donma bitəndə düzəliş mikrobu sıçradır. Zərbə hissi üçün qoyulan
 > effekt öz zərbəsini yeyərdi. Ona görə donma YALNIZ görüntüdədir — kamera və
 > mikrob animasiyaları dayanır, simulyasiya isə tam sürətlə davam edir.
+
+### Döyüş ekranı — az və aydın
+
+Sahibin seçdiyi beş dəyişiklik (2026-10-20). Məqsəd ekrana şey ƏLAVƏ etmək
+deyil, gözün döyüşdən ayrılmamasıdır: oyunun bütün qərarları bir neçə sualdan
+asılıdır və hər sualın cavabı gözün onsuz da olduğu yerdə olmalıdır.
+
+| Sual | Əvvəl | İndi | Kod |
+|---|---|---|---|
+| Neçə topum var? | sol yuxarıda böyük `4 / 10` + zolaq | öz mikrobunun ALTINDA bölməli zolaq (Brawl Stars-ın sursatı kimi), küncdə kiçik `4 / 10` qalır | [`AmmoBar`](game/scripts/client/ammo_bar.gd), [`Hud._build_gauge`](game/scripts/client/hud.gd) |
+| Hansı mənəm? | mərkəzdə öz adın | ad YOXDUR — sən həmişə mərkəzdəsən; sayımda üç sətir mətn bir yerə yığılırdı | [`GermVisual.show_name`](game/scripts/client/germ_visual.gd) |
+| Bu, təhlükədir, yoxsa yem? | top da, qida da ~10 px-lik parlaq dairə | top KOMETDİR (uçuşa dönür, quyruğu var), qida kiçik (7.8 px) və tutqundur — glow həddinə çatmır | [`Arena._dress_shot`](game/scripts/client/arena.gd), `FOOD_SCALE`, `FOOD_DIM` |
+| Kimi vurum? | yalnız 90%-də qırmızı kontur və çatlar | rəqib **80%-dən** dolu olanda arxasında qırmızı işıq ürək kimi döyünür ("lub-dub", dolduqca tezləşir) | [`GermVisual.RIPE_FILL`](game/scripts/client/germ_visual.gd) |
+| Bunu bilirəm | "GİZLƏNDİN" hər matçda | öyrədici mesaj ilk **3** dəfə, sonra heç vaxt | [`Settings.tip_due`](game/scripts/shared/settings.gd) |
+
+- **Zolaq dünyadadır, HUD-da deyil**, amma miqyası kameranın əksidir: ekranda
+  ölçüsü sabitdir (84×11 px), mövqe isə mikrobdan gəlir — kamera zərbəsində və
+  silkələnmədə ondan qopmur. Rəngi künc rəqəmi ilə eynidir (sarı az, yaşıl,
+  qırmızı dolu); dolu halda titrəyir, acında (≤ 2 top) yanıb-sönür. Tutum 20-yə
+  qədər hər top bir bölmədir (atəş −1, zərbə +2 sayılır), sonra beşlik. Kol
+  tacının da üstündədir (z 4): gizlənəndə də öz sayını görürsən.
+- **Döyüntü yalnız RƏQİBDƏDİR** — öz mikrobunda, yoldaşda və doğuş qalxanında
+  (top dəymir) yoxdur. Ad yox, gövdə dəyişir: döyüşdə göz gövdələrə baxır.
+  Halqa deyil, əlavə qarışdırılan yumşaq işıqdır (mikrobun ətrafına halqa
+  qoymamaq qaydası qalır); AŞAĞI keyfiyyətdə də, glow-suz, görünür. Hədd həqiqi
+  saydandır, yumşaldılmış doluluqdan yox — zərbə anında "bir də vur" deyir.
+  Gövdənin özü (GPU sətri, shader) dəyişmədi: döyüntü ayrıca sprite-dır,
+  gövdənin arxasında.
+- **Öyrədici mesajlar:** "GİZLƏNDİN", "DÜNYAYA GİRDİN" və matç başlayanda
+  "BAŞLADI"-nın altındakı məqsəd cümləsi (hər rejimə ayrıca). "BAŞLADI" özü
+  siqnaldır, həmişə çıxır. Say `settings.cfg`-nin `[tips]` bölməsindədir; yalnız
+  o bölmə yazılır — `--species`/`--mode` ilə açılan arena oyunçunun seçimlərini
+  pozmasın. `--practice` sayğacı diskə yazmır: sınaq açılışları sahibin öz
+  oyununda ipucularını söndürməsin.
+- **Qrafika endirilmədi.** Ölçü (masaüstü, 1600×720, YÜKSƏK, TƏK QALAN, `--auto
+  --frame-probe 25`, köhnə/yeni növbə ilə, iki dəfə): məşğulluq 1.24 / 1.11 →
+  1.16 / 1.21 ms, pik çağırış 81 / 83 → 79 / 88 — səs-küy daxilində. Künc
+  zolağının iki `ColorRect`-i və öz adın (2 çağırış) getdi, zolaq və döyüntü gəldi.
 
 ### Onlayn vuruş — gecikməsiz zərbə
 
@@ -924,7 +963,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (700 test)
+# Simulyasiya + World + dostluq/komanda testləri (709 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

@@ -1294,9 +1294,16 @@ zolaq "ondan zəif" oxunur. Superin mətni də rəqəmləri `Const`-dan götür�
 
 Digər qaydalar:
 
-- **Tək rəngli sprite + `modulate`.** Atılan top (`shot_ball.svg`) və partlama
+- **Tək rəngli sprite + `modulate`.** Atılan top (`shot_comet.svg`) və partlama
   (`burst.svg`) ağ-boz çəkilib, rəngi kodda verilir. Belə olanda 10 rəng üçün
   bir tekstura bəs edir və hamısı bir çəkiliş çağırışına yığılır.
+- **Top kometdir, qida dairədir.** İkisi əvvəl eyni ölçüdə parlaq dairə idi və
+  "təhlükədir, yoxsa yem?" sualına cavab vermirdi. İndi fərq üç kanaldadır:
+  forma (topun uçuş istiqamətinə dönən quyruğu var), ölçü (qida ~7.8 px, topun
+  başı 9.6) və işıq (top YÜKSƏK-də parlayır, qidanın ən açıq kanalı glow
+  həddindən aşağıdır). Kometin başı köhnə topla eyni ölçüdədir — toqquşma radiusu
+  dəyişməyib. Fırlanan sprite 2× idxal olunur (`svg/scale=2`) və yarım miqyasla
+  çəkilir; parıltı nöqtəsi buna görə mərkəzdədir, yuxarı-solda deyil.
 - **Radius sprite-da sabit.** `mucus_blob.svg`-də ləkənin radiusu 120 px-dir;
   kod `scale = radius / 120` ilə ölçüləndirir. Bu rəqəm dəyişsə kod da dəyişməlidir.
 - **Haşiyə üçün yer saxla.** Parlaq haşiyə sprite-ın kənarına toxunmamalıdır,
@@ -1327,8 +1334,9 @@ Hamısı `design/` altındadır və oradan `game/assets/`-ə kopyalanır.
 
 | Fayl | Ölçü | Qeyd |
 |---|---|---|
-| `sprites/food_ball.svg` | 32² | Kodda `scale 0.85` |
-| `sprites/shot_ball.svg` | 36² | `modulate` ilə rənglənir |
+| `sprites/food_ball.svg` | 32² | Kodda `scale 0.68` və tutqun `modulate` (0.78); spor `scale 0.85 × 2.2`, parlaq |
+| `sprites/shot_comet.svg` | 64×32 | Uçan top — komet; `svg/scale=2`, kodda `scale 0.5`, uçuşa dönür, `modulate` ilə rənglənir |
+| `sprites/shot_ball.svg` | 36² | İşlənmir (kometdən əvvəlki dairəvi top) |
 | `sprites/mucus_blob.svg` | 320² | İşlənmir (V1-dən əvvəlki selik) |
 | `sprites/spark.svg` | 64² | Dəymə/udma qığılcımı |
 | `sprites/burst.svg` | 256² | Partlayış BULUDU (yalnız yumşaq qradiyent), `modulate` ilə rənglənir |

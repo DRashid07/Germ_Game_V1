@@ -936,7 +936,7 @@ game/                    Godot layihəsi
   shaders/super_fx.gdshader    Superin açılış effekti — GDScript çəkilişinin surəti
   shaders/map_floor.gdshader   Qabın döşəməsi — makro ton × tikişsiz detal, bir keçiddə
   assets/                SVG sprite-lar, UI, şriftlər, WAV səslər
-    fonts/               Baloo 2 (başlıq) + Nunito (mətn) — bax «Şriftlər»
+    fonts/               Baloo 2 (başlıq) + Nunito (mətn) + simvol ehtiyatı (✓ ✕ →) — bax «Şriftlər»
     ui/theme.tres        Şrift rolları; bütün Control-lar bunu oxuyur
     map/                 xəritə dəsti V1 «Damla» — atlas + manifest, döşəmə, detal,
                          şüşə divar, bayır dekoru (bax «Xəritə — V1 Damla»)
@@ -1005,7 +1005,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (715 test)
+# Simulyasiya + World + dostluq/komanda testləri (716 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -2874,6 +2874,24 @@ gəlir — kodda hər `Label` üçün ayrıca şrift təyin edilmir:
 Başlıq rolu `Label`-a `theme_type_variation = "Heading"` ilə verilir (ayrıca
 tip yoxdur — başlıq da `Label`-dir). Şrift dəyişdirməzdən əvvəl yuxarıdakı
 Azərbaycan hərfləri tələsini oxu.
+
+**Simvollar üçün ehtiyat şrift (2026-10-21).** `✓`, `✕` və `→` nə Nunito-da, nə
+Baloo 2-də var. Belə simvolu Godot telefonun sistem şriftlərində axtarır və hər
+namizəd faylı bütöv oxuyur. Menyunun gizli dəvət kartındakı `✕` buna görə Android-də
+hər açılışa təxminən 0.4 s əlavə edirdi. Emulyatorda (APK, soyuq açılış, 4 cüt) kartın
+qurulması 376–540 ms-dən 3–5 ms-ə düşdü; menyunun bütün `_ready`-si indi ~0.1 s-dir. İndi bu üç simvol [`NotoSansSymbols.ttf`](game/assets/fonts/NotoSansSymbols.ttf)-dədir.
+O, 1.4 KB-dır: Android-in öz Noto Sans Symbols şriftindən HarfBuzz `hb-subset` ilə
+kəsilib və konturları orijinalla eynidir (OFL, bax `NotoSansSymbols-OFL.txt`).
+
+Nunito və Baloo 2 onu idxal ayarlarında ehtiyat kimi göstərir (`fallbacks`). Bir
+istisna var: [`ChunkyBox.heavy_font`](game/scripts/client/chunky_box.gd) variasiyanın
+üstündə variasiyadır. Godot belə olanda əsas şriftin ehtiyatlarını götürmür, ona görə
+ehtiyat orada ayrıca verilir, eyni qalınlaşdırma ilə (0.55). Android-də `✕`
+düymələri əvvəlki ilə piksel-piksel eynidir: dəvət kartında, sorğularda və komanda
+siyahısında 0 piksel fərq var. "HAZIR ✓"-dəki `✓` isə əvvəl sistemin
+başqa, nazik bir şriftindən gəlirdi, indi `✕` ilə eyni ailədəndir. Yeni simvol
+əlavə edəndə `_test_ui_glyphs_in_fonts` onun üç şriftin hər birində olduğunu
+yoxlayır. Oyunçu adlarındakı simvollar üçün sistem ehtiyatı açıq qalır.
 
 Dünyada **üç mikrob növü** var və hamısı tamamilə kodla çəkilir:
 

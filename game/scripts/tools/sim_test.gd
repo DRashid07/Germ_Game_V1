@@ -131,6 +131,7 @@ static func run() -> int:
 	_test_menu_preloads_world()
 	_test_web_entry_prep()
 	_test_warm_up_covers_arena()
+	_test_ui_glyphs_in_fonts()
 	_test_export_excludes_build()
 	_test_germ_gpu_contract()
 	_test_germ_gpu_rows()
@@ -2460,6 +2461,47 @@ static func _test_warm_up_covers_arena() -> void:
 	_check(gpu.contains("load(MAP_FLOOR)") and gpu.contains("_hold.append(shader)")
 			and gpu.contains(".draw_line(") and gpu.contains("set_extent(probe"),
 		"isinmə döşəməni və nazik xətti ekrandan kənarda çəkir, shader-i saxlayır")
+
+
+## Skriptlərin mətnlərindəki hər simvol oyunun üç şriftinin hər birində var: mətn,
+## başlıq və [method ChunkyBox.heavy_font] (öz ehtiyatları ilə). Olmayan simvolu
+## Android sistem şriftlərində axtarır və hər namizədi bütöv oxuyur — dəvət kartının
+## gizli ✕-i hər açılışa ~350 ms əlavə edirdi. Yeni simvol bu testdən keçmirsə, onu
+## `assets/fonts/NotoSansSymbols.ttf`-ə əlavə et (README «Şriftlər»).
+static func _test_ui_glyphs_in_fonts() -> void:
+	var theme := ThemeDB.get_project_theme()
+	var fonts: Array[Font] = [theme.default_font, theme.get_font("font", "Heading"),
+		ChunkyBox.heavy_font()]
+	var missing := {}
+	var seen := 0
+	for dir in ["res://scripts/client", "res://scripts/shared"]:
+		for f in DirAccess.get_files_at(dir):
+			if not f.ends_with(".gd"):
+				continue
+			for line in FileAccess.get_file_as_string(dir.path_join(f)).split("\n"):
+				# Yalnız sətirlərin içi — şərhlər (`#` sətirdən kənarda) sayılmır.
+				var quote := ""
+				var i := 0
+				while i < line.length():
+					var c := line[i]
+					if quote.is_empty():
+						if c == "#":
+							break
+						if c == "\"" or c == "'":
+							quote = c
+					elif c == "\\":
+						i += 1
+					elif c == quote:
+						quote = ""
+					elif c.unicode_at(0) > 127:
+						seen += 1
+						for font in fonts:
+							if not font.has_char(c.unicode_at(0)):
+								missing["%s U+%04X %s" % [f, c.unicode_at(0), c]] = true
+					i += 1
+	_check(seen > 100 and missing.is_empty(),
+		"UI mətnlərinin bütün simvolları şriftlərdədir — telefon sistem şriftini axtarmır (%d simvol) %s"
+			% [seen, missing.keys()])
 
 
 ## Yerli ixrac `game/build/`-dəki ekran şəkillərini (idxal olunmuş PNG-lər, ~5 MB)

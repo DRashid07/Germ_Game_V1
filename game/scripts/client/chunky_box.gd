@@ -80,6 +80,10 @@ static func stroke(c: Control, size := 6, heavy := false) -> void:
 
 static var _heavy: FontVariation
 
+## Oyunun şriftlərində olmayan simvollar (✓ ✕ →) — Noto Sans Symbols-dan kəsilmiş 1.4 KB.
+## Nunito və Baloo 2 onu idxal ayarlarında ehtiyat kimi göstərir.
+const SYMBOLS := "res://assets/fonts/NotoSansSymbols.ttf"
+
 
 ## Başlıq şrifti (Baloo 2, 800), bir az qalınlaşdırılmış.
 ##
@@ -88,11 +92,21 @@ static var _heavy: FontVariation
 ## konturun içində nazik qalırdı. Lilita-nın özü götürülə bilməz — onda Ə/ə
 ## yoxdur (bax `assets/ui/theme.tres`). Ona görə eyni şrift süni
 ## qalınlaşdırılır: bütün Azərbaycan hərfləri yerində qalır.
+##
+## Simvollar (✓, ✕) Baloo-da yoxdur, kiçik ehtiyat şriftindədir (bax [constant SYMBOLS]).
+## Bu variasiya başqa variasiyanın üstündədir və Godot belə olanda əsas şriftin
+## ehtiyatlarını götürmür — o zaman telefon simvolu sistem şriftlərində axtarırdı
+## (Android-də hər açılışda ~350 ms). Ona görə ehtiyat burada AYRICA verilir, eyni
+## qalınlaşdırma ilə: sistemin ehtiyat şrifti də bu variasiyanın qalınlığını alırdı.
 static func heavy_font() -> Font:
 	if _heavy == null:
 		_heavy = FontVariation.new()
 		_heavy.base_font = ThemeDB.get_project_theme().get_font("font", "Heading")
 		_heavy.variation_embolden = 0.55
+		var symbols := FontVariation.new()
+		symbols.base_font = load(SYMBOLS)
+		symbols.variation_embolden = _heavy.variation_embolden
+		_heavy.fallbacks = [symbols]
 	return _heavy
 
 

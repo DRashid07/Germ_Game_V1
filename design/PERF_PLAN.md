@@ -411,6 +411,13 @@ keçidlərinin hazırlığı da gedir.
    > orada menyunu dondurardı). Telefon ssenarisi (A/B, 2026-10-20): birinci keçid
    > 528 → 81 ms, ikinci 224 → 75 ms, super anı +6.4 → +1.0 ms; qiyməti menyuda bir
    > uzanan kadr (+20–90 ms) və ~34 MB tekstura yaddaşıdır.
+   > **Keşlər və doğuş yeri (2026-10-21, README «Brauzerdə arenaya keçid»).** Xəritənin
+   > teksturaları və qabın meşləri proses boyu keşdədir, menyunun teksturaları matç boyu
+   > tutulur: növbəti keçid və menyuya qayıdış onları yenidən açmır (A04s-in brauzer
+   > modelində, CPU 6×: arenanın `_ready`-si 0.9 → 0.1 s, menyununku 0.55 → 0.08 s;
+   > qiyməti matçda ~12 MB). Server doğuş yerini giriş məlumatında göndərir — matçın
+   > əvvəlində kamera daha 450–1950 px sıçramır. Axınsız brauzerdə arena başlanğıc
+   > örtüyünün altında yüklənir: ilk OYNA 6.0 → 0.3–0.5 s.
 2. **Shader qızdırma** — axtarış ekranında hər material bir dəfə ekrandan kənarda
    çəkilir. Mobile render-ə keçilsə, Shader Baker bunu ixracda edir.
    > **Menyunun isinməsi hissələrə bölünüb (2026-10-20, README «Mikrob GPU-da çəkilir»).**

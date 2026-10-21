@@ -258,6 +258,9 @@ func join_info_for(peer: int) -> Dictionary:
 		"mode": int(mode),
 		"tick_rate": Const.TICK_RATE,
 		"token": str(tokens.get(peer, "")),
+		# Doğuş yeri: klientin proqnozu buradan başlayır (bax `Arena.configure_online`).
+		# Dirilməni gözləyənin mikrobu yoxdur — onun klienti ilk snapshot-u gözləyir.
+		"pos": g.pos if g != null else Vector2.INF,
 	}
 
 

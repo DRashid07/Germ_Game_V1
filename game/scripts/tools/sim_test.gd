@@ -132,6 +132,10 @@ static func run() -> int:
 	_test_web_entry_prep()
 	_test_warm_up_covers_arena()
 	_test_ui_glyphs_in_fonts()
+	_test_map_cache_outlives_arena()
+	_test_web_front_load()
+	_test_join_spawn_pos()
+	_test_menu_holds_textures()
 	_test_export_excludes_build()
 	_test_germ_gpu_contract()
 	_test_germ_gpu_rows()
@@ -2502,6 +2506,99 @@ static func _test_ui_glyphs_in_fonts() -> void:
 	_check(seen > 100 and missing.is_empty(),
 		"UI mətnlərinin bütün simvolları şriftlərdədir — telefon sistem şriftini axtarmır (%d simvol) %s"
 			% [seen, missing.keys()])
+
+
+## Xəritənin teksturaları və qabın meşləri proses boyu keşdədir: arena bağlananda
+## buraxılmır, növbəti matçın `_ready`-si onları yenidən açmır. Axınsız brauzerdə bu,
+## hər matçın başında ana axında PNG açmaq idi (A04s modelində ~0.9 s donma).
+static func _test_map_cache_outlives_arena() -> void:
+	var arena := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	_check(not arena.contains("MapKit.release()"), "arena bağlananda xəritənin teksturaları keşdə qalır")
+	_check(MapKit.backdrop_mesh() == MapKit.backdrop_mesh() and MapKit.rim_mesh() == MapKit.rim_mesh()
+			and MapKit.lip_mesh() == MapKit.lip_mesh(),
+		"qabın meşləri bir dəfə qurulur")
+
+
+## Axınsız brauzerdə arena başlanğıc örtüyünün altında yüklənir: örtük də, menyunun
+## giriş animasiyası da ön yükləmədən SONRA (bax [method MenuV2._frontload]). APK və
+## masaüstü bunu etmir — orada arena fonda yüklənir. Ölçmələrin avtomatik oyunçusu
+## geriyə sayımda oyunçu kimi dayanır, yoxsa matçın başında öz mikrobu sıçrayırdı.
+static func _test_web_front_load() -> void:
+	var menu := MenuV2.new()
+	_check(not menu._frontload_pending(), "brauzer deyil — ön yükləmə yoxdur, menyu dərhal açılır")
+	menu.free()
+	# Addımlar adla çağırılır: biri itsə, örtük səhifənin 60 s-lik ehtiyat saatına qədər qalardı.
+	var kit: Script = load("res://scripts/client/map_kit.gd")
+	var names := {}
+	for m in kit.get_script_method_list():
+		names[m["name"]] = true
+	var lost := MenuV2._FRONTLOAD_STEPS.filter(func(s: String) -> bool: return not names.has(s))
+	_check(lost.is_empty() and names.has("_texture") and ResourceLoader.exists(MapKit.PROPS_PATH),
+		"ön yükləmənin addımları MapKit-də var %s" % [lost])
+	var src := FileAccess.get_file_as_string("res://scripts/client/menu_v2.gd").replace("\r", "")
+	_check(src.contains("var hold := _frontload_pending()\n\tif not hold:\n\t\t_play_intro(")
+			and src.contains("if not hold:\n\t\tSettings.web_page_ready()")
+			and src.contains("_map_hold.append(load(ARENA_SCENE))")
+			and src.contains("_frontloaded = true"),
+		"axınsız brauzerdə örtük arena yüklənəndən sonra çəkilir")
+	var arena := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	_check(arena.contains("if auto_input and _phase != Const.Phase.COUNTDOWN:"),
+		"avtomatik oyunçu geriyə sayımda dayanır")
+
+
+## Onlayn girişdə klientin proqnozu serverin doğuş yerindən başlayır. Əvvəl təsadüfi
+## yerdən başlayırdı: ilk snapshot-a qədər kamera xəritənin başqa yerini göstərir, sonra
+## 450–1950 px sıçrayırdı (bax [method Arena.configure_online]).
+static func _test_join_spawn_pos() -> void:
+	var world := World.new(33, Const.Mode.SOLO)
+	var g := world.add_player(A_ID, "A")
+	var info := world.join_info_for(A_ID)
+	_check(info.get("pos") is Vector2 and info["pos"] == g.pos, "giriş məlumatında doğuş yeri var")
+	var species := Net.species
+	var a := Arena.new()
+	a.configure_online(info)
+	_check(a.start_at == g.pos, "proqnoz serverin doğuş yerindən başlayır")
+	info.erase("pos")
+	var old := Arena.new()
+	old.configure_online(info)
+	_check(not old.start_at.is_finite(), "yeri göndərməyən köhnə server — əvvəlki kimi")
+	a.free()
+	old.free()
+	Net.species = species
+	var src := FileAccess.get_file_as_string("res://scripts/client/arena.gd")
+	_check(src.contains("if start_at.is_finite():\n\t\tme.pos = start_at")
+			or src.contains("if start_at.is_finite():\r\n\t\tme.pos = start_at"),
+		"proqnoz start_at-ı götürür")
+
+
+## Menyunun teksturaları matç boyu tutulur: qayıdanda yenidən qurulan menyu onları
+## Godot-un keşindən alır, ana axında yenidən açmır (bax [method MenuV2._hold_textures]).
+## Növ vərəqi tutulmur — o, yalnız açılanda qurulur.
+static func _test_menu_holds_textures() -> void:
+	var img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	var bg := ImageTexture.create_from_image(img)
+	var icon := ImageTexture.create_from_image(img)
+	var card := ImageTexture.create_from_image(img)
+	var menu := MenuV2.new()
+	menu._bg = bg
+	var button := Button.new()
+	button.icon = icon
+	menu.add_child(button)
+	var sheet := Control.new()
+	var rect := TextureRect.new()
+	rect.texture = card
+	sheet.add_child(rect)
+	menu.add_child(sheet)
+	menu._sheet = sheet
+	menu._hold_textures()
+	menu.free()
+	_check(MenuV2._held.has(bg) and MenuV2._held.has(icon) and not MenuV2._held.has(card),
+		"arenaya keçəndə menyu fonu və ikonları tutur, növ vərəqini yox")
+	MenuV2._held.clear()
+	var src := FileAccess.get_file_as_string("res://scripts/client/menu_v2.gd").replace("\r", "")
+	_check(src.contains("\t_hold_textures()\n\tconfigure.call(arena)\n\t_swap_to(arena)")
+			and src.count("_held.clear()") >= 2,
+		"menyu arenaya keçəndə tutur, yeni menyu qurulandan sonra buraxır")
 
 
 ## Yerli ixrac `game/build/`-dəki ekran şəkillərini (idxal olunmuş PNG-lər, ~5 MB)

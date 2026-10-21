@@ -492,7 +492,7 @@ var _backdrop: ArrayMesh
 var _rim_mesh: ArrayMesh
 ## Döşəmə və divar teksturalarını arena ÖZÜ tutur: çəkiliş əmri yalnız RID
 ## saxlayır, istinadı heç kim tutmasa tekstura azad olunur və GPU ağ
-## standart teksturanı çəkir (bax [method MapKit.release]).
+## standart teksturanı çəkir (bax `MapKit._textures`).
 var _floor_tex: Texture2D
 var _rim_tex: Texture2D
 var _lip_mesh: ArrayMesh
@@ -689,6 +689,13 @@ func configure_online(info: Dictionary) -> void:
 	my_color = int(info.get("color", 0))
 	Net.species = _species_from(info)
 	_token = str(info.get("token", ""))
+	# Proqnoz serverin doğuş yerindən başlayır ([method World.join_info_for]). Əvvəl o,
+	# təsadüfi yerdən başlayırdı və ilk snapshot-a qədər kamera xəritənin başqa yerini
+	# göstərirdi, sonra 450–1950 px sıçrayırdı (A04s-in brauzer modelində 0.1–1 s).
+	# Köhnə server yeri göndərmir — onda əvvəlki kimi ilk snapshot çəkir.
+	var at = info.get("pos", Vector2.INF)
+	if at is Vector2 and at.is_finite():
+		start_at = at
 
 
 ## Serverin təsdiqlədiyi növ.
@@ -702,9 +709,10 @@ static func _species_from(info: Dictionary) -> Const.Species:
 
 ## Şəbəkəsiz məşq. Eyni [World] və [Sim] kodu yerli işləyir — fərq yalnız
 ## snapshot-ların şəbəkədən yox, yaddaşdan gəlməsidir.
-## Məşqdə mikrobun doğuş yeri. `Vector2.INF` = adi (təsadüfi) doğuş.
+## Məşqdə mikrobun doğuş yeri. `Vector2.INF` = adi (təsadüfi) doğuş. Onlayn rejimdə
+## isə serverin dediyi doğuş yeridir — proqnoz oradan başlayır ([method configure_online]).
 ##
-## YALNIZ yoxlama üçündür (`--at x,y`). Xəritənin bir hissəsini gözlə görmək
+## Məşqdə YALNIZ yoxlama üçündür (`--at x,y`). Xəritənin bir hissəsini gözlə görmək
 ## üçün başqa yol yoxdur: doğuş təsadüfidir, kol və cərəyan deşiyi isə
 ## dünyanın müəyyən yerlərindədir, ona görə "kolun içi necə görünür"
 ## sualına ekran görüntüsü ilə cavab vermək təsadüfə qalırdı.
@@ -1258,11 +1266,6 @@ func _notification(what: int) -> void:
 		_ask_leave()
 
 
-## Xəritənin teksturaları yalnız arena yaşadıqca saxlanılır (bax [method MapKit.release]).
-func _exit_tree() -> void:
-	MapKit.release()
-
-
 func _ask_leave() -> void:
 	# Nəticə ekranında və ya çıxış artıq gedərkən soruşmağa dəyməz: menyuya
 	# onsuz da qayıdılır.
@@ -1529,7 +1532,10 @@ func _do_tick() -> void:
 ## Joystick-dən bir tick-lik giriş yığır.
 func _sample_input() -> Sim.PlayerInput:
 	_seq += 1
-	if auto_input:
+	# Avtomatik oyunçu da geriyə sayımda dayanır (aşağıdakı qayda): əvvəl o, sayım
+	# boyu proqnozda yeriyirdi və matç başlayanda öz mikrobu 200–500 px sıçrayırdı —
+	# ölçmələrdə "teleport" kimi görünürdü, halbuki oyunçuda belə olmur.
+	if auto_input and _phase != Const.Phase.COUNTDOWN:
 		return _auto_sample()
 
 	var move := _hud.move_stick.value

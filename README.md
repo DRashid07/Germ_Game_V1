@@ -1005,7 +1005,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (716 test)
+# Simulyasiya + World + dostluq/komanda testləri (728 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1490,11 +1490,12 @@ yükləməsi hələ bitməyibsə, qalanını gözləyir.
 
 Xəritənin teksturaları (atlas, döşəmə, detal, divar, dekor — itkisiz PNG-lər)
 səhnənin asılılığı deyil: [`MapKit`](game/scripts/client/map_kit.gd) onları arenanın
-`_ready`-sində `load` edir və arena bağlananda buraxır (`MapKit.release`). Onların
-açılması keçid kadrının ~100 ms-i idi (masaüstü debug). Menyu onları da fonda,
-səhnədən sonra istəyir (`_preload_map`) və arena qurulana qədər tutur; sonra yenə
-yalnız MapKit tutur. **Qiyməti:** menyuda ~34 MB videoyaddaş (atlas 2048² mipmap-lərlə
-~22 MB). Arenanın SVG-ləri və döşəmə shader-i `preload`-a keçib — səhnə ilə gəlir.
+`_ready`-sində `load` edir və keşində proses boyu saxlayır (əvvəl arena bağlananda
+buraxırdı — bax «Brauzerdə arenaya keçid»). Onların açılması keçid kadrının ~100 ms-i
+idi (masaüstü debug). Menyu onları da fonda, səhnədən sonra istəyir (`_preload_map`;
+keşdə olanları yox) və arena qurulana qədər tutur. **Qiyməti:** menyuda ~34 MB
+videoyaddaş (atlas 2048² mipmap-lərlə ~22 MB). Arenanın SVG-ləri və döşəmə shader-i
+`preload`-a keçib — səhnə ilə gəlir.
 
 Üç tələ: (1) sorğu isinmə ilə eyni anda verilsə, ana axın isinmənin
 `load("germ_gpu.gd")`-sində fonun demək olar bütün arena yükünü gözləyirdi —
@@ -1638,10 +1639,74 @@ Yoxlanıb: `_practice()` çağırışı əvvəl yükləmə boyu blok edirdi (13�
 2–393 ms-də qayıdır. MƏŞQ və onlayn keçid (yerli server) işləyir, konsolda xəta yoxdur.
 APK-da və axınlı build-də örtük açılmır, orada arena fonda yüklənir.
 
-Donmanın özü qalır, dəyişən onun görünüşüdür. Kökündən həll üçün iki yol var:
+Donmanın özü qalır, dəyişən onun görünüşüdür; ilk keçidin yükü isə indi açılışdadır
+(aşağıya bax). Kökündən həll üçün iki yol var:
 - **Axınlı veb build:** nginx-də COOP/COEP artıq var. 4×-də keçid 3.0–3.8 → 0.22–0.24 s,
   amma 13×-də fon yükləməsi 83–114 s çəkdi — real telefonda yoxlanmalıdır.
 - **`arena.gd`-ni bölmək:** keçidin ən böyük tək parçası odur.
+
+#### A04s brauzerində donma və sıçrayış: açılışda yükləmə, keşlər, doğuş yeri (2026-10-21)
+
+Ölçmə: A04s modeli (masaüstü Chrome, Android UA, 800×360@2, Mali-G52 adı; CPU 6× — real
+telefona yaxın, 13× — ən pis hal), real axın: menyu → OYNA → onlayn matç (yerli server,
+TCP gecikmə proksisi: hər istiqamətdə 60±25 ms, ~30 s-dən bir 0.4–1.2 s-lik donma) →
+partlayış → yenə OYNA. Tapılanlar:
+- **Hər matçın girişi ~0.9 s (13×-də 2.8 s) donurdu.** Arena bağlananda `MapKit.release`
+  xəritənin 5 teksturasını buraxırdı, növbəti arenanın `_ready`-si onları ana axında
+  yenidən açırdı. İndi keş proses boyu yaşayır (`MapKit._textures`), qabın meşləri də
+  (`MapKit._meshes`). APK-da menyu onları onsuz da fonda yenidən tuturdu — yaddaşın
+  zirvəsi dəyişmir; brauzerdə menyu da indi ~34 MB tutur.
+- **İlk OYNA ~6 s (13×-də 22.7 s) çəkirdi** — «Matç hazırlanır…» örtüyünün altında, amma
+  serverin 3 saniyəlik geriyə sayımı bu arada gedirdi: oyunçu matça sayım bitəndən sonra
+  düşürdü. İndi axınsız brauzerdə [`MenuV2._frontload`](game/scripts/client/menu_v2.gd)
+  arenanı və xəritənin teksturalarını başlanğıc örtüyünün («Oyun hazırlanır…») altında
+  yükləyir — isinmədən sonra, hər addım öz kadrında; örtük və menyunun giriş animasiyası
+  ondan sonra gəlir. Səhifənin ehtiyat saatı (`PREP_FALLBACK_MS`) 60 → 120 s: 13×-də
+  hamısı ~67 s çəkir və 60 s-lik saat örtüyü yükləmənin ortasında götürərdi.
+- **Menyu görünəndən sonra 1.8 və 4.3 s donurdu** — mikrobun shader isinməsi örtük
+  çəkiləndən sonra gedirdi. İndi o da örtüyün altındadır. (Bu donmanın böyük hissəsi
+  Windows Chrome-un shader kompilyatorundandır; telefonda başqa ola bilər.)
+- **Ölçmənin öz "teleport"u:** avtomatik oyunçu geriyə sayımda da (proqnozda) yeriyirdi
+  və matç başlayanda öz mikrobu 200–500 px geri sıçrayırdı. Oyunçuda belə olmur — sayımda
+  giriş bağlıdır; indi avtomatik oyunçu da dayanır (`Arena._sample_input`).
+- **Hər matçın əvvəlində kamera 450–1950 px sıçrayırdı.** Klientin proqnozu təsadüfi
+  yerdən başlayırdı; ilk snapshot emal olunana qədər (6×-də 0.1–0.4 s, 13×-də ~1 s) kamera
+  qabın başqa yerini göstərir, sonra mikrobun həqiqi yerinə sıçrayırdı. Sıçrayan mikrob
+  yox, kamera idi (öz mikrobun görüntüsü ilk snapshot-la yaranır) — proqnoz düzəlişinin
+  ölçüsündə tutuldu. İndi server doğuş yerini giriş məlumatında göndərir
+  (`World.join_info_for`, `"pos"`), proqnoz oradan başlayır (`Arena.configure_online`).
+  Köhnə server yeri göndərmir — onda əvvəlki kimi; telefonda təsiri Render-ə yeni server
+  çıxandan sonradır.
+- **Matçdan menyuya qayıdış ~0.55 s donurdu.** Menyu hər dəfə yenidən qurulur və fonun,
+  podiumun, qəhrəmanın və ikonların teksturalarını yenidən açırdı (`_build_hero` tək
+  270 ms). İndi menyu arenaya keçəndə onları tutur (`MenuV2._hold_textures`), qayıdan
+  menyu onları keşdən alır. Qiyməti: matçda ~12 MB videoyaddaş.
+
+| A04s modeli, real axın | köhnə | yeni |
+|---|---:|---:|
+| 6×: başlanğıc örtüyü çəkilir | 10.9 s | 19–23 s |
+| 6×: menyunun ən uzun kadrı (örtükdən sonra) | 4353 ms | 36–37 ms |
+| 6×: ilk OYNA → matç, ən uzun kadr | 5993 ms | 314–481 ms |
+| 6×: növbəti OYNA, arenanın `_ready`-si | 909–948 ms | 59–117 ms |
+| 6×: matçın əvvəlində kamera sıçrayışı | 459–1952 px | yoxdur |
+| 6×: menyuya qayıdış, menyunun `_ready`-si | 547–576 ms | 70–92 ms |
+| 6×: matç + qayıdış, 250 ms-dən uzun kadr | 5 / 107 s (ən uzun 784 ms) | 0 / 160 s (173 ms) |
+| 6×: açılışdan ilk matça | 26.3 s | 22.6–26.9 s |
+| 13×: başlanğıc örtüyü çəkilir | 32.1 s | 51.8–66.7 s |
+| 13×: ilk OYNA → matç, ən uzun kadr | 22.7 s | 1.1–1.5 s |
+| 13×: növbəti OYNA, arenanın `_ready`-si | 2.83–2.86 s | 0.21–0.54 s |
+| 13×: açılışdan ilk matça | 69.2 s | 56.2–71.7 s |
+
+Yəni gözləmə yükləmə ekranına köçür, ümumi vaxt eyni qalır: menyu çıxandan sonra donma
+yoxdur, OYNA-dan matça bir an keçir və oyunçu geriyə sayımı görür. Matçın öz FPS-i
+dəyişmir: 6×-də ~29.5 (hədd 30); 250 ms-dən uzun kadrlar matçın başından və menyuya
+qayıdışdan gəlirdi. 13×-də matç 4–10 FPS-dir (menyuya qayıdış 0.27–0.36 s) — orada
+brauzerdə CPU çatmır, bunu yalnız APK həll edir (bax «Brauzerdə (Android) donma»,
+8-ci bənd). Şəbəkə donmasında rəqiblər donma boyu dayanır, sonra sürətlənib yetişir —
+sıçramırlar. APK-da arena onsuz da fonda yüklənir; orada keşlər və doğuş yeri işləyir
+(masaüstündə, eyni yolda, menyuya qayıdış 79 → 7–8 ms). Testlər:
+`_test_map_cache_outlives_arena`, `_test_web_front_load`, `_test_join_spawn_pos`,
+`_test_menu_holds_textures`.
 
 ### Açılışda serverin sinifləri yüklənmir
 
@@ -1987,7 +2052,7 @@ Brauzerdə düzəldilənlər:
   yalnız `transform`/`opacity` ilə oynayır, yəni əsas axın məşğul olanda da hərəkət
   edir (13× yavaş CPU-da pəncərə şəkilləri ilə yoxlanıb). Örtük oyunun ilk ekranı
   çəkiləndə götürülür ([`Settings.web_page_ready`](game/scripts/shared/settings.gd)),
-  oyun xəbər verməsə 60 s sonra özü.
+  oyun xəbər verməsə 120 s sonra özü (2026-10-21-dək 60 s; bax «Brauzerdə arenaya keçid»).
 
 APK-da çəkiliş dəyişikliyinin təsiri kiçikdir (masaüstü native: kadr 3.24 → 3.21 ms) —
 orada GL çağırışı onsuz da ucuzdur. Növbəti addımlar ölçüyə görə: açılışın böyük

@@ -45,7 +45,13 @@ const WALL_TILE := 280.0
 
 static var _cells := {}
 static var _detail_world := 400.0
-## Arena yaşadıqca teksturalar bir dəfə yüklənsin deyə keş (bax [method release]).
+## Teksturaların keşi — proses boyu yaşayır, arena bağlananda buraxılmır.
+##
+## Əvvəl arena bağlananda buraxılırdı (bax [method release]) və hər matç onları
+## yenidən açırdı. Axınsız brauzerdə bu, ana axında itkisiz PNG-lərin açılması idi:
+## A04s modelində (Chrome, CPU 6×) hər matçın başında arenanın `_ready`-si ~0.9 s
+## donurdu, keşlə ~0.1 s-dir. APK-da menyu onları onsuz da fonda yenidən tuturdu
+## (bax `MenuV2._preload_map`), yəni menyuda tutulan ~34 MB əvvəl də var idi.
 ##
 ## Keş TƏK sahib deyil. `load()` resursu Godot-un keşindən qaytarır, amma o keş
 ## onu tutmur: `_draw`-da `draw_texture_rect(load(...))` çağırılıb istinad
@@ -54,6 +60,8 @@ static var _detail_world := 400.0
 ## teksturanı özü tutduğu üçün atlas sağ qalırdı). Ona görə `_draw`-da tekstura
 ## çəkən hər node onu öz dəyişənində tutur.
 static var _textures := {}
+## Qabın sabit meşləri (fon, divar, dodaq) — bir dəfə qurulur, hər matç yox.
+static var _meshes := {}
 
 
 ## Manifestin hüceyrələri: ad -> {"rect", "offset", "r", "cell"}.
@@ -102,9 +110,9 @@ static func prop_sprite(k: int, radius: float) -> Sprite2D:
 	return spr
 
 
-## Keşdəki teksturaları buraxır — arena bağlananda. Keş arenanın ömrü üçündür:
-## menyuda xəritə yoxdur, ~31 MB videoyaddaş boş yerə tutulu qalardı. Sprite-lar
-## öz istinadlarını özləri buraxır; sonuncusu gedəndə tekstura azad olunur.
+## Keşdəki teksturaları buraxır. Oyun bunu çağırmır — keş proses boyu yaşayır
+## (bax [member _textures]); alətlər üçündür. Sprite-lar öz istinadlarını özləri
+## buraxır; sonuncusu gedəndə tekstura azad olunur.
 static func release() -> void:
 	_textures.clear()
 
@@ -187,13 +195,16 @@ static func lip_width(angle: float) -> float:
 ## bişməmiş radial vinyet, göz qaba yığılır. Xarici radius kameranın ən geniş
 ## baxışından böyükdür: halqanın kənarı heç vaxt ekrana düşmür.
 static func backdrop_mesh() -> ArrayMesh:
+	if _meshes.has("backdrop"):
+		return _meshes["backdrop"]
 	var r := Const.WORLD_RADIUS
 	var near := func(_a: float) -> float: return r - 2.0
 	var mid := func(_a: float) -> float: return r + 600.0
 	var far := func(_a: float) -> float: return r + 2600.0
 	var outer := func(_a: float) -> Color: return Palette.BG_OUTER
 	var dark := func(_a: float) -> Color: return Palette.BG_VIGNETTE
-	return ring_mesh([[128, near, mid, outer, dark], [64, mid, far, dark, dark]])
+	_meshes["backdrop"] = ring_mesh([[128, near, mid, outer, dark], [64, mid, far, dark, dark]])
+	return _meshes["backdrop"]
 
 
 ## Şimal divarı: ayağı dodaqda (V = 1), üstü bayırda (V = 0), eni
@@ -206,6 +217,8 @@ static func backdrop_mesh() -> ArrayMesh:
 ## ilə görüşür (güzgü), çevrilməmişlə çevrilmiş də, iki çevrilmiş də tikişsizdir —
 ## zolaq özü üfüqi tikişsizdir. Seçim indeksdən deterministik çıxır.
 static func rim_mesh() -> ArrayMesh:
+	if _meshes.has("rim"):
+		return _meshes["rim"]
 	var r := Const.WORLD_RADIUS
 	var tiles := maxi(1, roundi(TAU * r / WALL_TILE))
 	var sub := 10
@@ -239,6 +252,7 @@ static func rim_mesh() -> ArrayMesh:
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_meshes["rim"] = mesh
 	return mesh
 
 
@@ -257,6 +271,8 @@ static func wall_tile_flipped(k: int) -> bool:
 ## xətti var. Cənubda (yaxın divar) daha sıxdır — kamera oradan şüşənin
 ## qalınlığına baxır.
 static func lip_mesh() -> ArrayMesh:
+	if _meshes.has("lip"):
+		return _meshes["lip"]
 	var r := Const.WORLD_RADIUS
 	var body_in := func(a: float) -> float: return r - lip_width(a)
 	var body_out := func(_a: float) -> float: return r - 2.5
@@ -266,8 +282,9 @@ static func lip_mesh() -> ArrayMesh:
 		return Color(Palette.DISH_EDGE, 0.16 + 0.16 * pow(maxf(0.0, sin(a)), 1.5))
 	var shine := func(a: float) -> Color:
 		return Color(Palette.RIM_LINE, 0.40 + 0.25 * maxf(0.0, sin(a)))
-	return ring_mesh([[192, body_in, body_out, clear, glass],
+	_meshes["lip"] = ring_mesh([[192, body_in, body_out, clear, glass],
 		[192, body_out, edge_out, shine, shine]])
+	return _meshes["lip"]
 
 
 ## Qapalı halqalardan BİR səthli mesh (bir çəkiliş çağırışı). Hər element:

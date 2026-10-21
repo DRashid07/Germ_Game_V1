@@ -336,6 +336,15 @@ var _world_requested := false
 ## Brauzerdə "Matç hazırlanır…" örtüyü açılandan sonra keçidə qədər qalan kadrlar;
 ## -1 = örtük açılmayıb (bax [method _enter_arena]).
 var _prep_frames := -1
+## Axınsız brauzerdə arena başlanğıc örtüyünün ALTINDA yüklənir (bax [method _frontload]).
+## Səhifənin ömründə bir dəfə: matçdan qayıdanda menyu yenidən qurulur, arena isə
+## artıq Godot-un keşindədir.
+static var _frontloaded := false
+var _frontloading := false
+## Ön yükləmədə [MapKit]-in öz kadrlarında çağırılan funksiyaları (testlər yoxlayır).
+const _FRONTLOAD_STEPS := ["cells", "atlas", "floor_texture", "detail_texture", "rim_texture"]
+## Menyunun matç boyu tutulan teksturaları (bax [method _hold_textures]).
+static var _held: Array[Texture2D] = []
 
 const _ICONS := {
 	Const.Species.CILIATE: "res://assets/ui/species_ciliate.svg",
@@ -379,7 +388,10 @@ func _ready() -> void:
 	_refresh_party()
 
 	_probe_server()
-	_play_intro(BootLogo.hold_time())
+	# Ön yükləmə gedirsə, giriş animasiyası örtük çəkiləndə başlayır (bax [method _frontload]).
+	var hold := _frontload_pending()
+	if not hold:
+		_play_intro(BootLogo.hold_time())
 
 	# Matçdan qayıdanda cavabsız dəvət varsa, kart yenidən göstərilir.
 	if not Friends.invites.is_empty():
@@ -388,8 +400,10 @@ func _ready() -> void:
 	var link := Friends.take_friend_link()
 	if not link.is_empty():
 		_open_friends.call_deferred(false, link)
-	# Brauzerdə "Oyun hazırlanır…" örtüyü menyu çəkiləndən sonra götürülür.
-	Settings.web_page_ready()
+	# Brauzerdə "Oyun hazırlanır…" örtüyü menyu çəkiləndən sonra götürülür; axınsız
+	# build-də isə arena yüklənəndən sonra (bax [method _frontload]).
+	if not hold:
+		Settings.web_page_ready()
 	# Mikrobun shader-ləri menyu göründükdən SONRA kompilyasiya olunur, arenanın ilk
 	# anında yox (bax [method GermGPU.warm_up]). `load` ilə: tipli istinad
 	# GermVisual-ı da menyunun açılışında kompilyasiya etdirərdi. Skriptin özü fonda
@@ -397,6 +411,8 @@ func _ready() -> void:
 	if OS.has_feature("threads"):
 		_germ_requested = ResourceLoader.load_threaded_request(GERM_GPU) == OK
 	get_tree().create_timer(0.4).timeout.connect(_warm_up)
+	# Matç boyu tutulan teksturaları artıq bu menyunun node-ları tutur (bax [method _hold_textures]).
+	_held.clear()
 
 
 ## Mikrobun shader-lərinin isinməsi — `germ_gpu.gd` (və onunla [GermVisual],
@@ -438,13 +454,74 @@ func _preload_arena() -> void:
 	if OS.has_feature("threads") and not _arena_requested:
 		_arena_requested = ResourceLoader.load_threaded_request(ARENA_SCENE) == OK
 		_world_requested = ResourceLoader.load_threaded_request(WORLD_SCRIPT) == OK
+	elif _frontload_pending() and not _frontloading:
+		_frontloading = true
+		_frontload()
+
+
+## Axınsız brauzerdə ilk menyu hələ ön yükləməni gözləyirmi (bax [method _frontload]).
+func _frontload_pending() -> bool:
+	return OS.has_feature("web") and not OS.has_feature("threads") and not _frontloaded
+
+
+## Axınsız brauzer: arena və xəritənin teksturaları başlanğıc örtüyünün ("Oyun
+## hazırlanır…") ALTINDA, ana axında yüklənir; örtük ondan sonra çəkilir.
+##
+## Orada fon axını yoxdur və bu iş əvvəl OYNA-da gedirdi: A04s modelində (Chrome,
+## CPU 6×) `arena.tscn`-in yüklənməsi — əsasən `arena.gd`-nin kompilyasiyası — 4.3 s,
+## arenanın ilk `_ready`-si daha 1.2 s; ekran OYNA-dan sonra ~5.5 s donurdu. İndi
+## yükləmə ekranı bir o qədər uzun qalır, amma menyu çıxandan sonra donma olmur:
+## OYNA-dan matça ~0.1 s. Shader isinməsi də ([method _warm_up]) onsuz da örtüyün
+## altına düşür. Hər addım öz kadrındadır: örtüyün nöqtələri kompozitorda dönür,
+## brauzer isə addımlar arasında nəfəs alır. Məşqin dünyası (`world.gd`) burada
+## yüklənmir — onu yalnız MƏŞQ istəyir.
+func _frontload() -> void:
+	var tree := get_tree()
+	await tree.process_frame
+	_map_hold.append(load(ARENA_SCENE))
+	var kit = load("res://scripts/client/map_kit.gd")
+	for step in _FRONTLOAD_STEPS:
+		await tree.process_frame
+		kit.call(step)
+	await tree.process_frame
+	kit.call("_texture", kit.PROPS_PATH)
+	_frontloaded = true
+	if not is_inside_tree():
+		return
+	Settings.web_page_ready()
+	_play_intro(0.0)
+
+
+## Menyunun teksturaları (fon, podium, qəhrəman, ikonlar) matç boyu da yaddaşda qalır.
+##
+## Matçdan qayıdanda menyu yenidən qurulur və onları ana axında yenidən açırdı: A04s-in
+## brauzer modelində (CPU 6×) menyunun ~0.55 s-lik qurulmasının yarısı, `_build_hero`
+## tək 270 ms. İndi menyu arenaya keçəndə onları burada tutur və qayıdanda `load` onları
+## Godot-un keşindən hazır alır; yeni menyu qurulandan sonra siyahı boşalır — onları artıq
+## node-lar tutur. Növ vərəqi tutulmur: o, yalnız açılanda qurulur ([method _ensure_sheet]).
+## Qiyməti: matçda ~12 MB videoyaddaş.
+func _hold_textures() -> void:
+	_held.clear()
+	for t in [_bg, _podium]:
+		if t != null:
+			_held.append(t)
+	var stack: Array[Node] = [self]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n == _sheet:
+			continue
+		for prop in ["texture", "icon"]:
+			var t = n.get(prop)
+			if t is Texture2D and not _held.has(t):
+				_held.append(t)
+		stack.append_array(n.get_children())
 
 
 ## Xəritənin teksturaları da fonda — arena səhnəsi yüklənəndən SONRA.
 ##
 ## Onlar səhnənin asılılığı deyil: [MapKit] onları arenanın `_ready`-sində `load`
 ## edir (itkisiz PNG-lərin açılması — masaüstü debug-da keçid kadrının ~100 ms-i)
-## və arena bağlananda buraxır ([method MapKit.release]). Yollar `map_kit.gd`-dən
+## və keşində proses boyu saxlayır (bax `MapKit._textures`). Yollar `map_kit.gd`-dən
 ## götürülür; o, arenanın asılılığıdır, yəni bu anda artıq yüklənib — ana axında
 ## heç nə kompilyasiya olunmur. Qiyməti: menyuda ~34 MB videoyaddaş tutulur.
 ##
@@ -456,7 +533,9 @@ func _preload_map() -> void:
 	var kit = load("res://scripts/client/map_kit.gd")
 	for path in [kit.MANIFEST, kit.ATLAS_PATH, kit.FLOOR_PATH, kit.DETAIL_PATH,
 			kit.RIM_PATH, kit.PROPS_PATH]:
-		if ResourceLoader.load_threaded_request(path) == OK:
+		# Matçdan qayıdanda teksturalar artıq [MapKit]-in keşindədir — yenidən
+		# istənmir (bax `MapKit._textures`).
+		if not ResourceLoader.has_cached(path) and ResourceLoader.load_threaded_request(path) == OK:
 			_map_paths.append(path)
 
 
@@ -2611,6 +2690,10 @@ func _enter_arena(configure: Callable) -> void:
 	if Net.roster_arrived.is_connected(_buffer_roster):
 		Net.roster_arrived.disconnect(_buffer_roster)
 	var arena = _arena_scene().instantiate()
+	# Arena artıq yüklənib: ön yükləmə bitməmiş matça keçilsə də, matçdan qayıdan
+	# menyu onu gözləmir (bax [method _frontload_pending]).
+	_frontloaded = true
+	_hold_textures()
 	configure.call(arena)
 	_swap_to(arena)
 	if _pending_roster != null:

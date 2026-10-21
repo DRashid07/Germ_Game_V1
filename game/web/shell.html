@@ -954,8 +954,10 @@ window.germText = (function () {
 	// (bax Settings.web_page_ready). Əvvəl mühərrik işə düşən kimi götürülürdü,
 	// zəif telefonda isə ondan sonra menyunun qurulması daha 15+ saniyə çəkir və
 	// bu müddətdə ekranda donmuş kətan qalırdı. Oyun xəbər verməsə (xəta), örtük
-	// [PREP_FALLBACK_MS] sonra özü götürülür — oyunu əbədi örtməsin.
-	const PREP_FALLBACK_MS = 60000;
+	// [PREP_FALLBACK_MS] sonra özü götürülür — oyunu əbədi örtməsin. Arena də bu
+	// örtüyün altında yüklənir (bax MenuV2._frontload): A04s-in ən pis modelində (CPU
+	// 13×) hamısı ~67 s çəkir, 60 s-lik saat örtüyü yükləmənin ortasında götürürdü.
+	const PREP_FALLBACK_MS = 120000;
 	window.germHideStatus = function () {
 		setStatusMode('hidden');
 		fitCanvas();

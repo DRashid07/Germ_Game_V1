@@ -162,6 +162,8 @@ var practice := false
 
 var pred: Sim                       ## Yalnız lokal mikrobu saxlayan proqnoz
 var me: Sim.GermState
+## Bu oyunçu yenidir — hər girişində serverə bit kimi gedir ([member Sim.PlayerInput.newbie]).
+var _newbie := false
 var pending: Array[Sim.PlayerInput] = []
 ## Serverin son dediyi "super işləyir" biti — qalxma anını tutmaq üçün
 ## saxlanılır (bax [method _reconcile]).
@@ -747,6 +749,10 @@ func _ready() -> void:
 	_load_textures()
 	_build_world()
 	_build_hud()
+	# Yeni oyunçu: ilk matçlarda qorunur (bax [constant Const.NEWBIE_MATCHES]).
+	# Qərar girişdən ƏVVƏL oxunur, sonra bu giriş sayılır.
+	_newbie = Settings.is_newbie()
+	Settings.note_match()
 	_init_prediction()
 	# Zərrəciklər və "şirə" effektləri [method _build_world]-də yaranır, ona
 	# görə keyfiyyət ONDAN SONRA tətbiq olunur — mühit isə artıq hazırdır.
@@ -1286,6 +1292,9 @@ func _init_prediction() -> void:
 	# hesablamalıdır. Növsüz yaradılsaydı, hər növ kirpikli kimi proqnozlaşdırılar
 	# və mikrob hər snapshot-da geri sıçrayardı.
 	me = pred.add_germ(my_id, Net.nickname, my_color, false, Net.species)
+	# Proqnoz da bilməlidir: yeninin atəşi qalxanı söndürmür ([method Sim._fire]),
+	# yoxsa qalxan halqası hər atəşdə bir snapshot-luq sönüb yanardı.
+	me.newbie = _newbie
 	# Proqnoz da eyni yerdən başlamalıdır, yoxsa ilk snapshot mikrobu
 	# ekranın o biri başına sıçradır.
 	if start_at.is_finite():
@@ -1431,6 +1440,7 @@ func _do_tick() -> void:
 		return
 
 	var inp := _sample_input()
+	inp.newbie = _newbie
 	_input_time[inp.seq] = _clock
 
 	if _local_world != null:

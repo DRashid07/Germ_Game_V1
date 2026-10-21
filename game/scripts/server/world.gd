@@ -378,6 +378,8 @@ func _reset_round() -> void:
 		g.super_t = 0.0
 		g.dry_t = 0.0
 		g.safe_t = Const.SPAWN_SAFE_TIME
+		# Yeninin qalxanı növbəti raundun ilk girişində yenidən qurulur ([method accept_input]).
+		g.newbie = false
 		g.vel = Vector2.ZERO
 		g.pos = sim.find_spawn(g.radius())
 	sim.shots.clear()
@@ -656,6 +658,15 @@ func accept_input(peer: int, packed: Array) -> void:
 	# Köhnəlmiş paketi atırıq — UDP-də sıra pozula bilər.
 	if inp.seq <= int(_last_seq.get(peer, 0)):
 		return
+	# YENİ OYUNÇU: bit ilk dəfə görünəndə qalxan qurulur (bax [constant Const.NEWBIE_SAFE_TIME]).
+	# Burada, sayımdan SONRA: girişlər yalnız oyun gedəndə qəbul olunur, yəni
+	# qalxan oyunun ilk saniyəsindən sayılır. Yeni raund mikrobun bayrağını
+	# sıfırlayır ([method _reset_round]) — qalxan hər raundda yenidən qurulur.
+	if inp.newbie and peers.has(peer):
+		var me: Sim.GermState = sim.germs[peer]
+		if not me.newbie:
+			me.newbie = true
+			me.safe_t = maxf(me.safe_t, Const.NEWBIE_SAFE_TIME)
 	# BİR DƏFƏLİK bayraqlar köhnə paketdən yenisinə KEÇİR, onunla birlikdə
 	# atılmır.
 	#

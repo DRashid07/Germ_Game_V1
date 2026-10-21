@@ -140,6 +140,32 @@ const CURRENT_EDGE := 0.70      ## bu nisbətdən sonra axın sıfıra enməyə 
 ## 10 nəfərlik dünyada oyunçu izdihamın ortasında doğula bilər.
 const SPAWN_SAFE_TIME := 4.0
 
+## ── Yeni oyunçunun qoruması ────────────────────────────────────────────────
+## Ölçülüb (2026-10-21, 160 simulyasiya oyunu, real botlarla): yeni oyunçunun sadə
+## davranışları — yalnız yemək, durmadan atmaq, yalnız doluya atmaq — median
+## 16–24 saniyə yaşayırdı, ilk zərbəni qalxan bitən kimi (5–9 s) alırdı və 160
+## oyunun HEÇ BİRİNDƏ kimisə partlatmadı. 5/10 ilə doğulan mikrobu üç zərbə
+## partladır, botlar isə ən yaxındakına atır. Yəni oyunçu qaydanı anlamağa
+## macal tapmadan ölürdü.
+##
+## Ona görə ilk [constant NEWBIE_MATCHES] matçda oyunçu "yeni" sayılır: client
+## bunu girişin bayraq bitində deyir ([member Sim.PlayerInput.newbie]), server
+## mikroba [member Sim.GermState.newbie] yazır. Qayda botlara və qalxana aiddir —
+## top, tutum, zərbə riyaziyyatı HƏR KƏS üçün eynidir.
+const NEWBIE_MATCHES := 10
+## Yeninin doğuş qalxanı. Adi qalxandan iki dəfə uzundur və atəşlə SÖNMÜR:
+## yeni oyunçu ilk refleksi ilə atəş açır və adi qalxan elə o an itirdi.
+## Matçlı rejimdə geri sayımdan sonra, ilk qəbul olunan girişlə başlayır —
+## adi qalxan sayım boyu əriyir (3 saniyəsi oyundan əvvəl gedir).
+const NEWBIE_SAFE_TIME := 8.0
+## Botlar yeni mikrobu doğuşundan bu qədər saniyə HƏDƏF SEÇMİR (qalxan bitəndən
+## sonra da). Başqasına atılan top ona təsadüfən dəyə bilər — bu, qorumadır, toxunulmazlıq yox.
+const NEWBIE_GRACE := 20.0
+## Bot yeni mikroba nişan alanda bacarığı bundan yuxarı olmur (adi bot 0.7–1.3)
+## və onun getdiyi yeri QABAQLAMIR — indiki yerinə atır, oyunçunun avtomatik
+## nişanı kimi (bax [AutoAim]). Hərəkət edən yeni oyunçu topdan çəkilə bilir.
+const NEWBIE_BOT_SKILL := 0.5
+
 ## Metabolizm: mikrob vaxt keçdikcə top itirir — yemək məcburidir.
 ## Böyük mikrob daha tez yanır, bu da liderin sonsuz böyüməsinin qarşısını alır.
 const DRAIN_PERIOD := 6.0       ## START_CAPACITY tutumunda bir topun yanma müddəti

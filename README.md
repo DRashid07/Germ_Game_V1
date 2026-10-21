@@ -241,6 +241,48 @@ asılıdır və hər sualın cavabı gözün onsuz da olduğu yerdə olmalıdır
   1.16 / 1.21 ms, pik çağırış 81 / 83 → 79 / 88 — səs-küy daxilində. Künc
   zolağının iki `ColorRect`-i və öz adın (2 çağırış) getdi, zolaq və döyüntü gəldi.
 
+### Yeni oyunçunun qoruması
+
+**Problem (ölçülüb, 2026-10-21).** Real botlarla 160 simulyasiya oyununda yeni
+oyunçunun sadə davranışları — yalnız yemək, durmadan atmaq, yalnız doluya atmaq —
+median 16–24 saniyə yaşadı, ilk zərbəni qalxan bitən kimi (4–9 s) aldı və heç
+kimi partlatmadı. 5/10 ilə doğulan mikrobu üç zərbə partladır, botlar isə ən
+yaxındakına dəqiq, qabaqlayaraq atır.
+
+**Həll — ilk 10 matç** (`Const.NEWBIE_MATCHES`; məşq də sayılır):
+
+| | Adi oyunçu | Yeni oyunçu |
+|---|---|---|
+| Doğuş qalxanı | 4 s, atəşlə sönür | **8 s, atəşlə sönmür**; matçlı rejimdə sayımdan SONRA başlayır |
+| Botlar onu hədəf seçir | dərhal | ilk **20 s** yox |
+| Bot nişanı | qabaqlayır, bacarıq 0.7–1.3 | indiki yerə atır, bacarıq ≤ **0.5** (səhv ən azı 2×) |
+| Top, tutum, zərbə | — | **dəyişmir** — qayda hamı üçün eynidir |
+
+Ölçü (eyni simulyasiya, hər sətir 30 oyun, köhnə → yeni oyunçu):
+
+| Davranış | SONSUZ: ömür | SONSUZ: ilk zərbə | TƏK QALAN: ömür | TƏK QALAN: yer |
+|---|---|---|---|---|
+| yalnız yeyir | 12.7 → **23.4** s | 5.4 → 12.0 s | 14.9 → 22.5 s | 9 → 8 |
+| durmadan atır | 16.5 → **31.6** s | 4.1 → 20.1 s | 18.7 → 30.4 s | 9 → 6 |
+| yalnız doluya atır | 15.6 → **29.0** s | 5.4 → 17.3 s | 22.7 → 29.8 s | 8 → 6 |
+| heç nə etmir | 24.0 → 24.0 s (acından) | 9.4 → 22.8 s | 23.8 → 24.0 s | 8 → 7 |
+
+Simulyasiyanın "oyunçuları" topdan qaçmır və kolda gizlənmir — insan daha uzun
+yaşayır, xüsusən botun nişanı onu artıq qabaqlamadığı üçün. Partlatma sayı isə
+demək olar dəyişmədi (qorunan 240 oyunda 1): qoruma vaxt verir, öyrətmir.
+
+**Server necə bilir.** Client girişin bayraq ədədinin dördüncü bitini qoyur
+([`Sim.PlayerInput.newbie`](game/scripts/shared/sim.gd)) — `request_join`-ə yeni
+arqument DEYİL: Godot artıq arqumentli RPC-ni rədd edir və yeni client köhnə
+serverdə dünyaya girə bilməzdi. Bit ilə hər iki istiqamət uyğundur: köhnə server
+biti oxumur (qoruma yoxdur, oyun işləyir), köhnə client onu göndərmir. Server biti
+ilk dəfə görəndə mikroba `newbie` yazır və qalxanı qurur
+([`World.accept_input`](game/scripts/server/world.gd)); yeni raund bayrağı sıfırlayır.
+Sayğac `settings.cfg`-nin `[progress] matches`-idir; `--practice` onu diskə yazmır.
+
+> Bit client-in sözüdür — kimsə onu həmişə göndərə bilər. Qazancı kiçikdir (botların
+> yumşaqlığı və hər doğuşda 8 s qalxan), insan rəqiblərə qarşı topun gücü dəyişmir.
+
 ### Onlayn vuruş — gecikməsiz zərbə
 
 **Problem:** onlayn oyunda rəqibi vuranda zərbə hiss olunmurdu. Top ekranda
@@ -963,7 +1005,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (709 test)
+# Simulyasiya + World + dostluq/komanda testləri (715 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -2368,7 +2410,8 @@ dərhal çıxır. Ona görə **serverdə** bot mikroblar işləyir və əhalini 
 Bot heç bir imtiyaza malik deyil — insan oyunçu ilə eyni `Sim.PlayerInput`
 strukturunu doldurur və eyni məhdudiyyətlərə tabedir. Davranışı doluluqdan asılıdır:
 acdırsa qida axtarır, doludursa rəqibdən qaçır (bir dəymə onu partlada bilər),
-ortadadırsa hücuma keçir.
+ortadadırsa hücuma keçir. Yeni oyunçuya (ilk 10 matç) yumşaq davranır — bax
+[«Yeni oyunçunun qoruması»](#yeni-oyunçunun-qoruması).
 
 İnsan oyunçu gələndə bot yerini ona verir — dünyada heç vaxt 10-dan çox mikrob olmur.
 

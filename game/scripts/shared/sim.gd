@@ -58,6 +58,12 @@ class GermState:
 	## İTƏLƏMƏ isə komandaya baxmır — üst-üstə düşən iki yoldaş ekranda
 	## oxunmaz bir ləkəyə çevrilərdi.
 	var team := -1
+	## Yeni oyunçudur (ilk matçları, bax [constant Const.NEWBIE_MATCHES]).
+	##
+	## Server yazır — girişin bitini ilk dəfə görəndə ([method World.accept_input]);
+	## client-in proqnozu isə öz ayarından. Atəş onun qalxanını söndürmür
+	## ([method _fire]) və botlar ona yumşaq davranır ([Bot]).
+	var newbie := false
 
 	func radius() -> float:
 		return Const.germ_radius(capacity)
@@ -78,6 +84,7 @@ class GermState:
 		c.pops = pops; c.age = age; c.is_bot = is_bot; c.alive = alive
 		c.species = species
 		c.team = team
+		c.newbie = newbie
 		c.charge = charge; c.super_t = super_t; c.food_acc = food_acc
 		c.dry_t = dry_t
 		return c
@@ -173,6 +180,16 @@ class PlayerInput:
 	##
 	## Köhnə client bu biti göndərmir — server onda əvvəlki qayda ilə işləyir.
 	var shot := false
+	## Oyunçu YENİDİR — ilk matçlarıdır (bax [constant Const.NEWBIE_MATCHES]).
+	##
+	## Ayrı sahə və ya [method Net.request_join]-ə yeni arqument DEYİL, bayraq
+	## ədədinin dördüncü bitidir: massivin uzunluğu dəyişmir (bant eni sıfır),
+	## köhnə server tanımadığı biti sadəcə oxumur, köhnə client onu göndərmir.
+	## RPC-yə arqument əlavə etsəydik, yeni client köhnə serverdə dünyaya
+	## GİRƏ BİLMƏZDİ — Godot artıq arqumentli çağırışı rədd edir. Matçlı
+	## rejimdə giriş sayımdan sonra qəbul olunur, yəni bit qalxanı məhz oyunun
+	## başladığı anda qurur ([method World.accept_input]).
+	var newbie := false
 	## Server tərəfi: proqnozun atəşi neçə tick soyumanı gözləyib.
 	var fire_wait := 0
 
@@ -197,7 +214,8 @@ class PlayerInput:
 	## doğanda oxuyur, qalan 29 paketdə isə boş yerə 9 bayt olardı.
 	func to_array() -> Array:
 		var out := [seq, move.x, move.y, aim,
-			(1 if fire else 0) | (2 if use_super else 0) | (4 if shot else 0)]
+			(1 if fire else 0) | (2 if use_super else 0) | (4 if shot else 0) \
+				| (8 if newbie else 0)]
 		if fire and view_tick >= 0.0:
 			out.append(view_tick)
 		return out
@@ -208,6 +226,7 @@ class PlayerInput:
 		var i := PlayerInput.make(int(a[0]), Vector2(a[1], a[2]), float(a[3]),
 			(bits & 1) != 0, (bits & 2) != 0, view)
 		i.shot = (bits & 4) != 0 and i.fire
+		i.newbie = (bits & 8) != 0
 		return i
 
 
@@ -829,7 +848,10 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false) -> voi
 	# Geri təpmə: atəş həm də manevr vasitəsidir.
 	g.vel -= dir * Const.SHOT_RECOIL
 	# Atəş açan toxunulmazlığını itirir — doğuş qorunması hücum qalxanı deyil.
-	g.safe_t = 0.0
+	# Yeni oyunçu istisnadır: onun ilk refleksi atəşdir və adi qayda qalxanı elə
+	# ilk saniyədə söndürürdü (bax [constant Const.NEWBIE_SAFE_TIME]).
+	if not g.newbie:
+		g.safe_t = 0.0
 
 	# Qığılcım topun doğulduğu yerdə YOX, membranı yardığı yerdə çıxır —
 	# mərkəzdə çəkilsə gövdənin altında qalıb heç görünməzdi.

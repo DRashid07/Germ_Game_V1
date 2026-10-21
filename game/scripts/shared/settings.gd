@@ -105,6 +105,10 @@ var tips := {}
 ## (kadr, ölçmə, stend). Yazsaydı, sahibin öz kompüterindəki üç dənə sınaq
 ## açılışı ipucularını onun oyunu üçün də birdəfəlik söndürərdi.
 var _tips_frozen := false
+## Neçə dəfə arenaya girib (məşq də sayılır) — yeni oyunçunun qoruması bundan
+## asılıdır ([method is_newbie]). Eyni qayda: `[progress]` bölməsi tək yazılır,
+## `--practice` sayğacı diskə yazmır ([member _tips_frozen]).
+var matches_played := 0
 
 ## Headless (server, `--simtest`, `--autoclient`) — səs və kadr həddi
 ## tətbiq olunmur: o proseslərin nə audio cihazı var, nə də ekranı.
@@ -193,6 +197,7 @@ func load_from_disk(path := PATH) -> void:
 	if cfg.has_section("tips"):
 		for key in cfg.get_section_keys("tips"):
 			tips[key] = maxi(int(cfg.get_value("tips", key, 0)), 0)
+	matches_played = maxi(int(cfg.get_value("progress", "matches", 0)), 0)
 
 
 func save() -> void:
@@ -221,6 +226,7 @@ func save() -> void:
 	cfg.set_value("net", "address", address.strip_edges())
 	for key in tips:
 		cfg.set_value("tips", key, int(tips[key]))
+	cfg.set_value("progress", "matches", matches_played)
 	cfg.save(PATH)
 
 
@@ -256,6 +262,17 @@ func tip_due(key: String) -> bool:
 func tip_shown(key: String) -> void:
 	tips[key] = int(tips.get(key, 0)) + 1
 	_write_one("tips", key, int(tips[key]))
+
+
+## Oyunçu hələ YENİDİR — ilk [constant Const.NEWBIE_MATCHES] matçı (bax orada).
+func is_newbie() -> bool:
+	return matches_played < Const.NEWBIE_MATCHES
+
+
+## Arenaya giriş sayıldı ([method Arena._ready]) — dərhal diskə gedir.
+func note_match() -> void:
+	matches_played += 1
+	_write_one("progress", "matches", matches_played)
 
 
 ## Faylın YALNIZ bir açarını yazır (bax [method tip_shown]); başsız və `--practice`

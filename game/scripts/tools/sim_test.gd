@@ -153,6 +153,10 @@ static func run() -> int:
 	_test_ammo_bar()
 	_test_shot_and_food_differ()
 	_test_tips_limit()
+	_test_newbie_input_bit()
+	_test_newbie_shield()
+	_test_newbie_bots()
+	_test_newbie_matches()
 	_test_germ_freeze()
 	_test_shot_trails()
 	_test_spawn_safety()
@@ -6266,6 +6270,94 @@ static func _test_tips_limit() -> void:
 	Net.nickname = keep[7]
 	Net.species = Const.species_from(keep[8])
 	Net.mode = Const.mode_from(keep[9])
+
+
+## "Yeniyəm" girişin bayraq ədədinin bitidir: massiv uzanmır, köhnə formatda bit yoxdur.
+static func _test_newbie_input_bit() -> void:
+	var inp := Sim.PlayerInput.make(7, Vector2(0.5, 0.0), 1.0, false)
+	inp.newbie = true
+	var a := inp.to_array()
+	var back := Sim.PlayerInput.from_array(a)
+	var old := Sim.PlayerInput.from_array([7, 0.5, 0.0, 1.0, 1])
+	_check(a.size() == 5 and back.newbie and not back.fire and not old.newbie and old.fire,
+		"yeni oyunçu biti: massiv 5 ədəd qalır, bit qayıdır, köhnə paketdə bit yoxdur")
+
+
+## Yeninin qalxanı: bit ilk girişdə 8 s qurur, atəş onu söndürmür; adi oyunçunun
+## atəşi söndürür. Yeni raund bayrağı sıfırlayır — qalxan növbəti girişlə yenidən qurulur.
+static func _test_newbie_shield() -> void:
+	var w := World.new(1, Const.Mode.ENDLESS)
+	var a := w.add_player(1001, "Yeni")
+	var b := w.add_player(1002, "Köhnə")
+	var first := Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true)
+	first.newbie = true
+	w.accept_input(1001, first.to_array())
+	w.accept_input(1002, Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true).to_array())
+	var armed := a.newbie and is_equal_approx(a.safe_t, Const.NEWBIE_SAFE_TIME) and not b.newbie
+	var balls_a := a.balls
+	var balls_b := b.balls
+	w.tick(Const.TICK_DELTA)
+	var fired := a.balls == balls_a - 1 and b.balls == balls_b - 1
+	_check(armed and fired and a.safe_t > Const.NEWBIE_SAFE_TIME - 0.1 and b.safe_t == 0.0,
+		"yeni oyunçu: qalxan %.1f s, atəşdən sonra qalır (%.2f); adi oyunçunun qalxanı atəşlə sönür (%.2f)"
+			% [Const.NEWBIE_SAFE_TIME, a.safe_t, b.safe_t])
+	var t := World.new(2, Const.Mode.TRIO)
+	var c := t.add_player(1003, "Yeni")
+	c.newbie = true
+	t._reset_round()
+	_check(not c.newbie, "yeni raund yeninin bayrağını sıfırlayır — qalxan oyun başlayanda yenidən qurulur")
+
+
+## Botlar yeni oyunçunu möhlət boyu seçmir, sonra seçir; ona nişanı qabaqlamadan və
+## daha böyük səhvlə alır (orta bucaq indiki yerə baxır, səpələnmə ≤ AIM_ERROR / 0.5).
+static func _test_newbie_bots() -> void:
+	var sim := Sim.new()
+	var bot := sim.add_germ(5000, "Bot", 1, true)
+	bot.pos = Vector2.ZERO
+	bot.safe_t = 0.0
+	var kid := sim.add_germ(1001, "Yeni", 2)
+	kid.pos = Vector2(300.0, 0.0)
+	kid.safe_t = 0.0
+	kid.newbie = true
+	kid.age = 1.0
+	var during := Bot._nearest_enemy(sim, bot)
+	kid.age = Const.NEWBIE_GRACE + 0.1
+	var after := Bot._nearest_enemy(sim, bot)
+	_check(during == null and after == kid,
+		"bot yeni oyunçunu ilk %d s seçmir, sonra seçir" % int(Const.NEWBIE_GRACE))
+	kid.vel = Vector2(0.0, 150.0)
+	var brain := Bot.new(5000, 1.3, 7)
+	var lead_mean := 0.0
+	var soft_mean := 0.0
+	var soft_max := 0.0
+	var n := 400
+	for i in n:
+		kid.newbie = false
+		lead_mean += brain._aim_at(bot, kid)
+		kid.newbie = true
+		var a := brain._aim_at(bot, kid)
+		soft_mean += a
+		soft_max = maxf(soft_max, absf(a))
+	lead_mean /= float(n)
+	soft_mean /= float(n)
+	_check(absf(soft_mean) < 0.03 and lead_mean > 0.1
+		and soft_max <= Bot.AIM_ERROR / Const.NEWBIE_BOT_SKILL + 0.0001,
+		"yeniyə nişan qabaqlamır (orta %.3f rad, adiyə %.3f) və səhvi ≤ %.2f (%.3f)"
+			% [soft_mean, lead_mean, Bot.AIM_ERROR / Const.NEWBIE_BOT_SKILL, soft_max])
+
+
+## İlk [constant Const.NEWBIE_MATCHES] giriş yeni sayılır; başsız prosesdə diskə yazılmır.
+static func _test_newbie_matches() -> void:
+	var keep := Settings.matches_played
+	Settings.matches_played = 0
+	var first := Settings.is_newbie()
+	for i in Const.NEWBIE_MATCHES - 1:
+		Settings.note_match()
+	var last := Settings.is_newbie()
+	Settings.note_match()
+	_check(first and last and not Settings.is_newbie() and Settings.matches_played == Const.NEWBIE_MATCHES,
+		"ilk %d matç yeni oyunçu, sonra yox" % Const.NEWBIE_MATCHES)
+	Settings.matches_played = keep
 
 
 static func _check(ok: bool, label: String) -> void:

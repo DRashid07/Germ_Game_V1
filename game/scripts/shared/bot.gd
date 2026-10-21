@@ -139,9 +139,7 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 		var radial := signf(dist - want)
 		move = (forward * radial * 0.9 + side * 0.7).limit_length(1.0)
 
-		var lead := _lead_point(me.pos, target)
-		aim = (lead - me.pos).angle()
-		aim += _rng.randf_range(-AIM_ERROR, AIM_ERROR) / maxf(difficulty, 0.1)
+		aim = _aim_at(me, target)
 		# Yalnız açıq xətt olanda atır — maneəyə atmağın mənası yoxdur.
 		# Özünü acdan qorumaq üçün ehtiyat saxlayır.
 		fire = me.balls > Const.FIRE_MIN_BALLS and sim.has_line_of_sight(me.pos, target.pos)
@@ -160,8 +158,7 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 	# Amöbün miniqanı: top pulsuzdur, ehtiyat saxlamağa ehtiyac yoxdur — hədəf
 	# açıq xətdədirsə, hər dövrdə atır (aclıq da, qida da onu yayındırmır).
 	if me.in_cyst() and target != null and sim.has_line_of_sight(me.pos, target.pos):
-		aim = (_lead_point(me.pos, target) - me.pos).angle() \
-			+ _rng.randf_range(-AIM_ERROR, AIM_ERROR) / maxf(difficulty, 0.1)
+		aim = _aim_at(me, target)
 		fire = true
 
 	move = _avoid(sim, me, move)
@@ -258,12 +255,28 @@ static func _lead_point(from: Vector2, target: Sim.GermState) -> Vector2:
 	return point
 
 
+## Hədəfə nişan bucağı, səhvi ilə birlikdə.
+##
+## Yeni oyunçuya ([member Sim.GermState.newbie]) bot onun getdiyi yeri QABAQLAMIR
+## və bacarığı [constant Const.NEWBIE_BOT_SKILL]-dən yuxarı olmur: səhv ən azı iki
+## dəfə böyükdür. Təsadüfi ədəd həmişə BİR dəfə çəkilir — toxumlu dünyada (testlər,
+## balans ölçüsü) botun qərarları əvvəlki ardıcıllıqla qalır.
+func _aim_at(me: Sim.GermState, target: Sim.GermState) -> float:
+	var point := target.pos if target.newbie else _lead_point(me.pos, target)
+	var skill := minf(difficulty, Const.NEWBIE_BOT_SKILL) if target.newbie else difficulty
+	return (point - me.pos).angle() \
+		+ _rng.randf_range(-AIM_ERROR, AIM_ERROR) / maxf(skill, 0.1)
+
+
+## Yeni oyunçu ilk [constant Const.NEWBIE_GRACE] saniyəsində hədəf seçilmir.
 static func _nearest_enemy(sim: Sim, me: Sim.GermState) -> Sim.GermState:
 	var best: Sim.GermState = null
 	var best_d := INF
 	for gid in sim.germs:
 		var g: Sim.GermState = sim.germs[gid]
 		if g.id == me.id or not g.alive or g.safe_t > 0.0:
+			continue
+		if g.newbie and g.age < Const.NEWBIE_GRACE:
 			continue
 		var d := me.pos.distance_squared_to(g.pos)
 		if d < best_d:

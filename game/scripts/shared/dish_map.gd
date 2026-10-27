@@ -36,6 +36,11 @@ enum Kind {
 	## Cərəyan deşiyi — hər şey keçir, içindən keçən mikrob MƏRKƏZƏ doğru
 	## güclü itələnir (bax [method Sim._vent_push]).
 	VENT = 3,
+	## ANA HÜCEYRƏ — komandanın bazası (yalnız [constant Const.LAYOUT_MOTHER]).
+	## Selik kimi bloklayır, amma RƏQİBİN topu sıçramır, Anaya +2 kimi girir
+	## (bax [method Sim._step_shots]). Kimin Anası olduğu yerindən çıxır: qərbdəki
+	## komanda 0-ındır.
+	MOTHER = 4,
 }
 
 ## Divar baytının bitləri.
@@ -73,12 +78,13 @@ const BRITTLE_HP := 3
 
 ## Mikrobu bloklayırmı?
 static func blocks_germ(kind: int) -> bool:
-	return kind == Kind.MUCUS or kind == Kind.BRITTLE
+	return kind == Kind.MUCUS or kind == Kind.BRITTLE or kind == Kind.MOTHER
 
 
-## Topu dayandırırmı? (MUCUS sıçradır, BRITTLE sınır — ikisi də "dayandırır")
+## Topu dayandırırmı? (MUCUS sıçradır, BRITTLE sınır, MOTHER udur və ya sıçradır —
+## hamısı "dayandırır")
 static func blocks_shot(kind: int) -> bool:
-	return kind == Kind.MUCUS or kind == Kind.BRITTLE
+	return kind == Kind.MUCUS or kind == Kind.BRITTLE or kind == Kind.MOTHER
 
 
 ## Görüşü kəsirmi? Bot hədəf seçəndə istifadə olunur
@@ -144,8 +150,98 @@ static func kind_name(kind: int) -> String:
 			return "KÖVRƏK"
 		Kind.VENT:
 			return "CƏRƏYAN"
+		Kind.MOTHER:
+			return "ANA"
 		_:
 			return "SELİK"
+
+
+## Rejimin öz düzümünün siyahısı (bax [method Const.mode_layout]).
+##
+## Ümumi [method obstacles]-dən AYRI keşdədir: server eyni prosesdə bir neçə rejimin
+## dünyasını aparır, statik [member layout] isə hamısı üçün bir dəyərdir — ona görə
+## rejim düzümü qlobal dəyişənə toxunmur. -1 ümumi düzümü qaytarır.
+static var _by_layout := {}
+
+
+static func obstacles_for(which: int) -> Array[Vector4]:
+	if which < 0:
+		return obstacles()
+	if _by_layout.has(which):
+		return _by_layout[which]
+	var out: Array[Vector4] = []
+	match which:
+		Const.LAYOUT_MOTHER:
+			_build_mother(out)
+		Const.LAYOUT_ISLAND:
+			_build_island_mode(out)
+		Const.LAYOUT_BALL:
+			_build_ball(out)
+		_:
+			return obstacles()
+	_by_layout[which] = out
+	return out
+
+
+## ANA HÜCEYRƏ — iki yuva və aralarında açıq meydan (design/MODES.md §16.2).
+##
+## Yuva Ananı üç tərəfdən örtür: önündə tıxac, yanlarında iki selik. Aralarındakı
+## iki ağız 87 px-dir — hücum məhz oradan gəlir. Yan seliklə şüşə arasında 50 px qalır:
+## ARXA QAPI, yalnız amöb (tutum ≤ 13) sığır. Ana ilə şüşə arasında da 50 px — Ananın
+## arxası yuvanın içidir. Meydanda yalnız iki dirək (orta xətti kəsir), dörd kol
+## (cinahda pusqu) və iki cərəyan deşiyi (doğulandan sonra meydana tez qayıtmaq üçün).
+## Kövrək qabıq yoxdur: hər şey matçın ilk saniyəsindən oxunmalıdır.
+static func _build_mother(out: Array[Vector4]) -> void:
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		out.append(Vector4(s * Const.MOTHER_X, 0.0, Const.MOTHER_RADIUS, float(Kind.MOTHER)))
+		out.append(Vector4(s * 420.0, 0.0, 72.0, float(Kind.MUCUS)))
+		out.append(Vector4(s * 480.0, -215.0, 64.0, float(Kind.MUCUS)))
+		out.append(Vector4(s * 480.0, 215.0, 64.0, float(Kind.MUCUS)))
+		out.append(Vector4(s * 590.0, -328.0, 75.0, float(Kind.MUCUS)))
+		out.append(Vector4(s * 590.0, 328.0, 75.0, float(Kind.MUCUS)))
+	out.append(Vector4(0.0, -190.0, 62.0, float(Kind.MUCUS)))
+	out.append(Vector4(0.0, 190.0, 62.0, float(Kind.MUCUS)))
+	for p in [Vector2(-230.0, -430.0), Vector2(230.0, -430.0),
+			Vector2(-230.0, 430.0), Vector2(230.0, 430.0)]:
+		out.append(Vector4(p.x, p.y, 85.0, float(Kind.BUSH)))
+	out.append(Vector4(0.0, -640.0, 55.0, float(Kind.VENT)))
+	out.append(Vector4(0.0, 640.0, 55.0, float(Kind.VENT)))
+
+
+## YAŞ ADA — adanın yolu boş qalır (design/MODES.md §16.3).
+##
+## Ada orta xətt boyunca şimal–cənub yırğalanır ([method Const.island_center]) və onun
+## zolağında (|x| ≤ 220) heç nə yoxdur. Dörd dirək zolağın yanlarında: adaya gedən yolda
+## sığınacaq verir, amma adanın içinə düşmür. Dörd kol bazaların yanında, quruda —
+## dolarkən gizlənmək üçün. Cərəyan deşikləri bazaların önündədir: doğulan mikrobu
+## mərkəzə, adanın yoluna atır (katapult).
+static func _build_island_mode(out: Array[Vector4]) -> void:
+	for p in [Vector2(-320.0, -240.0), Vector2(320.0, -240.0),
+			Vector2(-320.0, 240.0), Vector2(320.0, 240.0)]:
+		out.append(Vector4(p.x, p.y, 62.0, float(Kind.MUCUS)))
+	for p in [Vector2(-520.0, -330.0), Vector2(520.0, -330.0),
+			Vector2(-520.0, 330.0), Vector2(520.0, 330.0)]:
+		out.append(Vector4(p.x, p.y, 75.0, float(Kind.BUSH)))
+	out.append(Vector4(-470.0, 0.0, 55.0, float(Kind.VENT)))
+	out.append(Vector4(470.0, 0.0, 55.0, float(Kind.VENT)))
+
+
+## NÜVƏ TOPU — iki qapı, dörd dirək və dörd bamper (design/MODES.md §16.4).
+##
+## Dirəklər qapının iki yanında şüşəyə toxunur: Nüvə dirəkdən səkib qapıya girə bilər.
+## Bamperlər meydanın ortasındadır — top və Nüvə üçün sıçrayış bucağı. İki kol
+## cinahdadır. Deşik və kövrək yoxdur: Nüvənin yolu oyunçunun əlində olmalıdır.
+static func _build_ball(out: Array[Vector4]) -> void:
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		out.append(Vector4(s * 585.0, -150.0, 30.0, float(Kind.MUCUS)))
+		out.append(Vector4(s * 585.0, 150.0, 30.0, float(Kind.MUCUS)))
+	for p in [Vector2(-250.0, -235.0), Vector2(250.0, -235.0),
+			Vector2(-250.0, 235.0), Vector2(250.0, 235.0)]:
+		out.append(Vector4(p.x, p.y, 52.0, float(Kind.MUCUS)))
+	out.append(Vector4(0.0, -410.0, 88.0, float(Kind.BUSH)))
+	out.append(Vector4(0.0, 410.0, 88.0, float(Kind.BUSH)))
 
 
 static func obstacles() -> Array[Vector4]:
@@ -306,9 +402,14 @@ static func _ring(out: Array[Vector4], count: int, dist: float, radius: float,
 ## Verilmiş nöqtədə bu radiusda mikrob dayana bilərmi?
 ## Doğuş yeri seçəndə istifadə olunur — heç kim maneənin içində doğulmamalıdır.
 static func is_free(pos: Vector2, radius: float) -> bool:
-	if pos.length() > Const.WORLD_RADIUS - radius:
+	return is_free_in(obstacles(), Const.WORLD_RADIUS, pos, radius)
+
+
+## [method is_free] verilmiş düzüm və şüşə üçün — hər dünya öz xəritəsini yoxlayır.
+static func is_free_in(list: Array[Vector4], wall: float, pos: Vector2, radius: float) -> bool:
+	if pos.length() > wall - radius:
 		return false
-	for o in obstacles():
+	for o in list:
 		if not blocks_spawn(int(o.w)):
 			continue
 		if pos.distance_squared_to(Vector2(o.x, o.y)) < pow(o.z + radius, 2.0):

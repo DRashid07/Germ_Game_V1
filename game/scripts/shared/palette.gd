@@ -72,6 +72,9 @@ const FOCUS := Color("FFD166")
 ## Mikrob rənglərindən (bax [constant GERM_COLORS]) qəsdən KƏNARDADIR:
 ## yoldaş nişanı heç bir oyunçunun öz rəngi ilə qarışmamalıdır.
 const ALLY := Color("A6FF4D")
+## Rəqib komandanın obyekti (Ana, qapı) — narıncı. Obyekt rejimlərində rəng baxana
+## görədir: bizimki [constant ALLY], onlarınkı bu (design/MODES.md §16.1).
+const FOE := Color("FF8A3D")
 ## Ulti HAZIRDIR — düymədə və mikrobun aurasında EYNİ rəng.
 ##
 ## Mikrob rənglərindən kənardadır (qızılı 9 = F2E14C-dən daha isti və

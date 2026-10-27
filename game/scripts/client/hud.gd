@@ -70,6 +70,16 @@ var _pop_lbl: Label
 ## Sağ qalan mikrob sayı — yalnız matçlı rejimdə görünür.
 var _alive_lbl: Label
 var _score_lbl: Label
+## Obyekt rejiminin hesab lövhəsi (bax [method set_objective]).
+var _obj_us: Label
+var _obj_mid: Label
+var _obj_them: Label
+## Dirilmə sayımı mərkəzdəki yazını tutubmu (bitəndə yazı təmizlənir).
+var _respawn_shown := false
+## Quru zonanın xəbərdarlığı rejimə görədir: YAŞ ADA-da qaçılacaq yer mərkəz yox, adadır.
+var _dry_text := "QURUYUR — mərkəzə get"
+## Geri sayımın alt sətri (NÜVƏ TOPU-nda qoldan sonra: "QOL! …"). Boşdursa rejimin adı.
+var countdown_note := ""
 var _center_lbl: Label
 var _sub_lbl: Label
 var _result: Control
@@ -127,8 +137,11 @@ func build(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 	# gələcəkdə ayarı dəyişən hər yerə (məs. ilk açılış bələdçisi) hazır saxlayır.
 	Settings.changed.connect(apply_settings)
 
-	_apply_safe_area()
-	get_viewport().size_changed.connect(_apply_safe_area)
+	# Ağacdan kənarda (başsız test, bax [ObjectiveTest]) ekran yoxdur — arena HUD-u
+	# həmişə ağaca əlavə edəndən sonra qurur, yəni oyunda bu şərt həmişə doğrudur.
+	if is_inside_tree():
+		_apply_safe_area()
+		get_viewport().size_changed.connect(_apply_safe_area)
 
 
 ## Çıxıntı (notch) və ev göstəricisi zolağı üçün kənar boşluq.
@@ -230,6 +243,29 @@ func _build_board() -> void:
 	_score_lbl.offset_bottom = 70
 	_score_lbl.visible = false
 	_safe_root.add_child(_score_lbl)
+
+	# OBYEKT HESABI — ekranın yuxarı ortasında: bizimki (laym) · rejim və saat · onlarınkı
+	# (narıncı). Obyekt rejimində matçı hesab həll edir, ona görə ən görünən yerdədir —
+	# Brawl Stars-ın qol/ulduz lövhəsi kimi. Rənglər xəritədəki Ana və qapı ilə eynidir.
+	_obj_us = _make_label(34, Palette.ALLY)
+	_obj_us.theme_type_variation = "Heading"
+	_obj_us.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_obj_mid = _make_label(19, Palette.TEXT)
+	_obj_mid.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_obj_them = _make_label(34, Palette.FOE)
+	_obj_them.theme_type_variation = "Heading"
+	_obj_them.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	for pair in [[_obj_us, -230.0, -64.0], [_obj_mid, -64.0, 64.0], [_obj_them, 64.0, 230.0]]:
+		var lbl: Label = pair[0]
+		lbl.anchor_left = 0.5
+		lbl.anchor_right = 0.5
+		lbl.offset_left = pair[1]
+		lbl.offset_right = pair[2]
+		lbl.offset_top = 8
+		lbl.offset_bottom = 62
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lbl.visible = false
+		_safe_root.add_child(lbl)
 
 	_board_lbl = _make_label(21, Palette.TEXT)
 	_board_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -640,7 +676,7 @@ func update_gauge(balls: int, capacity: int) -> void:
 		# oyunçu məhz indi soruşub, cavab da indi gəlməlidir.
 		_set_warning(_hint)
 	elif _drying:
-		_set_warning("QURUYUR — mərkəzə get")
+		_set_warning(_dry_text)
 	elif balls >= capacity - 1:
 		_set_warning("DOLURSAN — TOP AT!")
 	elif balls <= Const.MIN_BALLS:
@@ -723,6 +759,12 @@ func show_result(result: Dictionary) -> void:
 	# yarışırdı. Halbuki bu ekranda oyunçunun edə biləcəyi heç nə yoxdur.
 	_safe_root.visible = false
 	move_stick.visible = false
+	for lbl in [_obj_us, _obj_mid, _obj_them]:
+		lbl.visible = false
+	# Obyekt rejimi: nəticə KOMANDANINDIR və onu hesab deyir (yer, partladan yoxdur).
+	if result.has("score_us"):
+		_show_team_result(result)
+		return
 	var killer := str(result.get("killer", ""))
 	var age := int(float(result.get("age", 0.0)))
 	var won := bool(result.get("won", false))
@@ -796,6 +838,53 @@ func show_result(result: Dictionary) -> void:
 	_result.visible = true
 
 
+## Obyekt rejiminin nəticəsi: QALİB / MƏĞLUBİYYƏT / HEÇ-HEÇƏ, hesab və matçı nə bitirdi.
+func _show_team_result(result: Dictionary) -> void:
+	var mode := int(result.get("mode", Const.Mode.MOTHER))
+	var won := bool(result.get("won", false))
+	var draw := bool(result.get("draw", false))
+	var timed := bool(result.get("timed_out", false))
+	var us := int(result.get("score_us", 0))
+	var them := int(result.get("score_them", 0))
+	if won:
+		_result_title.text = "QALİB!"
+		_result_title.add_theme_color_override("font_color", Palette.FOCUS)
+	elif draw:
+		_result_title.text = "HEÇ-HEÇƏ"
+		_result_title.add_theme_color_override("font_color", Palette.TEXT)
+	else:
+		_result_title.text = "MƏĞLUBİYYƏT"
+		_result_title.add_theme_color_override("font_color", Palette.DANGER)
+	var why := ""
+	match mode:
+		Const.Mode.MOTHER:
+			if timed:
+				why = "Vaxt bitdi — daha boş Ana udur"
+			else:
+				why = "Rəqibin Anası partladı" if won else "Ananız partladı"
+		Const.Mode.ISLAND:
+			why = "Vaxt bitdi — çox xal udur" if timed else "%d xala ilk çatan udur" % Const.ISLAND_WIN
+		Const.Mode.BALL:
+			why = "Vaxt bitdi — çox qol udur" if timed else "%d qol vuran udur" % Const.BALL_GOALS
+	if draw:
+		why = "Vaxt bitdi — hesab bərabərdir"
+	var word := "ANA" if mode == Const.Mode.MOTHER else ("XAL" if mode == Const.Mode.ISLAND else "QOL")
+	_result_rule.visible = won
+	if won:
+		_result_title.pivot_offset = _result_title.get_rect().size * 0.5
+		_result_title.scale = Vector2(0.55, 0.55)
+		var step := create_tween().tween_property(_result_title, "scale", Vector2.ONE, 0.5)
+		step.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	else:
+		_result_title.scale = Vector2.ONE
+	var age := int(float(result.get("age", 0.0)))
+	_result_body.text = "%s\n%s  %d — %d\n%s\n\nPartlatdığın mikrob: %d\nMatç: %d:%02d\n\nMenyuya qayıdılır..." % [
+		Const.mode_name(mode), word, us, them, why,
+		int(result.get("pops", 0)), age / 60, age % 60,
+	]
+	_result.visible = true
+
+
 ## Matçın göstəriciləri — yalnız matçlı rejimdə çağırılır.
 ##
 ## Üç şey deyir: neçəyə başlayır, neçə nəfər qalıb, quru zonadasanmı.
@@ -819,15 +908,21 @@ func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool,
 		var left := int(ceilf(Const.COUNTDOWN_TIME - phase_t))
 		_center_lbl.text = str(maxi(left, 1))
 		_center_lbl.visible = true
-		_sub_lbl.text = "%s · %d mikrob" % [Const.mode_name(mode), alive]
+		_sub_lbl.text = countdown_note if not countdown_note.is_empty() \
+			else "%s · %d mikrob" % [Const.mode_name(mode), alive]
 		_sub_lbl.visible = true
+	elif phase == Const.Phase.PLAYING:
+		countdown_note = ""
 
 	var trio := mode == Const.Mode.TRIO
 	_trio = trio
 	_score_us = us
 	_score_them = them
 	_alive_lbl.text = "SAĞ: %d" % alive
-	_alive_lbl.visible = phase == Const.Phase.PLAYING and not trio
+	# Obyekt rejimində hamı dirilir — "sağ qalan" sayı heç nəyi demir, hesab lövhəsi deyir.
+	_alive_lbl.visible = phase == Const.Phase.PLAYING and not trio \
+		and not Const.is_objective_mode(mode)
+	_dry_text = "QURUDASAN — adaya get" if mode == Const.Mode.ISLAND else "QURUYUR — mərkəzə get"
 	# Ayırıcı BOŞLUQ deyil, "·"-dır.
 	#
 	# `"RAUND %d   %d — %d"` üç boşluqla yazılırdı və bu şriftdə boşluq ~3 px
@@ -849,6 +944,38 @@ func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool,
 	# yazır. Mətni burada yazsaydıq, o, üstündən silərdi və quruma —
 	# rejimin ən ölümcül təhlükəsi — heç vaxt görünməzdi.
 	_drying = drying
+
+
+## Obyekt rejiminin lövhəsi: hesab (bizimki · onlarınkı), rejimin sözü və qalan vaxt.
+##
+## [param left] — matçın qalan saniyəsi (əlavə vaxtda əlavə vaxtın qalanı, [param ot]).
+## [param respawn] > 0 — baxan doğulmağı gözləyir: mərkəzdə geri sayımın dili ilə sayılır.
+func set_objective(mode: int, phase: int, us: int, them: int, left: float, ot: bool,
+		respawn: float) -> void:
+	var on := phase != Const.Phase.WAITING and not _result.visible
+	for lbl in [_obj_us, _obj_mid, _obj_them]:
+		lbl.visible = on
+	if not on:
+		return
+	_obj_us.text = str(us)
+	_obj_them.text = str(them)
+	var word := "ANA"
+	match mode:
+		Const.Mode.ISLAND: word = "XAL"
+		Const.Mode.BALL: word = "QOL"
+	var t := maxi(int(ceilf(left)), 0)
+	_obj_mid.text = "%s\n%s%d:%02d" % [word, "+" if ot else "", t / 60, t % 60]
+	_obj_mid.add_theme_color_override("font_color", Palette.WARNING if ot else Palette.TEXT)
+
+	if respawn > 0.0 and phase == Const.Phase.PLAYING:
+		_center_lbl.text = str(maxi(int(ceilf(respawn)), 1))
+		_center_lbl.visible = true
+		_sub_lbl.text = "Bazanda yenidən doğulursan"
+		_sub_lbl.visible = true
+		_respawn_shown = true
+	elif _respawn_shown:
+		_respawn_shown = false
+		hide_message()
 
 
 ## Superin göstəricisi. [param charge] 0..1, [param ready] basıla bilərmi.

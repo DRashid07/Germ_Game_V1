@@ -35,6 +35,7 @@ static func run() -> int:
 	_test_aoi_covers_screen()
 	_test_team_bits_roundtrip()
 	_test_duo_teams()
+	_test_dead_shooter_no_friendly_fire()
 	_test_duo_revive()
 	_test_duo_revive_disconnect()
 	_test_duo_revive_cancel_result()
@@ -82,11 +83,13 @@ static func run() -> int:
 	_test_hit_chance_even()
 	_test_body_fits_hit_shape()
 	_test_input_shot_bit()
+	_test_fire_from()
 	_test_merged_fire_keeps_aim()
 	_test_predicted_fire_waits()
 	_test_trichocyst_waits_for_rewind()
 	_test_bot_sees_rewound_shot()
 	_test_prediction_blast()
+	_test_prediction_server_first()
 	_test_rewound_safe()
 	_test_world_seed_repeats()
 	_test_prediction_separates()
@@ -194,6 +197,8 @@ static func run() -> int:
 	_test_replay_keeps_pushes()
 	# Dostluq və komanda — ayrıca faylda, amma eyni sayğacla (bax [SocialTest]).
 	SocialTest.run()
+	# Obyekt rejimləri — ayrıca faylda, eyni sayğacla (bax [ObjectiveTest]).
+	ObjectiveTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 
@@ -1346,6 +1351,70 @@ static func _test_input_shot_bit() -> void:
 		"köhnə formatlı atəş işarəsiz oxunur")
 
 
+## İnsanın topu onun ekranındakı mərkəzdən doğur, amma gövdəsindən kənara çıxa bilmir.
+##
+## Proqnozun öz yeri jitter-də serverinkindən bir neçə piksel aralı düşür və top
+## başqa xətlə uçurdu (bax [member Sim.PlayerInput.fire_from]).
+static func _test_fire_from() -> void:
+	var inp := Sim.PlayerInput.make(7, Vector2.RIGHT, 0.3, true, false, 12.5)
+	inp.shot = true
+	inp.fire_from = Vector2(101.5, -48.25)
+	var back := Sim.PlayerInput.from_array(inp.to_array())
+	_check(back.fire_from.is_equal_approx(inp.fire_from) and is_equal_approx(back.view_tick, 12.5),
+		"atəşin başlanğıcı paketdə gedir (%s)" % str(back.fire_from))
+	inp.view_tick = -1.0
+	back = Sim.PlayerInput.from_array(inp.to_array())
+	_check(back.fire_from.is_equal_approx(inp.fire_from) and back.view_tick < 0.0,
+		"görünən tick-siz paketdə də başlanğıc yerində oxunur")
+	var plain := Sim.PlayerInput.make(8, Vector2.RIGHT, 0.3, true, false, 3.0)
+	plain.fire_from = Vector2(5.0, 5.0)
+	_check(plain.to_array().size() == 6 and not Sim.PlayerInput.from_array(plain.to_array()).fire_from.is_finite(),
+		"proqnozun açmadığı atəşdə başlanğıc getmir (%d sahə)" % plain.to_array().size())
+	_check(not Sim.PlayerInput.from_array([1, 0.0, 0.0, 0.0, 5, 2.0, NAN, 4.0]).fire_from.is_finite()
+			and not Sim.PlayerInput.from_array([1, 0.0, 0.0, 0.0, 5, 2.0, INF, 4.0]).fire_from.is_finite(),
+		"şəbəkədən gələn NaN/INF başlanğıc atılır")
+	_check(not Sim.PlayerInput.from_array([1, 0.0, 0.0, 0.0, 5, 2.0]).fire_from.is_finite(),
+		"köhnə client-in paketi başlanğıcsız oxunur")
+
+	# [başlanğıcın mərkəzdən fərqi, gözlənilən fərq, birləşmə, ad]
+	var reach := Sim.FIRE_FROM_REACH * Const.germ_radius(Const.START_CAPACITY)
+	var cases := [
+		[Vector2(6.0, -4.0), Vector2(6.0, -4.0), false, "yaxın başlanğıc olduğu kimi götürülür"],
+		[Vector2(200.0, 0.0), Vector2(reach, 0.0), false, "uzaq başlanğıc gövdənin içinə kəsilir"],
+		[Vector2(-3.0, 7.0), Vector2(-3.0, 7.0), true, "paketlər birləşəndə başlanğıc atəşlə köçür"],
+		[Vector2.INF, Vector2.ZERO, false, "başlanğıcsız atəş mikrobun mərkəzindən"],
+	]
+	for c in cases:
+		var world := _quiet_world(54)
+		var g := world.add_player(A_ID, "A", Const.Species.CILIATE)
+		world.sim.add_germ(B_ID, "B", 1).safe_t = 0.0
+		g.balls = Const.START_BALLS
+		g.pos = Vector2(-150.0, 120.0)
+		g.vel = Vector2.ZERO
+		var fire := Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, true)
+		fire.shot = true
+		var off: Vector2 = c[0]
+		fire.fire_from = g.pos + off if off.is_finite() else Vector2.INF
+		world.accept_input(A_ID, fire.to_array())
+		if bool(c[2]):
+			world.accept_input(A_ID, Sim.PlayerInput.make(2, Vector2.ZERO, 0.0, false).to_array())
+		world.tick(Const.TICK_DELTA)
+		var shot: Sim.ShotState = null
+		for s in world.sim.shots:
+			if s.owner_id == A_ID:
+				shot = s
+		# Mikrobun atəş anındakı mərkəzi — hadisədəki membran nöqtəsindən (axın onu tərpədə bilir).
+		var center := Vector2.INF
+		for e in world.sim.events:
+			if e.get("t") == "fire":
+				center = Vector2(e["pos"]) - Vector2.from_angle(float(e["arg"])) * g.radius()
+		# Top elə atəş tick-ində bir addım atır.
+		var start := shot.pos - shot.dir * Const.SHOT_SPEED * Const.TICK_DELTA if shot != null else Vector2.INF
+		# Gövdənin içindəki başlanğıc MÜTLƏQ nöqtədir, kəsilən isə atəş anındakı mərkəzdən ölçülür.
+		var want: Vector2 = fire.fire_from if off == Vector2(c[1]) else center + Vector2(c[1])
+		_check(start.distance_to(want) < 1.0, "%s (%.2f px fərq)" % [String(c[3]), start.distance_to(want)])
+
+
 ## İki paket bir tick-də gələndə atəş ÖZ nişanı və görünən tick-i ilə açılır.
 ##
 ## Server oyunçu başına yalnız son paketi saxlayır. Əvvəl atəş yeni paketin
@@ -1519,6 +1588,27 @@ static func _test_prediction_blast() -> void:
 	var gone := p.blast(Vector2.ZERO, 100.0, 1.0)
 	_check(gone.size() == 1 and not near.alive and far.alive,
 		"partlayış radiusundakı proqnoz topu dayanır, uzaqdakı uçur")
+
+
+## Serverin dəyməsi proqnozdan TEZ gələndə proqnozun gözləyən təması elə indi verilir.
+##
+## Kiçik pinqdə server xəbəri topun ekranda qalan yarım tick-lik yolundan tez çatırdı
+## və proqnozun hesabladığı dəymə "proqnozsuz" sayılırdı.
+static func _test_prediction_server_first() -> void:
+	var p := ShotPrediction.new()
+	var g := p.spawn(Vector2.ZERO, Vector2.RIGHT, 0.0)
+	var target := [{"pos": Vector2(100.0, 0.0), "radius": 30.0, "key": 9}]
+	# Təmas 100 − (30 + 9) = 61 px-dədir, yəni yaşı ~4.36 tick: 4.1 tick-də
+	# parça artıq simulyasiya olunub, təmas isə ekrana hələ verilməyib.
+	var out := p.step(0.0, 4.1 * Const.TICK_DELTA, [] as Array[Vector4], PackedByteArray(), target)
+	_check(out.is_empty() and g.alive and g.pending.size() == 1,
+		"təmas hesablanıb, ekrana hələ verilməyib (%d gözləyən)" % g.pending.size())
+	_check(p.take_pending_hit(Vector2(61.0, 0.0), 40.0, 0.2, 5).is_empty() and g.alive,
+		"başqa qurbanın dəyməsi proqnozun təmasını götürmür")
+	var c := p.take_pending_hit(Vector2(63.0, 2.0), 40.0, 0.2, 9)
+	_check(not c.is_empty() and int(c["kind"]) == ShotPrediction.Contact.HIT and not g.alive
+			and g.pos.distance_to(Vector2(61.0, 0.0)) < 0.5,
+		"serverin tez dəyməsi gözləyən təması verir, top dəymə nöqtəsində bitir (%s)" % str(g.pos))
 
 
 ## Doğuş qalxanı da keçmişdən oxunur: atıcı qalxanı görürdüsə, top keçir.
@@ -4497,6 +4587,40 @@ static func _test_duo_teams() -> void:
 			break
 	var after: int = world.sim.germs[mate].balls if world.sim.germs.has(mate) else -1
 	_check(after <= before, "yoldaşa atılan top ona top VERMİR (%d → %d)" % [before, after])
+
+
+## Atıcı partlayıb və ya doğulmağı gözləyir — havadakı topu yenə yoldaşına DƏYMİR.
+##
+## Komanda atıcıdan oxunurdu: atıcı dünyadan çıxanda yoxlama atlanırdı və top
+## yoldaşa dəyirdi (ölçülüb: YAŞ ADA və NÜVƏ TOPU-da, proqnoz isə onu keçirdi).
+static func _test_dead_shooter_no_friendly_fire() -> void:
+	for mate in [true, false]:
+		var s := Sim.new()
+		s.obstacles = [] as Array[Vector4]
+		var a := s.add_germ(A_ID, "A", 0)
+		var b := s.add_germ(B_ID, "B", 1)
+		a.team = 0
+		b.team = 0 if mate else 1
+		a.safe_t = 0.0
+		b.safe_t = 0.0
+		a.pos = Vector2(-150.0, LANE_Y)
+		a.vel = Vector2.ZERO
+		a.aim = 0.0
+		s._fire(a)
+		# Atıcı topu atan kimi dünyadan çıxır.
+		s.germs.erase(A_ID)
+		var hits := 0
+		for i in 30:
+			b.pos = Vector2(100.0, LANE_Y)
+			b.vel = Vector2.ZERO
+			s.step({}, Const.TICK_DELTA)
+			for e in s.events:
+				if e.get("t") == "hit" and float(e["arg"]) > 0.5:
+					hits += 1
+		if mate:
+			_check(hits == 0, "partlamış atıcının topu yoldaşına dəymir (%d dəymə)" % hits)
+		else:
+			_check(hits == 1, "partlamış atıcının topu rəqibə dəyir (%d dəymə)" % hits)
 
 
 ## CÜT: yoldaşı sağ ikən ölüm müvəqqətidir, ikisi də ölsə cüt çıxır.

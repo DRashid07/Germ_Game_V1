@@ -21,6 +21,16 @@ func _ready() -> void:
 			get_tree().quit(2)
 			return
 		get_tree().quit(tests.run())
+	elif args.has("--objtest"):
+		# Yalnız obyekt rejimlərinin testləri (tam dəst `--simtest`-dədir).
+		var obj := _tool("objective_test")
+		if obj == null or not obj.can_instantiate():
+			printerr("[objtest] objective_test.gd açılmadı — yuxarıdakı xətaya bax")
+			get_tree().quit(2)
+			return
+		var failed: int = obj.run()
+		print("===== obyekt: %d keçdi, %d uğursuz =====" % [SimTest._pass, failed])
+		get_tree().quit(failed)
 	elif args.has("--server"):
 		_start_server(args)
 	elif args.has("--practice"):
@@ -67,7 +77,8 @@ func _start_practice(args: PackedStringArray) -> void:
 	if not kind.is_empty():
 		Net.species = Const.species_from(int(kind))
 
-	# `--mode <0|1>` — rejim (0 sonsuz arena, 1 TƏK QALAN).
+	# `--mode <0..6>` — rejim (0 sonsuz arena, 1 TƏK QALAN, 2 CÜT, 3 ÜÇLÜK, 4 ANA HÜCEYRƏ,
+	# 5 YAŞ ADA, 6 NÜVƏ TOPU).
 	#
 	# Menyu keçildiyi üçün seçim yalnız buradan verilə bilər. `--species` ilə
 	# eyni səbəb: rejimi redaktoru açmadan, təkrarlana bilən şəkildə yoxlamaq.

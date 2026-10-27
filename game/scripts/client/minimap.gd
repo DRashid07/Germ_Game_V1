@@ -53,6 +53,39 @@ var wet_radius := Const.WORLD_RADIUS:
 		wet_radius = value
 		queue_redraw()
 
+## Yaş sahənin mərkəzi — YAŞ ADA-da gəzən ada, qalan rejimlərdə qabın mərkəzi.
+var wet_center := Vector2.ZERO:
+	set(value):
+		if wet_center.is_equal_approx(value):
+			return
+		wet_center = value
+		queue_redraw()
+
+## Rejimin qabı və xəritəsi (obyekt rejimlərinin qabı kiçikdir və öz düzümü var).
+## [Arena] bir dəfə, rejimi biləndə verir.
+var wall := Const.WORLD_RADIUS:
+	set(value):
+		wall = value
+		queue_redraw()
+var obstacles: Array[Vector4] = DishMap.obstacles():
+	set(value):
+		obstacles = value
+		queue_redraw()
+## Baxanın komandası — Ana və qapı onun gözü ilə rənglənir (bizimki laym, onlarınkı narıncı).
+var team := -1:
+	set(value):
+		if team == value:
+			return
+		team = value
+		queue_redraw()
+## NÜVƏ TOPU: qapılar çəkilsin.
+var goals := false:
+	set(value):
+		goals = value
+		queue_redraw()
+## NÜVƏ TOPU: Nüvənin yeri (`Vector2.INF` — yoxdur). Nöqtələr qatında çəkilir.
+var ball := Vector2.INF
+
 
 func set_dots(dots: Array) -> void:
 	_dots = dots
@@ -62,7 +95,7 @@ func set_dots(dots: Array) -> void:
 func _draw() -> void:
 	var c := size * 0.5
 	var r := minf(size.x, size.y) * 0.5 - 2.0
-	var k := r / Const.WORLD_RADIUS
+	var k := r / wall
 
 	# Dairələr [BatchDraw] ilə çəkilir. Əvvəl hər `draw_circle` ayrıca poliqon və
 	# ayrıca çəkiliş çağırışı idi: 26 maneə ilə minimap kadrda ~45 çağırış edirdi —
@@ -75,8 +108,9 @@ func _draw() -> void:
 	# Onsuz minimap həmişə tam qabı göstərirdi və oyunçunun "hara qaçım"
 	# sualına cavab verə bilmirdi: təhlükəsiz sahə 1200-dən 90 px-ə düşür,
 	# xəritə isə dəyişmir. Xəritənin bütün mənası məhz o sualdır.
-	if wet_radius < Const.WORLD_RADIUS - 1.0:
+	if wet_radius < wall - 1.0:
 		var wr := wet_radius * k
+		var wc := c + wet_center * k
 		# QURU halqa tündləşdirilir, yaş sahə isə toxunulmaz qalır.
 		#
 		# Əvvəl əksinə idi — yaş dairənin üstünə `DISH@0.55` çəkilirdi, yəni
@@ -84,8 +118,16 @@ func _draw() -> void:
 		# xətt idi. Halbuki xəritənin bu hissəsi "hara qaçım" sualına cavab
 		# verir: TƏHLÜKƏLİ sahə seçilməlidir, təhlükəsiz olan yox.
 		BatchDraw.disc(self, c, r, Color(Palette.DANGER, 0.20))
-		BatchDraw.disc(self, c, wr, Color(Palette.DISH, 0.95))
-		BatchDraw.ring(self, c, wr, 0.0, TAU, 40, Color(Palette.WARNING, 0.95), 2.5)
+		BatchDraw.disc(self, wc, wr, Color(Palette.DISH, 0.95))
+		BatchDraw.ring(self, wc, wr, 0.0, TAU, 40, Color(Palette.WARNING, 0.95), 2.5)
+
+	# NÜVƏ TOPU-nun qapıları — şüşənin üstündə qövs: öz qapın laym, rəqibinki narıncı.
+	if goals:
+		var half := asin(clampf(Const.BALL_GOAL_HALF / wall, 0.0, 1.0))
+		for t in 2:
+			var mid := PI if t == 0 else 0.0
+			var col := Palette.ALLY if t == team else Palette.FOE
+			BatchDraw.ring(self, c, r, mid - half, mid + half, 8, col, 4.0)
 
 	# Maneələr — oriyentir üçün sönük ləkələr.
 	#
@@ -95,18 +137,25 @@ func _draw() -> void:
 	#
 	# Dağılmış qabıqlar ÇƏKİLMİR: xəritə keçilməz yer göstərsə, oyunçu
 	# açdığı yolu unudar və qaçış marşrutunu səhv seçər.
-	var list := DishMap.obstacles()
+	var list := obstacles
 	for i in list.size():
 		if i < broken.size() and DishMap.wall_gone(broken[i]):
 			continue
 		var o := list[i]
-		BatchDraw.disc(self, c + Vector2(o.x, o.y) * k, maxf(o.z * k, 1.5), _kind_color(int(o.w)))
+		var col := _kind_color(int(o.w))
+		# ANA komandanın rəngindədir — xəritənin bu rejimdəki əsas sualı "hansı bizimkidir".
+		if int(o.w) == DishMap.Kind.MOTHER:
+			col = Palette.ALLY if (0 if o.x < 0.0 else 1) == team else Palette.FOE
+		BatchDraw.disc(self, c + Vector2(o.x, o.y) * k, maxf(o.z * k, 1.5), col)
 
 
 ## Mikroblar — qabın üstündəki ayrı qatda (bax [member _dots_layer]).
 func _draw_dots() -> void:
 	var c := size * 0.5
-	var k := (minf(size.x, size.y) * 0.5 - 2.0) / Const.WORLD_RADIUS
+	var k := (minf(size.x, size.y) * 0.5 - 2.0) / wall
+	# Nüvə mikroblardan ƏVVƏL: onun üstündəki mikrob görünməlidir.
+	if ball.is_finite():
+		BatchDraw.disc(_dots_layer, c + ball * k, 5.0, Color("F4F1E6"))
 	# Əvvəl BÜTÜN nöqtələr, sonra halqalar: disk və xətt fərqli çəkiliş növüdür,
 	# növbələşsəydilər hər nöqtə ayrıca çağırış olardı (bax [BatchDraw]).
 	for dot in _dots:

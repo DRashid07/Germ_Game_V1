@@ -475,6 +475,8 @@ taleyi ilə (kimə dəydi, harada öldü, qurbana nə qədər yaxınlaşdı) tut
 | Qurban ekranda sağdır, amma başqasının topundan artıq partlayıb (hadisə gəlib, interpolyasiyanı gözləyir) | Belə dəymə də təsdiqi gözləyir | `_burst_pending` |
 | Top qurbana ömrünün SON tick-ində çatırdı: proqnozun atəş nöqtəsi xətt boyu 9 px qabaqda idi, proqnoz 0.7 tick uzağa uçub "dəydi", serverin topu isə qurbana 1.20 məsafədə öldü | Ömrün son iki tick-indəki dəymə də təsdiqi gözləyir | [`ShotPrediction.LATE_LIFE`](game/scripts/client/shot_prediction.gd) |
 | Qurban superi dolu kirpikli idi: bot trixosisti topu görən an açır, atıcı isə onu `rewind` qədər gec görür — mərkəzdən keçən (0.02) dəymə belə itdi | Yanında superi dolu kirpikli olan dəymə təsdiqi gözləyir | `_rival_tricho_near` |
+| Serverin topu proqnozla EYNİ tick-də atılır və qurbanı eyni halda görür (ölçülüb: atəş tick-i fərqi 0, qurbanın yeri və ellipsi eyni), amma öz mövqeyinin proqnozu jitter-də serverinkindən aralı düşür: RTT ~140 ± 60 ms-də təsdiqlərin yarısında top xətt boyu 5–15 px, yana ortada 4 px (ən çox 42) aralı uçurdu — proqnozun "keçdi" dediyi top serverdə dəyirdi | Server insanın topunu onun **ekranındakı** mərkəzdən doğur — geri sarma kimi atıcının xeyrinə ([`PlayerInput.fire_from`](game/scripts/shared/sim.gd), yalnız proqnozun atəş paketində, 2 ədəd). Hədd gövdənin içidir — radiusun yarısı ([`Sim.FIRE_FROM_REACH`](game/scripts/shared/sim.gd)): top yenə mikrobun içindən çıxır, hiylə ilə qazanılan məsafə 14–40 px-dir. Yan fərq ortada 4 → 0.4 px | [`Sim._fire`](game/scripts/shared/sim.gd), `World.accept_input` |
+| Kiçik pinqdə (lokal server, RTT bir tick-dən az) "yalnız serverin saydığı" öz dəymələri yarıya çatırdı. Hamısı yarışma idi: proqnoz dəyməni ARTIQ hesablamışdı, top isə ekranda nöqtəyə hələ yarım tick qalmışdı — serverin HIT-i tez gəlir və proqnozun topunu 7 px qısa dayandırırdı | Server dəyməni proqnozdan tez deyəndə proqnozun gözləyən təması elə o an verilir və top dəymə nöqtəsində bitir | [`ShotPrediction.take_pending_hit`](game/scripts/client/shot_prediction.gd) |
 
 Proqnoz indi yaxındakı mikrobları da (220 px) öz dünyasına qoyur — son
 snapshot-dan irəli çəkilmiş surətlər kimi — və server kimi ayırır
@@ -550,7 +552,8 @@ Hədd fonu (`0.05`) toxunulmaz saxlayır: yalnız **canlı** olan şeylər işı
 
 ## Rejimlər
 
-Dörd rejim var və oyunçu menyuda OYNA düyməsinin üstündəki kartdan seçir.
+Yeddi rejim var və oyunçu menyuda OYNA düyməsinin üstündəki kartdan seçir: dörd
+döyüş rejimi (aşağıdakı cədvəl) və üç obyekt rejimi (bax «Obyekt rejimləri»).
 Qaydalar (top, partlama, növ gücləri) hər ikisində EYNİDİR — fərq yalnız
 matçın olub-olmamasındadır.
 
@@ -594,7 +597,31 @@ CÜT-də yoldaşın sağ ikən ölüm müvəqqətidir: 15 saniyə sonra qayıdı
 komanda ikincidə də üstün başlayardı və matç faktiki olaraq bir raundda
 həll olunardı.
 
-Tam quruluş: [design/MODES.md](design/MODES.md).
+### Obyekt rejimləri
+
+Matçı sona qalan yox, **obyekt** həll edir: ölən mikrob bazasında yenidən doğulur
+(tutum 10, superin doluluğu qalır, 4 s qalxan). Hər rejimin öz qabı və öz xəritəsi
+var — yalnız rejimə lazım olan maneələr (`DishMap.obstacles_for`, `Const.wall_radius`).
+
+| | **ANA HÜCEYRƏ** | **YAŞ ADA** | **NÜVƏ TOPU** |
+|---|---|---|---|
+| Komanda | 3v3 | 3v3 | 2v2 |
+| Qab | 800 | 720 | 640 |
+| Obyekt | hər komandanın Anası (140 tutum, 70 topla) | gəzən yaş ada (r 220) | ağır Nüvə (çəki 20–40) |
+| Qalib | rəqibin Anası partlayır; 2:30-da daha boş Ana | ilk 70 xal; 3:00-da çox xal | ilk 2 qol; 2:30-da çox qol |
+| Xəritə | iki yuva (ağızlar, amöb üçün arxa qapı), kollar, iki deşik | ada zolağı boş, dirəklər, kollar, katapult deşiklər | meydan xətləri, qapı dirəkləri, bamperlər |
+
+- **ANA:** rəqibin topu Anaya girir (+1), öz Anana toxunanda ondan top əmirsən —
+  əmilən top hücumun sursatıdır.
+- **ADA:** qab 0:20-də quruyur, ada orta xətt boyu şimal–cənub yırğalanır (iki bazadan
+  həmişə eyni uzaqda). Adada çox olan komanda saniyədə +1 xal; quru zona sursat verir.
+- **NÜVƏ TOPU:** gövdə ilə itələmək pulsuzdur, topla vurmaq Nüvəni ağırlaşdırır (40-da
+  partlayır). Qapı şüşənin üstündədir; qoldan sonra hamı yerinə qayıdır.
+- Rənglər baxana görədir: bizim Ana və qapı **laym**, onlarınkı **narıncı**.
+- Rəqəmlər botlu matçlarla ölçülüb: `Godot --headless --path game -- --objtest`
+  (testlər), `… --objtest --probe --no-human --mode 4 --seeds 20` (balans).
+
+Tam quruluş: [design/MODES.md](design/MODES.md) (§16 — obyekt rejimləri).
 
 ## Ekranlar
 
@@ -977,7 +1004,7 @@ GODOT --path game -- --practice
 # Mikrob növünü seçərək (0 kirpikli · 1 ayaqlı · 2 amöb):
 GODOT --path game -- --practice --species 2
 
-# Rejimi seçərək (0 sonsuz · 1 TƏK QALAN · 2 CÜT · 3 ÜÇLÜK):
+# Rejimi seçərək (0 sonsuz · 1 TƏK QALAN · 2 CÜT · 3 ÜÇLÜK · 4 ANA HÜCEYRƏ · 5 YAŞ ADA · 6 NÜVƏ TOPU):
 GODOT --path game -- --practice --mode 3
 
 # Qrafika səviyyəsi (0 yüksək · 1 aşağı · 2 minimum) — sabit qalır, avtomatika işləmir:
@@ -1005,7 +1032,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (728 test)
+# Simulyasiya + World + dostluq/komanda testləri (845 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

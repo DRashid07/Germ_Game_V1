@@ -158,8 +158,8 @@ static func is_secret(secret: String) -> bool:
 static func party_limit(mode: int) -> int:
 	match mode:
 		Const.Mode.SOLO: return 1
-		Const.Mode.DUO: return 2
-		Const.Mode.TRIO: return 3
+		Const.Mode.DUO, Const.Mode.BALL: return 2
+		Const.Mode.TRIO, Const.Mode.MOTHER, Const.Mode.ISLAND: return 3
 		_: return PARTY_MAX
 
 

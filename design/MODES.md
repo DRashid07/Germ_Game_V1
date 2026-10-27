@@ -586,3 +586,111 @@ Aşağıdakılar **qərar gözləyir** — dizaynda mövqeyim var, amma son söz
 | Spor TRIO-da olsun? | **Yox** — qısa matçda balansı pozur |
 | Yer/hesab yadda saxlansın? | **Yox** — iqtisadiyyat qərarı “sonra”dır |
 | TRIO-da 3 raund çoxdurmu? | Sınamaq lazımdır. Raund 60 s → matç ~3.5 dəqiqə. Uzun gəlsə: 2 raund |
+
+---
+
+## 16. Obyekt rejimləri — ANA HÜCEYRƏ, YAŞ ADA, NÜVƏ TOPU (2026-10-21)
+
+Sahib təqdimatdan («CÜT və ÜÇLÜK — Ssenarilər») üçünü seçdi: **ANA HÜCEYRƏ** və
+**YAŞ ADA** ÜÇLÜK (3v3) üçün, **NÜVƏ TOPU** CÜT (2v2) üçün. Şərt: hər rejimin
+**öz xəritəsi** — yalnız rejimə lazım olan maneələr. Köhnə CÜT/ÜÇLÜK dəyişmir.
+
+Rəqəmlər botlu matçlarla ölçülüb (`--objtest --probe --no-human`, rejim başına 20 toxum)
+və aşağıda niyə belə olduqları yazılıb. Testlər: `game/scripts/tools/objective_test.gd`.
+
+### 16.1 Ümumi qayda
+
+| | ANA HÜCEYRƏ | YAŞ ADA | NÜVƏ TOPU |
+|---|---|---|---|
+| `Mode` | `MOTHER = 4` | `ISLAND = 5` | `BALL = 6` |
+| Komanda | 2 × 3 | 2 × 3 | 2 × 2 |
+| Qabın şüşəsi (radius) | 800 | 720 | 640 |
+| Matç | 2:30 (+30 s əlavə) | 3:00 (+bərabərlikdə ilk xal) | 2:30 (+45 s ilk qol) |
+| Ölüm | 5 s sonra öz yuvasında | 5 s sonra öz kənarında | 4 s sonra öz yarısında |
+| Qalib | rəqib Ana partlayır / 2:30-da daha boş Ana | ilk 70 xal | ilk 2 qol |
+
+- **Şüşə rejimə görədir** (`Const.wall_radius`): kiçik komanda kiçik qabda oynayır,
+  NÜVƏ TOPU-nun qapısı isə məhz şüşənin üstündədir.
+- **Xəritə rejimə görədir** (`DishMap.obstacles_for(Const.mode_layout(mode))`):
+  köhnə rejimlər HALQALAR düzümündə qalır.
+- Dirilmədə tutum 10-a, top 5-ə qayıdır; superin doluluğu QALIR. Bazaya yaxın doğulur,
+  4 s qalxanla.
+- Mikroblar arasında döyüş riyaziyyatı (zərbə +2, atəş −1, partlatma +5 tutum, soyuma,
+  döşəmələr) **toxunulmazdır**. Yeni şeylər mövqeyə, obyektə və vaxta təsir edir.
+- Komanda 0 qərbdə, komanda 1 şərqdədir. Rənglər baxana görədir: **bizimki laym, onlarınkı
+  narıncı**.
+- Geri sayımda botlar da dayanır (insanların girişi onsuz da bağlıdır) — BÜTÜN matçlı
+  rejimlərdə. Əvvəl botlar sayımda tərpənirdi: NÜVƏ TOPU-nda qoldan sonrakı sayımda Nüvəni
+  qapıya itələyirdilər (qol sayılmırdı, Nüvə yox olurdu), CÜT/ÜÇLÜK-də isə insandan 3 s
+  qabaq yer seçirdilər. Ölçü (12 botlu matç): sayımda mikrobların cəmi yerdəyişməsi
+  4.5–7.6 min px → 0.6–1.4 min px (qalanı su axınının sürüşdürməsidir, insana da eynidir).
+- Komandalı rejimdə bot yoldaşını hədəf seçmir (`Bot._nearest_enemy`). Əvvəl CÜT/ÜÇLÜK
+  botları ən yaxın mikroba nişan alırdı və top yoldaşın içindən keçib boşa gedirdi. Ölçü
+  (12 matç): yoldaşa nişan CÜT 21% → 1%, ÜÇLÜK 28% → 3%; mikroba dəymə CÜT 35% → 38%,
+  ÜÇLÜK 28% → 38%; CÜT matçı orta 148 s → 115 s (hamısı yenə sona qalan cütlə bitir).
+
+### 16.2 ANA HÜCEYRƏ
+
+- Hər komandanın bazasında hərəkətsiz **ANA**: tutum **140**, **70** topla başlayır,
+  radius 100. Maneədir (`DishMap.Kind.MOTHER`): mikrobu və topu saxlayır.
+- **Rəqibin topu** Anaya girir və onu **+1** doldurur (`MOTHER_FEED`); 140-ı keçəndə Ana
+  partlayır — matç bitir. **Öz topun** Anadan sıçrayır (dost atəşi yoxdur). +2 ilə botlu
+  matçların üçdə biri 60 s-dən tez bitirdi: partlatmalarla böyüyən hücumçu yuvanın ağzında
+  dirilənləri vururdu, yoldaşları Ananı 35 s-də doldururdu.
+- **Əmmək:** öz Anana toxunanda hər **0.4 s**-də 1 top Anadan sənə keçir; Ana **80%-i**
+  keçibsə **0.2 s**. Şərt: Ana 30%-dən doludur və sən tutumun bir topundan aşağısan —
+  əmmək səni heç vaxt partlatmır. Əmilən top elə hücumun sursatıdır: əm, dol, rəqibin
+  Anasına at — rejimin dövrü budur.
+- Yuva: Ananın qarşısında üç selik (ağızlar 87 px — açıq), arxada şüşə ilə selik arasında
+  50 px-lik **arxa qapı** — yalnız amöb (tutum ≤ 13) sığır.
+- 2:30-da daha BOŞ Ana udur. Fərq 6 topdan azdırsa **30 s əlavə vaxt**: əmmək dayanır,
+  iki Ana da saniyədə +1 top dolur, birinci partlayan uduzur; sonda yenə bərabərdirsə —
+  heç-heçə.
+- Botlu ölçü (20 matç): 8:11 qələbə, 1 heç-heçə; 4 matç partlamaqla bitir, ən qısası 61 s.
+
+### 16.3 YAŞ ADA
+
+- 0:20-yə qədər qab yaşdır. 0:20–0:25 arasında hər yer quruyur, yalnız **r 220**-lik ada qalır.
+- Ada orta xətt (x = 0) boyunca şimal–cənub yırğalanır (±340 px, **64 s**-lik dövr). Yeri
+  YALNIZ matç saatından çıxır (`Const.wet_circle`) — proqnoz müqaviləsi qorunur. Bazalar
+  qərbdə və şərqdədir, yəni ada hər an iki bazadan EYNİ uzaqdadır. Əvvəlki «səkkiz» yolu
+  ilk ilmədə qərbə əyilirdi və komanda 0 ondan yeddi-səkkiz matçı udurdu.
+- Quru zona burada **cəbbəxanadır**: hər **2 s**-də +1 top (dərinlikdən asılı deyil),
+  doğuş qalxanında yığılmır. Qida yalnız adada doğulur, quruda qalan qida quruyur.
+- Adada SAĞ mikrobu çox olan komanda saniyədə **+1 xal**. 25+ xal geridə qalan komanda
+  adadakı bərabərliyi özünə yazır.
+- İlk **70** xal udur; 3:00-da çox xalı olan; bərabərdirsə ilk xal fərqi qərar verir
+  (ən gec 4:00, sonra heç-heçə). 100 xalla botlu matçların çoxu vaxtla bitirdi (72–93 xal).
+- Xəritə: ada zolağında (|x| ≤ 220) heç nə yoxdur; dörd dirək (±320, ±240) yolda sığınacaq,
+  dörd kol bazaların yanında, iki cərəyan deşiyi (±470, 0) dirilən mikrobu adaya atır.
+- Botlu ölçü (16 matç): 13-ü 70 xalla bitir, qələbələr 6:10.
+
+### 16.4 NÜVƏ TOPU
+
+- Mərkəzdə neytral **NÜVƏ**: çəkisi **20**, radiusu `30 + (çəki − 20) × 0.8`.
+- Gövdə ilə itələmək **pulsuzdur** (Nüvə mikrobu itələmir — proqnoz toxunulmaz qalır).
+  Təkan mikrobun normal sürətinin **2 misli**dir; Nüvə suda ~3 s sürüşür. Bir neçə mikrobun
+  təkanı toplanıb bir dəfə tətbiq olunur — sıradan asılı deyil, qarşı-qarşıya itələmə ləğv olur.
+- Topla vurmaq onu itələyir (`200 × 20 / çəki` px/s) və **+2 çəki** verir; 40-ı keçəndə
+  Nüvə partlayır, 2 s sonra mərkəzdə yenisi. Çəki 1.5 s-də 1 azalır (20-yə qədər).
+- TRİXOSİST itələməsi Nüvəyə də təsir edir. Suyun burulğanı onu **35%** aparır (tam axında
+  Nüvə şüşəyə yapışıb qalırdı). Şüşənin **menisküsü**: kənardan 40 px-ə yaxın Nüvə içəri
+  yuvarlanır — şüşəyə sıxılmış Nüvənin arxasına mikrob sığmırdı.
+- **Qapı (məsamə)** şüşədədir: qərbdəki komanda 0-ın, şərqdəki komanda 1-in. Eni 236 px,
+  iki yanında selik dirəyi (585, ±150). Nüvə rəqibin qapısına girəndə **qol**: hamı yerinə
+  qayıdır, 3 s sayım (matçın saatı dayanır).
+- İlk **2** qol udur; 2:30-da çox qolu olan; bərabərdirsə **45 s** ərzində ilk qol, sonra heç-heçə.
+- Botlu ölçü (20 matç): 14-ü qaliblə, matç başına 1.1 qol.
+
+### 16.5 Şəbəkə
+
+- Komanda bitləri dəyişmir. `MF`-ə sonda iki sahə gəlir: `OBJ` (rejimin obyekti,
+  `PackedFloat32Array`) və `RESPAWN` (baxanın dirilməsinə qalan saniyə).
+  `SCORE_US/EM` — ANA-da Anaların top sayı, ADA-da xal, TOP-da qol.
+- `OBJ`: birinci ədəd matçın saatıdır (qoldan sonrakı sayım fazanın saatını sıfırlayır,
+  matçınkını yox); sonra ANA — `[əlavə vaxt 0/1]`; ADA — `[x, y, r]`;
+  TOP — `[x, y, vx, vy, çəki, sağ 0/1]`.
+- Ölüm obyekt rejimində nəticə ekranı AÇMIR: mikrob doğulma növbəsinə düşür, nəticə hamıya
+  matçın sonunda gedir (`draw`, `score_us`, `score_them` əlavə açarları ilə).
+- Köhnə client yeni sahələri oxumur; yeni client köhnə serverdə də işləyir (sahələr yoxdursa
+  sadəcə istifadə olunmur).

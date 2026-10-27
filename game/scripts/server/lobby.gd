@@ -370,6 +370,11 @@ func _on_match_end(world: World, res: Dictionary) -> void:
 		"survived": true,
 		"timed_out": bool(res["timed_out"]),
 	}
+	# Obyekt rejimi: komandanın hesabı və heç-heçə ([method World._award_teams]).
+	# Köhnə client bu açarları oxumur — nəticə ekranı yenə qalib/uduzan göstərir.
+	for key in ["draw", "mode", "score_us", "score_them"]:
+		if res.has(key):
+			result[key] = res[key]
 	Net.on_burst.rpc_id(peer, result)
 	print("[lobby] %s matçı bitirdi (dünya #%d) — %s, %d partlatma, %.0f s" % [
 		names.get(peer, peer), world.id,

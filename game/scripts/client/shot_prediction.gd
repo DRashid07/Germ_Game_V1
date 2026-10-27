@@ -36,6 +36,7 @@ enum Contact {
 	BOUNCE,  ## divardan, maneədən və ya amöbün qabığından sıçradı
 	CRACK,   ## kövrək qabığa dəyib qaldı
 	SPENT,   ## ömrü və ya sıçrama haqqı bitdi — serverdə qidaya çevrilir
+	ABSORB,  ## rəqibin Anası və ya Nüvə topu udub — top orada bitir (obyekt rejimləri)
 }
 
 ## Server bu qədər saniyəyə topu təsdiqləməsə, atəş qəbul edilməyib sayılır.
@@ -98,10 +99,33 @@ class Ghost:
 	var done := false
 	## Vaxtı çatmamış təmaslar: `{"at": tick yaşı, "contact": Dictionary}`.
 	var pending: Array[Dictionary] = []
+	## Yalnız ölçüdə ([member trace_on]): tick sonlarının yolu, necə bitdiyi ([enum Contact];
+	## -2 = server təsdiqləmədi) və gec tapılan atəşdə geri çatdırılan saniyələr.
+	var trace := PackedVector2Array()
+	## Hər tick üçün `(ən yaxın hədəfin açarı, gövdəsindən uzaqlıq, hədəf sayı)`.
+	var trace_near := PackedVector3Array()
+	var end_kind := -1
+	var late := 0.0
+	## Təsdiq anında: serverin atəş tick-i ilə proqnozun `view0`-ı fərqi (tick) və
+	## eyni addım sayında serverin topu proqnozdan xətt boyu nə qədər QABAQDADIR (px).
+	var srv_dv := NAN
+	var srv_along := NAN
 
 
 var ghosts: Array[Ghost] = []
 var _next_id := 1
+## Ölçü üçün ([Arena]-nın `hit_stats`-ı): topların yolu yazılır və ölən toplar [member recent]-də
+## bir müddət qalır — proqnozun görmədiyi dəymənin səbəbi onlardan oxunur. Oyunda söndürülüdür.
+var trace_on := false
+var recent: Array[Ghost] = []
+
+## Rejimin qabının şüşəsi ([method Const.wall_radius]) — [Arena] verir.
+var wall := Const.WORLD_RADIUS
+## Atıcının komandası: rəqibin Anası topu UDUR, öz Anası sıçradır (bax
+## [method Sim._step_shots]).
+var team := -1
+## NÜVƏ TOPU: Nüvə `(x, y, radius)`; radius ≤ 0 — Nüvə yoxdur. Top ona dəyib dayanır.
+var ball := Vector3(0.0, 0.0, -1.0)
 
 
 ## Yeni top — mikrobun MƏRKƏZİNDƏN, eynilə [method Sim._fire] kimi.
@@ -116,6 +140,8 @@ func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0) -> Ghost:
 	g.first_dir = g.dir
 	g.born = now
 	g.view0 = view0
+	if trace_on:
+		g.trace.append(center)
 	ghosts.append(g)
 	return g
 
@@ -130,8 +156,11 @@ func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0) -> Ghost:
 func catch_up(g: Ghost, seconds: float, now: float, obstacles: Array[Vector4],
 		broken: PackedByteArray) -> void:
 	var age := seconds / Const.TICK_DELTA
+	g.late = seconds
 	while not g.done and g.ticks <= int(floor(age + EPS)):
 		_sim_tick(g, obstacles, broken, [])
+		if trace_on:
+			g.trace.append(g.seg_to)
 	g.pending.clear()
 	_place(g, age)
 	if g.done:
@@ -179,6 +208,33 @@ func claim(sid: int, server_dir: Vector2, now: float,
 				g.nudge = -side * (g.pos - server_pos).dot(side)
 			return g
 	return null
+
+
+## Serverin dəyməsi proqnozdan TEZ gəldi — proqnoz onu artıq hesablayıb, ekrana isə
+## top o nöqtəyə çatanda verəcəkdi ([member Ghost.pending]).
+##
+## Kiçik pinqdə (RTT bir tick-dən az) serverin xəbəri topun ekranda qalan yarım
+## tick-lik yolundan tez çatır. Əvvəl belə dəymə "proqnozsuz" sayılırdı: top
+## [method stop_nearest] ilə nöqtəyə ~7 px qalmış dayandırılırdı. Ölçülüb (lokal
+## server): "yalnız server" dəymələrinin hamısı belə idi. İndi təmas elə indi
+## verilir və top dəymə nöqtəsində bitir. Boş lüğət — belə təmas yoxdur.
+func take_pending_hit(at: Vector2, reach: float, now: float, key := -1) -> Dictionary:
+	for g in ghosts:
+		if not g.alive:
+			continue
+		for i in g.pending.size():
+			var c: Dictionary = g.pending[i]["contact"]
+			if int(c["kind"]) != Contact.HIT or Vector2(c["pos"]).distance_to(at) > reach \
+					or (key >= 0 and int(c["key"]) != key):
+				continue
+			g.pending.remove_at(i)
+			g.pos = c["pos"]
+			g.seg_from = g.pos
+			g.seg_to = g.pos
+			g.seg_touch = -1.0
+			_end(g, now)
+			return c
+	return {}
 
 
 ## Hadisə nöqtəsinə ən yaxın UÇAN topu dayandırır.
@@ -239,6 +295,7 @@ func step(dt: float, now: float, obstacles: Array[Vector4],
 		if now - g.born > CLAIM_GRACE and g.sid == -1:
 			# Server bu atəşi heç vaxt təsdiqləmədi — soyuma fərqi və ya itən
 			# giriş. Top səssizcə gedir: olmayan topa dəymə göstərilməməlidir.
+			g.end_kind = -2
 			_end(g, now)
 			continue
 		if g.nudge != Vector2.ZERO:
@@ -254,6 +311,8 @@ func step(dt: float, now: float, obstacles: Array[Vector4],
 		var age := (now - g.born) / Const.TICK_DELTA
 		while not g.done and g.ticks <= int(floor(age + EPS)):
 			_sim_tick(g, obstacles, broken, targets)
+			if trace_on:
+				g.trace.append(g.seg_to)
 		_place(g, age)
 		while not g.pending.is_empty() and float(g.pending[0]["at"]) <= age + EPS:
 			out.append(g.pending.pop_front()["contact"])
@@ -312,8 +371,26 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 		best = t
 		hit_index = i
 		hit_obstacle = o
+	# Nüvə: top ona dəyib dayanır (serverdə onu itələyir və ağırlaşdırır).
+	var hit_ball := false
+	if ball.z > 0.0:
+		var tb := Sim._seg_circle_t(from, to, Vector2(ball.x, ball.y), ball.z + Const.SHOT_RADIUS)
+		if tb >= 0.0 and tb < best:
+			best = tb
+			hit_ball = true
 	var list: Array = targets.call(g.view0 + float(k) if g.view0 >= 0.0 else -1.0) \
 		if targets is Callable else targets
+	# Ölçü: bu tick-in parçasına ən yaxın hədəf və onun gövdəsindən uzaqlıq (bax [member trace_on]).
+	if trace_on:
+		var near := Vector3(-1.0, INF, float(list.size()))
+		for target in list:
+			var tp: Vector2 = target["pos"]
+			var ab := to - from
+			var tt := clampf((tp - from).dot(ab) / maxf(ab.length_squared(), 0.0001), 0.0, 1.0)
+			var gap := tp.distance_to(from + ab * tt) - float(target.get("radius", 0.0))
+			if gap < near.y:
+				near = Vector3(float(target["key"]), gap, float(list.size()))
+		g.trace_near.append(near)
 	for target in list:
 		# Server kimi: mikroba içində başlayan parça da dəyir (bax
 		# [method Sim.seg_ellipse_hit_t]).
@@ -324,10 +401,14 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 			best = t
 			victim = target
 			hit_index = -1
+			hit_ball = false
 
 	if best <= 1.0:
 		var at := from.lerp(to, best)
 		var when := float(k) + best
+		if hit_ball:
+			_finish(g, Contact.ABSORB, at, when, -1, best)
+			return
 		if not victim.is_empty():
 			var key := int(victim["key"])
 			_finish(g, Contact.HIT, at, when, key, best)
@@ -343,13 +424,18 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 			if int(hit_obstacle.w) == DishMap.Kind.BRITTLE:
 				_finish(g, Contact.CRACK, at, when, hit_index, best)
 				return
+			# Rəqibin Anası topu udur — top orada bitir.
+			if int(hit_obstacle.w) == DishMap.Kind.MOTHER and team >= 0 \
+					and team != (0 if hit_obstacle.x < 0.0 else 1):
+				_finish(g, Contact.ABSORB, at, when, -1, best)
+				return
 			_bounce(g, at, (at - Vector2(hit_obstacle.x, hit_obstacle.y)).normalized(),
 				best, when, -1)
 			return
 
 	g.seg_to = to
 	# Qabın şüşə kənarı — serverdəki kimi addımın sonundan radial proyeksiya.
-	var limit := Const.WORLD_RADIUS - Const.SHOT_RADIUS
+	var limit := wall - Const.SHOT_RADIUS
 	if to.length() > limit:
 		var n := -to.normalized()
 		var at := -n * limit
@@ -379,6 +465,7 @@ func _bounce(g: Ghost, at: Vector2, normal: Vector2, frac: float, when: float,
 func _finish(g: Ghost, kind: Contact, at: Vector2, when: float, key: int,
 		frac := -1.0) -> void:
 	g.done = true
+	g.end_kind = int(kind)
 	if frac >= 0.0:
 		g.seg_touch = frac
 		g.seg_touch_at = at
@@ -408,6 +495,10 @@ func _prune(now: float) -> void:
 			continue
 		if g.sid == -1 and now - g.born <= CLAIM_GRACE:
 			continue
+		if trace_on:
+			recent.append(g)
+			if recent.size() > 48:
+				recent.pop_front()
 		ghosts.remove_at(i)
 
 

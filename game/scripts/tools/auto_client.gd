@@ -139,7 +139,13 @@ func _simulate_drop() -> void:
 
 
 func _on_burst(result: Dictionary) -> void:
-	if bool(result.get("survived", false)):
+	if result.has("score_us"):
+		# Obyekt rejimi: nəticə komandanındır (bax [method World._award_teams]).
+		_log("matç bitdi — %s, hesab %d:%d%s" % [
+			"QALİB" if result.get("won", false) else ("HEÇ-HEÇƏ" if result.get("draw", false) else "MƏĞLUB"),
+			int(result["score_us"]), int(result["score_them"]),
+			" (vaxtla)" if result.get("timed_out", false) else ""])
+	elif bool(result.get("survived", false)):
 		_log("matçı SAĞ bitirdi — %s" % ("QALİB" if result.get("won", false) else "sağ qaldı"))
 	else:
 		_log("PARTLADI — %d partlatma, tutum %d, %.0f s yaşadı (partladan: %s)" % [
@@ -197,6 +203,15 @@ func _log_hits() -> void:
 		int(st["own_soft"]), int(st["own_soft_conf"]), int(st["own_soft_miss"]), int(st["own_soft_undo"])])
 	if not (st["miss"] as Array).is_empty():
 		_log("XƏTT: yalnız serverin saydığı dəymələrə ən yaxın proqnoz: %s" % ", ".join(st["miss"]))
+	# Proqnozun görmədiyi dəymələrin səbəbləri (bax [method Arena._why_unpredicted]).
+	if st.has("why") and not (st["why"] as Dictionary).is_empty():
+		_log("SƏBƏB: %s" % str(st["why"]))
+	if st.has("soft_why") and not (st["soft_why"] as Dictionary).is_empty():
+		_log("GÖZLƏYƏN: öz dəyməsinin zərbəsi serveri niyə gözlədi: %s" % str(st["soft_why"]))
+	if st.has("soft_out") and not (st["soft_out"] as Dictionary).is_empty():
+		_log("GÖZLƏYƏN-SON: səbəb → server saydı(+)/saymadı(-): %s" % str(st["soft_out"]))
+	if st.has("claims") and not (st["claims"] as Dictionary).is_empty():
+		_log("TƏSDİQ: server↔proqnoz (atəş tick fərqi, xətt boyu px): %s" % str(st["claims"]))
 
 
 ## Komanda testinin addımı — hər [signal Friends.changed]-də çağırılır.

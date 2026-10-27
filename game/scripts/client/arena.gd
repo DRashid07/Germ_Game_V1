@@ -94,6 +94,10 @@ const EARLY_HIT_KEEP := 0.6
 ## Geri sarma eyni anı yoxlayır, ona görə fərq adətən bir tick-in yoludur
 ## (14 px); ehtiyat pinq dəyişkənliyi üçündür.
 const CLAIM_REACH_HIT := 110.0
+## Serverin TEZ gələn dəyməsi proqnozun gözləyən təmasına bu qədər yaxın olmalıdır
+## (bax [method ShotPrediction.take_pending_hit]). Eyni xətlə uçan iki top üçün bu,
+## qurbanın tick ərzindəki yerdəyişməsi ilə toqquşma ellipsinin fərqidir.
+const EARLY_REACH := 40.0
 ## Öz topunun XƏTTİ qurbanın ellipsindən bundan dayaz keçirsə (0 = mərkəz,
 ## 1 = sərhəd), zərbə serverin təsdiqini gözləyir — top isə gövdənin kənarında
 ## dayanır. Ölçülüb (RTT 120/180 ms, 24 sessiya): təsdiqlənməyən öz dəymələrinin
@@ -609,7 +613,8 @@ var hit_stats := {"predicted": 0, "confirmed": 0, "server_only": 0, "ghost": 0,
 	"confirm_s": 0.0, "ghost_gone": 0, "lines": 0, "line_off_sum": 0.0, "line_off_max": 0.0, "miss": [],
 	"self_pred": 0, "self_conf": 0, "self_false": 0,
 	"self_soft": 0, "self_soft_conf": 0, "self_soft_miss": 0, "self_undo": 0,
-	"own_soft": 0, "own_soft_conf": 0, "own_soft_miss": 0, "own_soft_undo": 0}
+	"own_soft": 0, "own_soft_conf": 0, "own_soft_miss": 0, "own_soft_undo": 0,
+	"why": {}, "claims": {}, "soft_why": {}, "soft_out": {}}
 var _fx_queue: Array[Dictionary] = []
 ## Proqnozun oynatdığı öz superlərinin anları — serverin hadisəsini gözləyir
 ## (bax [method _take_own_super]).
@@ -641,6 +646,32 @@ var _place := 0
 var _my_team := -1
 var _score_us := 0
 var _score_em := 0
+
+## Rejimin qabı və xəritəsi (bax [method _set_mode]). `configure_*` onları `_ready`-dən
+## ƏVVƏL qurur: döşəmə, divar və maneələr elə ilk kadrda rejimin öz qabında çəkilir.
+var _wall := Const.WORLD_RADIUS
+var _obstacles: Array[Vector4] = DishMap.obstacles()
+## Yaş sahənin mərkəzi — YAŞ ADA-da gəzən ada (bax [method Const.wet_circle]).
+var _wet_center := Vector2.ZERO
+## Obyekt rejimi: matçın saatı (snapshot-un `MF.OBJ[0]`-ı). Kadrlar arası irəli gedir —
+## ada onunla hamar sürüşür (yeri yalnız rejimdən və saatdan çıxır).
+var _match_clock := 0.0
+var _obj := PackedFloat32Array()
+## Baxanın doğulmasına qalan saniyə (0 — sağdır).
+var _respawn_left := 0.0
+## Obyektlərin görüntüsü (bax [method _build_objective]).
+var _objective: Node2D
+var _island: Node2D
+var _island_water: Sprite2D
+var _island_rim: Sprite2D
+var _ball_spr: Sprite2D
+var _ball_tex: Texture2D
+var _ball_cracked: Texture2D
+## Nüvənin snapshot-lardan halı: `[an, mövqe, sürət, çəki, sağ]` — mikroblar kimi
+## göstərilən ana interpolyasiya olunur (bax [method _render_ball]).
+var _ball_hist: Array = []
+## Anaların görüntüsü: komanda -> {"dome", "pad", "c", "r"}.
+var _mothers := {}
 
 ## ── Zərbə hissi ──────────────────────────────────────────────────────────
 
@@ -696,6 +727,17 @@ func configure_online(info: Dictionary) -> void:
 	var at = info.get("pos", Vector2.INF)
 	if at is Vector2 and at.is_finite():
 		start_at = at
+	_set_mode(int(info.get("mode", Const.Mode.ENDLESS)))
+
+
+## Rejimin qabını və xəritəsini qurur — serverin [method Sim.set_mode]-u ilə eyni mənbədən.
+func _set_mode(m: int) -> void:
+	_mode = Const.mode_from(m)
+	_wall = Const.wall_radius(int(_mode))
+	_obstacles = DishMap.obstacles_for(Const.mode_layout(int(_mode)))
+	var wet := Const.wet_circle(int(_mode), 0.0)
+	_wet_center = Vector2(wet.x, wet.y)
+	_wet_radius = wet.z
 
 
 ## Serverin təsdiqlədiyi növ.
@@ -726,6 +768,7 @@ var start_charged := false
 func configure_practice() -> void:
 	practice = true
 	my_id = 1000
+	_set_mode(int(Net.mode))
 	_local_world = load(WORLD_SCRIPT).new(1, Net.mode)
 	var g: Sim.GermState = _local_world.add_player(my_id, Net.nickname, Net.species)
 	my_color = g.color
@@ -851,7 +894,7 @@ func _apply_quality() -> void:
 		# qoşulur.
 		var sinks := PackedVector3Array()
 		if not low:
-			for o in DishMap.obstacles():
+			for o in _obstacles:
 				if int(o.w) == DishMap.Kind.VENT:
 					sinks.push_back(Vector3(o.x, o.y, o.z))
 		_motes.sinks = sinks
@@ -916,6 +959,9 @@ func _build_world() -> void:
 	_dry = Node2D.new()
 	add_child(_dry)
 	_dry.draw.connect(_draw_dry)
+	# YAŞ ADA: qab quruyub palçığa dönür, yalnız gəzən ada yaş qalır (bax [method _build_island]).
+	if _mode == Const.Mode.ISLAND:
+		_build_island()
 
 	# ŞİMAL ŞÜŞƏ DİVARI — qabın bayırına, yuxarı uzanır (bax [method _build_rim]).
 	_rim = Node2D.new()
@@ -963,6 +1009,11 @@ func _build_world() -> void:
 
 	_food_layer = Node2D.new()
 	add_child(_food_layer)
+
+	# Obyektin qatı (Ananın doluluğu, Nüvə, qapılar) — qidanın üstündə, mikrobların
+	# altında: Nüvəni itələyən mikrob onun üstündə görünür.
+	if Const.is_objective_mode(int(_mode)):
+		_build_objective()
 
 	# İzlər toplardan ƏVVƏL əlavə olunur: arxada qalmalıdırlar.
 	_trails = ShotTrails.new()
@@ -1048,9 +1099,14 @@ func _build_world() -> void:
 ## modulate-i instansiya başına saxlayır (MAP_25D F2). Yenə də ehtiyac yoxdur:
 ## rəng fərqi atlasın öz hüceyrələrindədir.
 func _spawn_obstacles() -> void:
-	var list := DishMap.obstacles()
+	var list := _obstacles
 	_blob_nodes.resize(list.size())
 	_spawn_clutter(list)
+
+	# ANA-nın agar altlığı — yastıdır, hər şeyin altında (kölgə də onun üstünə düşür).
+	for i in list.size():
+		if int(list[i].w) == DishMap.Kind.MOTHER:
+			_spawn_mother_pad(list[i])
 
 	for i in list.size():
 		var o: Vector4 = list[i]
@@ -1101,7 +1157,41 @@ func _spawn_obstacles() -> void:
 			raised.append(i)
 	raised.sort_custom(func(a: int, b: int) -> bool: return list[a].y < list[b].y)
 	for i in raised:
-		_blob_nodes[i] = _obstacle_sprite(list[i])
+		_blob_nodes[i] = _spawn_mother(list[i]) if int(list[i].w) == DishMap.Kind.MOTHER \
+			else _obstacle_sprite(list[i])
+
+
+## ANA HÜCEYRƏ-nin görüntüsü (Codex, `assets/map/obj/`): agar altlığı və günbəz.
+##
+## Günbəz NEYTRAL açıq rəngdədir — komandanın rəngi `modulate` ilə gəlir (bax
+## [method _tint_mothers]): bizimki laym, onlarınkı narıncı, baxana görə. Kəsilmiş
+## sprite-ın eni günbəzin konturu ilə birlikdə diametridir, yəni miqyas ayaq izindən çıxır.
+const MOTHER_DOME := preload("res://assets/map/obj/mother_dome.png")
+const MOTHER_PAD := preload("res://assets/map/obj/mother_pad.png")
+## Altlığın xarici radiusu Ananın radiusunun bu qədər mislidir — yuvanın döşəməsi.
+const MOTHER_PAD_K := 1.32
+
+
+func _spawn_mother_pad(o: Vector4) -> void:
+	var pad := Sprite2D.new()
+	pad.texture = MOTHER_PAD
+	# Altıbucaqlının çevrə radiusu şəklin hündürlüyünün yarısıdır.
+	pad.scale = Vector2.ONE * (o.z * MOTHER_PAD_K / (float(MOTHER_PAD.get_height()) * 0.5))
+	pad.position = Vector2(o.x, o.y)
+	pad.modulate = Color(1.0, 1.0, 1.0, 0.85)
+	_blobs.add_child(pad)
+
+
+func _spawn_mother(o: Vector4) -> Sprite2D:
+	var dome := Sprite2D.new()
+	dome.texture = MOTHER_DOME
+	dome.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	dome.scale = Vector2.ONE * (o.z * 2.0 / float(MOTHER_DOME.get_width()))
+	dome.position = Vector2(o.x, o.y)
+	dome.set_meta("base_scale", dome.scale)
+	_blobs.add_child(dome)
+	_mothers[0 if o.x < 0.0 else 1] = {"dome": dome, "c": Vector2(o.x, o.y), "r": o.z}
+	return dome
 
 
 func _obstacle_sprite(o: Vector4) -> Sprite2D:
@@ -1128,12 +1218,20 @@ const CLUTTER_SEED := 7715
 ## çəkilib, ona görə fırlatmaq olar — eyni dörd parça təkrar kimi görünmür.
 func _spawn_clutter(list: Array[Vector4]) -> void:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = CLUTTER_SEED + DishMap.layout
+	var layout := Const.mode_layout(int(_mode))
+	rng.seed = CLUTTER_SEED + (layout if layout >= 0 else DishMap.layout)
+	# Obyekt rejimlərinin xəritəsində lazımsız heç nə olmur: NÜVƏ TOPU-nun meydanı
+	# təmizdir (xətlər oxunsun), YAŞ ADA-nın qabı quruyub palçığa dönür — bəzək ancaq
+	# ANA-da, qabın sahəsinə görə az (46 × (800/1200)² ≈ 20, yarısı).
+	var want := CLUTTER_COUNT
+	match _mode:
+		Const.Mode.MOTHER: want = 10
+		Const.Mode.ISLAND, Const.Mode.BALL: want = 0
 	var tries := 0
-	while _clutter.size() < CLUTTER_COUNT and tries < CLUTTER_COUNT * 40:
+	while _clutter.size() < want and tries < want * 40:
 		tries += 1
 		var at := Vector2.from_angle(rng.randf() * TAU) * sqrt(rng.randf()) \
-			* (Const.WORLD_RADIUS - 90.0)
+			* (_wall - 90.0)
 		var r := rng.randf_range(16.0, 30.0)
 		var piece := rng.randi_range(0, 3)
 		var spin := rng.randf() * TAU
@@ -1170,7 +1268,7 @@ func _spawn_props() -> void:
 	for k in PROP_COUNT:
 		var a := TAU * (float(k) + rng.randf_range(-0.32, 0.32)) / float(PROP_COUNT)
 		# Şimal divarı bayıra 70 px uzanır — koloniyalar ondan aralı başlayır.
-		var d := Const.WORLD_RADIUS + rng.randf_range(210.0, 640.0)
+		var d := _wall + rng.randf_range(210.0, 640.0)
 		var spr := MapKit.prop_sprite(rng.randi_range(0, 3), rng.randf_range(70.0, 175.0))
 		spr.position = Vector2.from_angle(a) * d
 		spr.set_meta("home", spr.position)
@@ -1186,7 +1284,7 @@ func _bob_props() -> void:
 	# Kamera qabın içindədirsə və kənarı görmürsə, heç bir koloniya görünmür.
 	var far := Vector2(maxf(absf(view.position.x), absf(view.end.x)),
 		maxf(absf(view.position.y), absf(view.end.y)))
-	if far.length() < Const.WORLD_RADIUS + 140.0:
+	if far.length() < _wall + 140.0:
 		return
 	for spr in _prop_nodes:
 		var home: Vector2 = spr.get_meta("home")
@@ -1221,7 +1319,7 @@ static func _grid_add(grid: Dictionary, at: Vector2, reach: float, index: int) -
 ## isə döşəmədəki dəlikdir. Tacın ortası BOŞDUR (atlas bunu zəmanətləyir) —
 ## kolun mərkəzindəki mikrob və qida görünür.
 func _spawn_canopy() -> void:
-	var list := DishMap.obstacles()
+	var list := _obstacles
 	for i in list.size():
 		var o: Vector4 = list[i]
 		if int(o.w) != DishMap.Kind.BUSH:
@@ -1246,6 +1344,16 @@ func _build_hud() -> void:
 	_hud.super_button.used.connect(_on_super_pressed)
 	_hud.super_button.blocked.connect(_on_super_blocked)
 	_hud.leave_confirmed.connect(_leave_match)
+	# Xəritə rejimin öz qabını və düzümünü göstərir (obyekt rejimlərində kiçik qab).
+	_hud.minimap.wall = _wall
+	_hud.minimap.obstacles = _obstacles
+	_hud.minimap.goals = _mode == Const.Mode.BALL
+
+
+## Öz mikrobun doğulmağı gözləyir (obyekt rejimi): görünmür, idarə olunmur, atəş açmır.
+## Kamera öldüyü yerdə qalır; server onu bazasında doğanda proqnoz ora sıçrayır.
+func _own_dead() -> bool:
+	return _respawn_left > 0.0 and Const.is_objective_mode(int(_mode))
 
 
 ## ESC və Android-in GERİ jesti — matçdan çıxış təsdiqi.
@@ -1289,6 +1397,14 @@ func _leave_match() -> void:
 
 func _init_prediction() -> void:
 	pred = Sim.new()
+	# Şüşə, maneələr və Ana rejimindir — serverin dünyası ilə eyni həndəsə
+	# (bax [method Sim.set_mode]); yoxsa öz mikrobun hər snapshot-da geri dartılar.
+	pred.set_mode(int(_mode))
+	pred.wet_center = _wet_center
+	pred.dish_radius = _wet_radius
+	_own_shots.wall = _wall
+	# Ölçüdə (avtomatik oyunçu) topların yolu yazılır — bax [method _why_unpredicted].
+	_own_shots.trace_on = auto_input
 	_proxy_inputs.clear()
 	# Növ MÜTLƏQ verilməlidir: passiv özəlliklər (sürətlənmə, sönmə, axına
 	# tabelik, maneə radiusu) növdən çıxır və proqnoz onları serverlə eyni
@@ -1444,6 +1560,12 @@ func _do_tick() -> void:
 
 	var inp := _sample_input()
 	inp.newbie = _newbie
+	# Doğulmağı gözləyən mikrobun idarəsi yoxdur: proqnoz onu öldüyü yerdə saxlayır
+	# (serverdə mikrob yoxdur, giriş onsuz da atılır — bax [method World.accept_input]).
+	if _own_dead():
+		inp.move = Vector2.ZERO
+		inp.fire = false
+		inp.use_super = false
 	_input_time[inp.seq] = _clock
 
 	if _local_world != null:
@@ -1468,12 +1590,17 @@ func _do_tick() -> void:
 		# rejimin ən vacib ekranı yalnız serverdə sınana bilərdi.
 		for res in _local_world.pending_results:
 			if int(res["id"]) == my_id:
-				_on_you_burst({
+				var out := {
 					"pops": res["pops"], "cap": res["cap"],
 					"level": Const.level_of(int(res["cap"])),
 					"age": res["age"], "killer": "", "won": res["won"],
 					"survived": true, "timed_out": res["timed_out"],
-				})
+				}
+				# Obyekt rejimi: komandanın hesabı (onlayn oyunda [Lobby] eynisini ötürür).
+				for key in ["draw", "mode", "score_us", "score_them"]:
+					if res.has(key):
+						out[key] = res[key]
+				_on_you_burst(out)
 		_local_world.pending_results.clear()
 
 	pending.append(inp)
@@ -1495,7 +1622,9 @@ func _do_tick() -> void:
 			_juice.muzzle(e["pos"], float(e["arg"]), Palette.germ_color(my_color))
 			Sfx.play("eject", 0.06)
 			_eject_from(my_color, float(e["arg"]))
-			_spawn_own_shot(Vector2(e["pos"]), float(e["arg"]), 0.0, inp.view_tick)
+			# Server topu məhz bu mərkəzdən doğur (bax [member Sim.PlayerInput.fire_from]).
+			inp.fire_from = Vector2(e["from"])
+			_spawn_own_shot(Vector2(e["pos"]), float(e["arg"]), 0.0, inp.view_tick, inp.fire_from)
 			# Məşqdə istəyi yerli dünyanın atəşi bitirir (bax [method _queue_events]):
 			# proqnoz orada serverdən bir tick QABAQDADIR və burada bitsəydi,
 			# yerli dünya atəşi heç almazdı.
@@ -1522,9 +1651,14 @@ func _do_tick() -> void:
 		me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst())
 	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready())
 	if _mode != Const.Mode.ENDLESS:
+		# Yaş sahənin mərkəzi YAŞ ADA-da gəzir — quruda olmaq ondan olan məsafədir.
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
-			me.pos.length() > _wet_radius,
+			me.pos.distance_to(_wet_center) > _wet_radius and not _own_dead(),
 			_score_us, _score_em, _score_us + _score_em + 1)
+	if Const.is_objective_mode(int(_mode)):
+		var left := _objective_left()
+		_hud.set_objective(int(_mode), _phase, _score_us, _score_em, left.x, left.y > 0.5,
+			_respawn_left)
 	_hud.update_gauge(me.balls, me.capacity)
 	_ammo.set_value(me.balls, me.capacity)
 
@@ -1730,10 +1864,10 @@ func _on_own_fire(angle: float) -> void:
 ## top [constant FIRE_BUFFER] içində atılacaqsa.
 func _update_aim_guide() -> void:
 	var fb := _hud.fire_button
-	if fb.aiming and not _finished:
+	if fb.aiming and not _finished and not _own_dead():
 		var r := Const.germ_radius(me.capacity)
 		var path := pred.aim_path(_shown_pos() + fb.aim_dir * r, fb.aim_dir,
-			Const.SHOT_SPEED * Const.SHOT_LIFETIME - r, AIM_BOUNCES)
+			Const.SHOT_SPEED * Const.SHOT_LIFETIME - r, AIM_BOUNCES, _my_team)
 		var live := me.cooldown <= FIRE_BUFFER and (me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst()) 			and _phase != Const.Phase.COUNTDOWN
 		_aim_guide.show_path(path, Palette.germ_color(my_color), live)
 	else:
@@ -2440,6 +2574,7 @@ func _render(delta: float) -> void:
 	# DAYANIR, donmadan sonra birlikdə yetişir.
 	var render_time := _rt if _rt != -INF else _clock - _delay
 	_render_germs(render_time)
+	_render_objective(render_time, delta)
 	_update_aim_guide()
 	# Öz topların rəqiblər YERLƏŞƏNDƏN sonra addımlanır: proqnoz məhz bu
 	# kadrda ekranda görünən mövqelərə qarşı yoxlayır.
@@ -2560,8 +2695,19 @@ func _add_shake(amount: float, direction := Vector2.ZERO) -> void:
 ## client özü hesablamır (top sayı serverin sözüdür), amma KƏNARI çəkmək və
 ## xəbərdarlıq göstərmək üçün radius lazımdır.
 func _apply_match(row: Array) -> void:
-	if row.size() < Const.MF.size():
+	# Köhnə rejimin sətri [constant Const.MF_BASE] sahədir — `OBJ` və `RESPAWN` yalnız
+	# obyekt rejimində gəlir. Əvvəl şərt `MF.size()` idi; sahələr artanda o, köhnə
+	# rejimlərin bütün matç sətirlərini atardı (saat, quruma, yer — hamısı).
+	if row.size() < Const.MF_BASE:
 		return
+	var was_us := _score_us
+	var was_em := _score_em
+	var was_ot := _obj.size() > 1 and _obj[1] > 0.5
+	if row.size() > Const.MF.RESPAWN:
+		_obj = row[Const.MF.OBJ]
+		_respawn_left = float(row[Const.MF.RESPAWN])
+		if not _obj.is_empty():
+			_match_clock = _obj[0]
 	_mode = Const.mode_from(int(row[Const.MF.MODE]))
 	var was := _phase
 	_phase = int(row[Const.MF.PHASE]) as Const.Phase
@@ -2573,6 +2719,24 @@ func _apply_match(row: Array) -> void:
 	_score_us = int(row[Const.MF.SCORE_US])
 	_score_em = int(row[Const.MF.SCORE_EM])
 	pred.dish_radius = _wet_radius
+	# Ada — matçın saatından (proqnozun yaş mərkəzi; görüntü [method _render_island]-dadır).
+	if _mode == Const.Mode.ISLAND:
+		var wet := Const.wet_circle(int(_mode), _match_clock)
+		pred.wet_center = Vector2(wet.x, wet.y)
+	_own_shots.team = _my_team
+	if _hud != null:
+		_hud.minimap.team = _my_team
+	# Qol və əlavə vaxt — matçın iki ən böyük anı, mərkəzdə deyilir.
+	if _mode == Const.Mode.BALL and (_score_us > was_us or _score_em > was_em):
+		var ours := _score_us > was_us
+		# Qoldan sonra dərhal sayım başlayır və mərkəzi o tutur — qol onun alt sətrinə yazılır.
+		_hud.countdown_note = "QOL! %s  ·  %d — %d" % ["Biz vurduq" if ours else "Onlar vurdu",
+			_score_us, _score_em]
+		Sfx.play("level_up" if ours else "you_burst")
+		_add_shake(6.0)
+	if _mode == Const.Mode.MOTHER and not was_ot and _obj.size() > 1 and _obj[1] > 0.5:
+		_hud.show_message("ƏLAVƏ VAXT", "Əmmək dayandı — iki Ana da dolur")
+		get_tree().create_timer(2.0).timeout.connect(_hud.hide_message)
 
 	if was != _phase:
 		_on_phase_changed()
@@ -2608,7 +2772,7 @@ func _on_phase_changed() -> void:
 func _apply_walls(walls: PackedByteArray) -> void:
 	if walls.size() != _blob_nodes.size():
 		return
-	var list := DishMap.obstacles()
+	var list := _obstacles
 	for i in walls.size():
 		var spr := _blob_nodes[i]
 		if spr == null:
@@ -2753,7 +2917,7 @@ func _fade_canopy(i: int, alpha: float) -> void:
 ## sərhəd və VIEW_GRACE çıxışı birlikdə dalğanı yenə bir dəfə oynadır.
 func _watch_visible_bush(gid: int, at: Vector2, radius: float) -> void:
 	var now := -1
-	var list := DishMap.obstacles()
+	var list := _obstacles
 	for i in list.size():
 		var o: Vector4 = list[i]
 		if int(o.w) != DishMap.Kind.BUSH or o.z < radius:
@@ -3228,6 +3392,9 @@ func _render_germs(render_time: float) -> void:
 	# top çatmırsa (kirpikli), düymə kimi aura da susur.
 	mine.super_ready = me.super_ready()
 	_visuals[my_id]["seen"] = _clock
+	# Doğulmağı gözləyən mikrob görünmür (obyekt rejimi) — proqnozdakı "ruh" yalnız
+	# kameranın yeridir. Zolaq və nişan xətti də onunla susur (bax [method _own_dead]).
+	mine.visible = not _own_dead()
 
 	var pair := _bracket(render_time)
 	if pair.is_empty():
@@ -3338,6 +3505,15 @@ func _germ_by_color(color_index: int) -> GermVisual:
 	return null
 
 
+## Rəngin mikrobunun id-si; tapılmasa -1.
+func _gid_of_color(color_index: int) -> int:
+	for gid in _visuals:
+		var v: GermVisual = _visuals[gid]["node"]
+		if not v.burst and v.color_index == color_index:
+			return int(gid)
+	return -1
+
+
 ## Render vaxtını əhatə edən iki snapshot-u tapır.
 func _bracket(render_time: float) -> Dictionary:
 	if _snaps.is_empty():
@@ -3424,6 +3600,8 @@ func _render_shots(render_time: float) -> void:
 							hit_stats["lines"] += 1
 							hit_stats["line_off_sum"] += off
 							hit_stats["line_off_max"] = maxf(float(hit_stats["line_off_max"]), off)
+							if _own_shots.trace_on:
+								_trace_claim(ghost, e)
 				if ghost != null or _own_sids.has(sid):
 					# Görüntünü proqnoz daşıyır. Sprite-sız görüntü yenə saxlanılır:
 					# yoxsa növbəti snapshot eyni topu yenidən "yeni" sayıb çəkərdi.
@@ -3839,7 +4017,7 @@ func _clip_to_walls(from: Vector2, to: Vector2) -> Vector2:
 			continue
 		best = t
 	var at := from.lerp(to, best)
-	var limit := Const.WORLD_RADIUS - Const.SHOT_RADIUS
+	var limit := _wall - Const.SHOT_RADIUS
 	if at.length() > limit:
 		at = at.normalized() * limit
 	return at
@@ -3885,10 +4063,15 @@ func _render_ghosts() -> void:
 ##
 ## [param view] — atəşin görünən tick-i ([member Sim.PlayerInput.view_tick]):
 ## proqnoz topu rəqibləri serverin yoxladığı tick-də görür (bax [ShotPrediction]).
-func _spawn_own_shot(membrane: Vector2, aim: float, age := 0.0, view := -1.0) -> void:
+##
+## [param center] — topun doğulduğu mərkəz, bilinirsə (proqnozun öz atəşi): serverə
+## də o gedir ([member Sim.PlayerInput.fire_from]) və iki top eyni xətlə uçur.
+func _spawn_own_shot(membrane: Vector2, aim: float, age := 0.0, view := -1.0,
+		center := Vector2.INF) -> void:
 	var dir := Vector2.from_angle(aim)
-	var g := _own_shots.spawn(membrane - dir * Const.germ_radius(me.capacity), dir,
-		_clock - age, view)
+	if not center.is_finite():
+		center = membrane - dir * Const.germ_radius(me.capacity)
+	var g := _own_shots.spawn(center, dir, _clock - age, view)
 	if age > 0.0:
 		_own_shots.catch_up(g, age, _clock, pred.obstacles, _broken)
 
@@ -4018,33 +4201,27 @@ func _on_own_contact(c: Dictionary) -> void:
 				"vcol": victim.color_index, "dir": c["dir"], "ghost": c["ghost"]}
 			var shooter: ShotPrediction.Ghost = c["ghost"]
 			_claims.append(claim)
-			if float(c.get("depth", 0.0)) > OWN_SURE_DEPTH or bool(c.get("late", false)) \
-					or _burst_pending(victim.color_index) or _rival_tricho_near(at, my_color) \
-					or _congested() or (shooter != null and shooter.sid < 0) \
-					or (shooter != null and shooter.rewind >= Const.REWIND_MAX - 0.5 * Const.TICK_DELTA):
-				# Nəticəsi proqnozun xətasından asılı olan dəymə — qurbanın kənarına,
-				# topun ömrünün sonunda ([constant ShotPrediction.LATE_LIFE]), artıq
-				# partlamış qurbana, yanında superi dolu kirpikli olanda (bot trixosisti
-				# topu görən an açır, sən isə onu `rewind` qədər gec görürsən — ölçülüb,
-				# mərkəzdən keçən 0.02 dərinlikli dəymə belə itdi), və ya şəbəkə
-				# sıxılanda ([method _congested]), və ya server atəşi HƏLƏ təsdiqləməyibsə:
-				# yaxın məsafədə top rəqibə RTT-dən tez çatır, soyuma isə jitter-də server
-				# ilə proqnoz arasında bir neçə tick sürüşə bilir — ölçülüb, atəşin
-				# təsdiqindən əvvəlki 23 dəymədən 3-ünün topu serverdə heç atılmamışdı
-				# (sonrakı 310-dan 3-ü yalançı idi), və ya server geri sarmanı həddə
-				# ([constant Const.REWIND_MAX]) kəsibsə: o zaman hədəfləri atıcının
-				# gördüyü tick-dən daha YENİ tick-də yoxlayır. Top gövdədə dayanır, zərbə
-				# serverin sözünü gözləyir (bax [method _match_claim], [method _undo_own_soft]).
+			var soft := _soft_reason(c, victim, shooter)
+			if not soft.is_empty():
+				var why: Dictionary = hit_stats["soft_why"]
+				why[soft] = int(why.get(soft, 0)) + 1
+				# Top gövdədə dayanır, zərbə serverin sözünü gözləyir (bax
+				# [method _match_claim], [method _undo_own_soft]).
 				claim["soft"] = true
+				# Ölçü: səbəb (kənarda — dərinlik) və sonra serverin sözü ([method _soft_outcome]).
+				claim["why"] = soft if soft != "kənar" \
+					else "kənar %.2f" % snappedf(float(c.get("depth", 0.0)), 0.05)
 				hit_stats["own_soft"] += 1
 				return
 			_own_hit_flash(victim, at, Vector2(c["dir"]))
 			hit_stats["predicted"] += 1
-		ShotPrediction.Contact.BOUNCE, ShotPrediction.Contact.CRACK:
+		ShotPrediction.Contact.BOUNCE, ShotPrediction.Contact.CRACK, ShotPrediction.Contact.ABSORB:
+			# ABSORB — rəqibin Anası və ya Nüvə topu udub: zərbə kimi görünür (Ana titrəyir,
+			# Nüvə sıxılır — [method _map_hit]), serverin eyni HIT hadisəsi iddia ilə tanınır.
 			_spawn_fx("spark", at, 0.55, col)
 			Sfx.play("hit", 0.05)
 			if int(c["kind"]) == ShotPrediction.Contact.CRACK:
-				var o: Vector4 = DishMap.obstacles()[int(c["key"])]
+				var o: Vector4 = _obstacles[int(c["key"])]
 				_juice.crust(at, (at - Vector2(o.x, o.y)).normalized(), o.z * 0.46, false)
 			_map_hit(at)
 			_claims.append({"pos": at, "t": _clock, "hit": false})
@@ -4066,6 +4243,50 @@ func _on_own_contact(c: Dictionary) -> void:
 ## sayılmır — serverin sözünü gözləyir.
 func _congested() -> bool:
 	return _rtt_floor < INF and _rtt > _rtt_floor + maxf(RTT_SPIKE, _rtt_floor * 0.5)
+
+
+## Öz dəyməsinin zərbəsi serverin sözünü niyə GÖZLƏMƏLİDİR; boş — gözləmir.
+##
+## Nəticəsi proqnozun xətasından asılı olan dəymə: qurbanın kənarına (`kənar`), topun
+## ömrünün sonunda (`son`, [constant ShotPrediction.LATE_LIFE]), artıq partlamış qurbana
+## (`partlayır`), yanında superi dolu kirpikli olanda (`trixosist` — bot trixosisti topu
+## görən an açır, sən isə onu `rewind` qədər gec görürsən; ölçülüb, mərkəzdən keçən 0.02
+## dərinlikli dəymə belə itdi), şəbəkə sıxılanda (`sıxılma`, [method _congested]), server
+## atəşi HƏLƏ təsdiqləməyibsə (`təsdiqsiz` — yaxın məsafədə top rəqibə RTT-dən tez çatır,
+## soyuma isə jitter-də server ilə proqnoz arasında bir neçə tick sürüşə bilir; ölçülüb,
+## atəşin təsdiqindən əvvəlki 23 dəymədən 3-ünün topu serverdə heç atılmamışdı, sonrakı
+## 310-dan 3-ü yalançı idi), və ya server geri sarmanı həddə ([constant Const.REWIND_MAX])
+## kəsibsə (`hədd` — o zaman hədəfləri atıcının gördüyü tick-dən daha YENİ tick-də yoxlayır).
+## Ölçü: gözləyən dəymənin səbəbinə görə server onu saydı (`+`) və ya saymadı (`-`).
+## Səbəbin dəymələrini server həmişə sayırsa, o qayda zərbəni yalnız gecikdirir.
+func _soft_outcome(claim: Dictionary, confirmed: bool) -> void:
+	var key := "%s %s" % [str(claim.get("why", "?")), "+" if confirmed else "-"]
+	# Atəşi təsdiqlənməmiş dəymədə: server o topu sonra göndərdimi, xətti eyni idimi.
+	var g: ShotPrediction.Ghost = claim.get("ghost")
+	if str(claim.get("why", "")) == "təsdiqsiz" and g != null:
+		key += " sid" if g.sid >= 0 else " sidsiz"
+		if not is_nan(g.srv_along):
+			key += " al%d" % int(round(g.srv_along))
+	var out: Dictionary = hit_stats["soft_out"]
+	out[key] = int(out.get(key, 0)) + 1
+
+
+func _soft_reason(c: Dictionary, victim: GermVisual, shooter: ShotPrediction.Ghost) -> String:
+	if float(c.get("depth", 0.0)) > OWN_SURE_DEPTH:
+		return "kənar"
+	if bool(c.get("late", false)):
+		return "son"
+	if _burst_pending(victim.color_index):
+		return "partlayır"
+	if _rival_tricho_near(Vector2(c["pos"]), my_color):
+		return "trixosist"
+	if _congested():
+		return "sıxılma"
+	if shooter != null and shooter.sid < 0:
+		return "təsdiqsiz"
+	if shooter != null and shooter.rewind >= Const.REWIND_MAX - 0.5 * Const.TICK_DELTA:
+		return "hədd"
+	return ""
 
 
 ## Qurbanın partlaması artıq gəlib, amma hələ göstərilməyib (interpolyasiyanı gözləyir).
@@ -4123,6 +4344,7 @@ func _match_claim(at: Vector2, hit: bool, victim_color := -1) -> bool:
 	if hit and bool(found.get("soft", false)):
 		# Sərhəddəki dəymə — zərbə təsdiq GƏLƏN an, topun dayandığı yerdə oynanır.
 		hit_stats["own_soft_conf"] += 1
+		_soft_outcome(found, true)
 		var entry: Dictionary = _visuals.get(int(found.get("victim", -1)), {})
 		if not entry.is_empty():
 			_own_hit_flash(entry["node"], Vector2(found["pos"]), Vector2(found.get("dir", Vector2.RIGHT)))
@@ -4269,6 +4491,7 @@ func _undo_own_soft() -> void:
 			view["color"] = my_color
 		hit_stats["own_soft_miss"] += 1
 		hit_stats["own_soft_undo"] += 1
+		_soft_outcome(c, false)
 		_claims.remove_at(i)
 
 
@@ -4299,6 +4522,7 @@ func _prune_claims() -> void:
 		if bool(_claims[0].get("soft", false)):
 			# Sərhəddəki dəymə: zərbə göstərilməyib, server də saymadı.
 			hit_stats["own_soft_miss"] += 1
+			_soft_outcome(_claims[0], false)
 		# Ekranda göstərilən, serverin isə heç vaxt saymadığı dəymə.
 		elif bool(_claims[0]["hit"]):
 			hit_stats["ghost"] += 1
@@ -4515,6 +4739,17 @@ func _queue_events(list: Array, at: float) -> void:
 			if kind == Const.EvKind.HIT and _match_claim(pos, float(e[Const.EF.ARG]) > 0.5,
 					Const.hit_victim(float(e[Const.EF.ARG]))):
 				continue
+			# Server proqnozdan TEZ dedi: proqnoz bu dəyməni artıq hesablayıb, top isə
+			# ekranda nöqtəyə hələ çatmayıb (bax [method ShotPrediction.take_pending_hit]).
+			# Təmas elə indi proqnozun öz yolu ilə verilir və dərhal təsdiqlənir.
+			if kind == Const.EvKind.HIT and float(e[Const.EF.ARG]) > 0.5:
+				var victim := Const.hit_victim(float(e[Const.EF.ARG]))
+				var early := _own_shots.take_pending_hit(pos, EARLY_REACH, _clock,
+					_gid_of_color(victim))
+				if not early.is_empty():
+					_on_own_contact(early)
+					if _match_claim(pos, true, victim):
+						continue
 			# Proqnozun GÖRMƏDİYİ təmas (rəqib kolda idi, geri sarma həddi
 			# aşılmışdı). Öz topun indidə uçur və bu nöqtəni artıq keçib —
 			# interpolyasiyanı gözləmək zərbəni yalnız daha da gecikdirərdi.
@@ -4525,8 +4760,14 @@ func _queue_events(list: Array, at: float) -> void:
 			# növbəti öz topun isə ən azı bir saniyəlik yol, 420 px aralıdadır.
 			# Divar sıçrayışında (arg 0) top yaşayır, ona görə toxunulmur.
 			if kind == Const.EvKind.HIT and float(e[Const.EF.ARG]) > 0.5:
+				# Ölçü (avtomatik oyunçu): proqnoz bu dəyməni niyə görmədi — top dayandırılmamış.
+				var why := _why_unpredicted(pos, Const.hit_victim(float(e[Const.EF.ARG]))) \
+					if _own_shots.trace_on else ""
 				_own_shots.stop_nearest(pos, 220.0, _clock)
 				hit_stats["server_only"] += 1
+				if not why.is_empty():
+					var tag := why.get_slice(" ", 0)
+					(hit_stats["why"] as Dictionary)[tag] = int((hit_stats["why"] as Dictionary).get(tag, 0)) + 1
 				# Proqnoz topu bu dəyməyə hələ ÇATMAYA bilər (gec tapılan atəş, eyni
 				# paketdə gələn atəş və dəymə). Çatanda bu qeyd onu təsdiqləyir —
 				# yoxsa zərbə iki dəfə göstərilir, proqnoz isə "boş" sayılırdı.
@@ -4538,8 +4779,10 @@ func _queue_events(list: Array, at: float) -> void:
 					if bool(c["hit"]) and Vector2(c["pos"]).distance_to(pos) < float(near[0]):
 						near = [Vector2(c["pos"]).distance_to(pos), _clock - float(c["t"])]
 				if (hit_stats["miss"] as Array).size() < 20:
-					(hit_stats["miss"] as Array).append("%.0fpx/%.0fms"
-						% [float(near[0]), float(near[1]) * 1000.0])
+					# Sonuncu ədəd — dəymənin öz mikrobundan uzaqlığı: görüş sahəsindən
+					# kənardakı qurbanı proqnoz heç görmür (snapshot onu göndərmir).
+					(hit_stats["miss"] as Array).append("%.0fpx/%.0fms@%.0f %s"
+						% [float(near[0]), float(near[1]) * 1000.0, pos.distance_to(me.pos), why])
 		elif kind == Const.EvKind.HIT and Const.hit_victim(float(e[Const.EF.ARG])) == my_color \
 				and _match_self_claim(pos, int(e[Const.EF.COLOR])):
 			# Proqnoz bu dəyməni artıq ya göstərib, ya da [method _match_self_claim]
@@ -4627,10 +4870,15 @@ func _flush_fx(render_time: float) -> void:
 					# şəbəkə hadisəsinə yeni sahə əlavə etmək yalnız görüntü üçün olmazdı.
 					var brittle := _brittle_at(pos, false)
 					if brittle >= 0:
-						var o: Vector4 = DishMap.obstacles()[brittle]
+						var o: Vector4 = _obstacles[brittle]
 						_juice.crust(pos, (pos - Vector2(o.x, o.y)).normalized(),
 							o.z * 0.46, false)
 					_map_hit(pos)
+			Const.EvKind.BREAK when Const.is_objective_mode(int(_mode)) \
+					and _brittle_at(pos, true) < 0:
+				# Obyekt rejimində kövrək yoxdur: bu, Nüvənin partlaması, qol və ya
+				# Ananın partlamasıdır (bax [method Sim._pop_ball]).
+				_objective_burst(pos, maxf(float(e["arg"]), 30.0))
 			Const.EvKind.BREAK:
 				# Divar dağıldı. Partlayış effekti TƏKRAR işlədilir: hadisə
 				# eyni cinsdəndir (bir şey dağılıb ətrafa səpilir) və oyunçu
@@ -4693,7 +4941,7 @@ func _explode(pos: Vector2, radius: float, color_index: int, mine: bool) -> void
 ## Üçüncü zərbədə `_apply_walls` qabığı hadisədən əvvəl artıq gizlədir; həmin
 ## halda kiçik qırıntı buraxılmır, çünki BREAK budağı tam dağılmanı çəkir.
 func _brittle_at(at: Vector2, include_gone: bool) -> int:
-	var list := DishMap.obstacles()
+	var list := _obstacles
 	var best := -1
 	var best_d := INF
 	for i in list.size():
@@ -4852,7 +5100,7 @@ const CHUNK_TIME := 0.62
 ## Top dəyən yerdə hansı bərk maneə var? Sıçrayış nöqtəsi maneənin SƏTHİNDƏDİR,
 ## ona görə mərkəzə yox, çevrəyə olan məsafə yoxlanılır.
 func _obstacle_at(at: Vector2) -> int:
-	var list := DishMap.obstacles()
+	var list := _obstacles
 	var best := -1
 	var best_d := INF
 	for i in list.size():
@@ -4873,10 +5121,16 @@ func _obstacle_at(at: Vector2) -> int:
 ## hadisəsi də buraya gəlir — öz topunun hadisəsini iddia sistemi süzür
 ## ([method _match_claim]), ona görə heç nə iki dəfə oynanmır.
 func _map_hit(at: Vector2) -> void:
+	# NÜVƏ — top ona dəydi: qısa sıxılma, maneə kimi.
+	if _ball_spr != null and _ball_spr.visible \
+			and at.distance_to(_ball_spr.position) < _ball_radius() + Const.SHOT_RADIUS + 14.0:
+		_punch_ball()
+		_ripple(at, 24.0, Color(Palette.TEXT, 0.34))
+		return
 	var i := _obstacle_at(at)
 	if i >= 0:
 		_wobble(i)
-	elif at.length() > Const.WORLD_RADIUS - Const.SHOT_RADIUS - 6.0:
+	elif at.length() > _wall - Const.SHOT_RADIUS - 6.0:
 		_glint(at.angle())
 	_ripple(at, 24.0, Color(Palette.TEXT, 0.34))
 
@@ -4955,9 +5209,9 @@ func _in_view(at: Vector2, margin: float) -> bool:
 ## söner (JuiceFx-in xətt qırıntılarına əlavə — onlar toz, bunlar qabığın öz
 ## materialıdır). Üstəlik böyük dalğa və sıçrantı.
 func _break_chunks(i: int) -> void:
-	if i < 0 or i >= DishMap.obstacles().size():
+	if i < 0 or i >= _obstacles.size():
 		return
-	var o: Vector4 = DishMap.obstacles()[i]
+	var o: Vector4 = _obstacles[i]
 	var at := Vector2(o.x, o.y)
 	_ripple(at, o.z * 1.5, Color(Palette.TEXT, 0.40))
 	_ripple(at, o.z * 1.05, Color(Palette.TEXT, 0.55), "splash", SPLASH_TIME)
@@ -5105,7 +5359,7 @@ func _draw() -> void:
 
 ## Qabın bayırının halqası (bax [method MapKit.backdrop_mesh]).
 func _build_backdrop() -> void:
-	_backdrop = MapKit.backdrop_mesh()
+	_backdrop = MapKit.backdrop_mesh(_wall)
 
 
 ## DÖŞƏMƏ — makro tekstura, şeyder detalı üstünə vurur (bax `map_floor.gdshader`).
@@ -5115,7 +5369,7 @@ func _build_backdrop() -> void:
 ## sonra bir SVG, indi bir şeyderli düzbucaqlıdır. Diskin künclərindəki şəffaf
 ## sahədən qabın bayırı görünür.
 func _draw_ground() -> void:
-	var r := Const.WORLD_RADIUS
+	var r := _wall
 	_ground.draw_texture_rect(_floor_tex, Rect2(-r, -r, r * 2.0, r * 2.0), false)
 
 
@@ -5128,7 +5382,11 @@ func _draw_ground() -> void:
 ## çağırışdır (eyni üsul mikrobun ayaqlarında işlənir). Statikdir — node bir
 ## dəfə çəkilir.
 func _draw_grid() -> void:
-	var r := Const.WORLD_RADIUS
+	# NÜVƏ TOPU-nun döşəməsi şəbəkə yox, meydandır (bax [method _draw_pitch]).
+	if _mode == Const.Mode.BALL:
+		_draw_pitch()
+		return
+	var r := _wall
 	var step := 200.0
 	var lines := PackedVector2Array()
 	var cols := PackedColorArray()
@@ -5173,8 +5431,8 @@ func _draw_grid() -> void:
 ## Ayrı node-dadır və snapshot ritmində yalnız O yenidən çəkilir (bax
 ## [method _apply_match]); əvvəl bütün fon — şəbəkə və divar da — yenilənirdi.
 func _draw_dry() -> void:
-	var r := Const.WORLD_RADIUS
-	if _mode == Const.Mode.ENDLESS or _wet_radius >= r - 1.0:
+	var r := _wall
+	if _mode == Const.Mode.ENDLESS or Const.is_objective_mode(int(_mode)) or _wet_radius >= r - 1.0:
 		return
 	var dry := Color(Palette.WARNING, 0.055)
 	_dry.draw_arc(Vector2.ZERO, (_wet_radius + r) * 0.5, 0.0, TAU, 96, dry,
@@ -5253,8 +5511,8 @@ func _draw_dry() -> void:
 ## [method MapKit.rim_mesh], [method MapKit.lip_mesh]). Əvvəlki dörd `draw_arc`
 ## (hər biri ayrıca poliqon) bunlarla əvəz olunub.
 func _build_rim() -> void:
-	_rim_mesh = MapKit.rim_mesh()
-	_lip_mesh = MapKit.lip_mesh()
+	_rim_mesh = MapKit.rim_mesh(_wall)
+	_lip_mesh = MapKit.lip_mesh(_wall)
 
 
 func _draw_rim() -> void:
@@ -5269,7 +5527,7 @@ func _draw_lip() -> void:
 		_lip.draw_mesh(_lip_mesh, null)
 	if _glints.is_empty():
 		return
-	var r := Const.WORLD_RADIUS - 2.0
+	var r := _wall - 2.0
 	var pts := PackedVector2Array()
 	var cols := PackedColorArray()
 	# HDR-dir (bax [constant Palette.HIT_FLASH]): YÜKSƏK-in parlaması onu bir anlıq
@@ -5290,3 +5548,448 @@ func _draw_lip() -> void:
 			pts.push_back(Vector2.from_angle(a1) * r)
 			cols.push_back(Color(hot.r, hot.g, hot.b, fade * minf(w * 1.6, 1.0)))
 	_lip.draw_multiline_colors(pts, cols, 4.0)
+
+
+# ---------------------------------------------------------------- obyekt rejimləri
+
+## Obyekt rejimlərinin görüntüsü — hamısı Codex şəkilləridir (`assets/map/obj/`,
+## briflər `build/codex/obj_brief`), maqenta fonu `design/menu_art/process.gd keyc` ilə kəsilib.
+const ISLAND_MUD := preload("res://assets/map/obj/dry_mud_tile.png")
+const ISLAND_WATER := preload("res://assets/map/obj/island_water.png")
+const ISLAND_RIM := preload("res://assets/map/obj/island_rim.png")
+const NUCLEUS := preload("res://assets/map/obj/nucleus.png")
+const NUCLEUS_CRACKED := preload("res://assets/map/obj/nucleus_cracked.png")
+const CORE_SPARK := preload("res://assets/map/obj/core_spark.png")
+## Menisk halqasının orta xətti şəklin yarım enindən bu qədər içəridədir: Codex-in
+## şəklində halqanın mərkəz xətti r 440 / 1024-dür, xarici kənarı isə ~485.
+const ISLAND_RIM_K := 0.91
+## Adanın suyu döşəmənin üstündə bu qədər görünür — tam örtsə yaş döşəmənin dənəsi itərdi.
+const ISLAND_WATER_ALPHA := 0.42
+## Nüvə bu çəkidən ağır olanda çatlar görünür — partlamağa az qalıb.
+const BALL_CRACK_WEIGHT := 32.0
+## Nüvəyə top dəyəndə qısa sıxılma (bax [method _punch_ball]).
+const BALL_PUNCH_TIME := 0.18
+
+var _ball_r := Const.BALL_R0
+## Nüvənin kölgəsi — öz node-u: hər kadr yalnız yeri dəyişir, radius dəyişəndə çəkilir.
+var _ball_shadow: Node2D
+var _shadow_r := -1.0
+## [member _objective]-in son çəkildiyi hal: `(komanda, bizim xal, onların xalı)`.
+## Halqa və qapılar yalnız bu dəyişəndə yenidən çəkilir (ANA-da nəbz yananda hər kadr).
+var _obj_key := Vector3i(-2, -1, -1)
+var _ball_roll := 0.0
+var _ball_punch_t := -INF
+var _tinted_team := -2
+var _obj_font: Font
+
+
+## YAŞ ADA-nın qatı: qabın üstünə palçıq (şeyder adanın dairəsini kəsir), adanın suyu
+## və menisk halqası. Ada yalnız matçın saatından çıxır — kadr-kadr hamar sürüşür.
+func _build_island() -> void:
+	_island = Node2D.new()
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://shaders/island_dry.gdshader")
+	mat.set_shader_parameter("mud", ISLAND_MUD)
+	mat.set_shader_parameter("wall", _wall)
+	mat.set_shader_parameter("amount", 0.0)
+	_island.material = mat
+	_island.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	# Qab quruyana qədər ([constant Const.ISLAND_START]) şeyder hər yerdə şəffafdır —
+	# qat gizlidir ([method _render_island]).
+	_island.visible = false
+	add_child(_island)
+	# Qabı ƏHATƏ EDƏN çoxbucaqlı, kvadrat yox: şüşədən kənarda şeyder onsuz da heç nə
+	# çəkmir, kvadratın künclərində isə (sahəsinin 21%-i) hər kadr boşuna işləyirdi.
+	# Tərəfin ortası şüşədən 2 px kənardadır — qabın hər pikseli örtülür.
+	var hull := PackedVector2Array()
+	var n := 48
+	var far := (_wall + 2.0) / cos(PI / float(n))
+	for i in n:
+		hull.append(Vector2.from_angle(TAU * float(i) / float(n)) * far)
+	_island.draw.connect(func() -> void:
+		_island.draw_colored_polygon(hull, Color.WHITE))
+	# Su və halqa öz materialları ilədir (uşaq valideynin şeyderini götürmür).
+	_island_water = Sprite2D.new()
+	_island_water.texture = ISLAND_WATER
+	_island_water.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	_island.add_child(_island_water)
+	_island_rim = Sprite2D.new()
+	_island_rim.texture = ISLAND_RIM
+	_island_rim.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	_island.add_child(_island_rim)
+
+
+## Ananın doluluğu, Nüvə və qapılar — bir node-un `_draw`-ı və Nüvənin sprite-ı.
+func _build_objective() -> void:
+	_objective = Node2D.new()
+	_objective.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	add_child(_objective)
+	_objective.draw.connect(_draw_objective)
+	var theme := ThemeDB.get_project_theme()
+	_obj_font = theme.default_font if theme != null and theme.default_font != null \
+		else ThemeDB.fallback_font
+	if _mode == Const.Mode.BALL:
+		# Kölgə: işıq yuxarı-soldandır (bax [constant Palette.LIGHT_DIR]). Nüvədən ƏVVƏL —
+		# uşaqlar sıra ilə çəkilir.
+		_ball_shadow = Node2D.new()
+		_ball_shadow.visible = false
+		_ball_shadow.scale = Vector2(1.0, 0.62)
+		_ball_shadow.draw.connect(func() -> void:
+			if _shadow_r > 0.0:
+				_ball_shadow.draw_circle(Vector2.ZERO, _shadow_r * 0.96, Color(0.0, 0.0, 0.0, 0.32)))
+		_objective.add_child(_ball_shadow)
+		_ball_spr = Sprite2D.new()
+		_ball_spr.texture = NUCLEUS
+		_ball_spr.visible = false
+		_objective.add_child(_ball_spr)
+
+
+## Snapshot-un obyekt sətri (`MF.OBJ`); köhnə rejimdə və köhnə serverdə boşdur.
+static func _obj_row(snap: Array) -> PackedFloat32Array:
+	var row: Array = snap[Const.Snap.MATCH]
+	if row.size() > Const.MF.OBJ:
+		return row[Const.MF.OBJ]
+	return PackedFloat32Array()
+
+
+## Obyektlər mikroblarla EYNİ göstərilən anda çəkilir ([method _bracket]): Nüvəni
+## itələyən mikrob və Nüvə eyni zaman xəttindədir, ada da onların altında sürüşür.
+func _render_objective(render_time: float, delta: float) -> void:
+	if not Const.is_objective_mode(int(_mode)):
+		return
+	var pair := _bracket(render_time)
+	if pair.is_empty():
+		return
+	var oa := _obj_row(pair["a"])
+	var ob := _obj_row(pair["b"])
+	if oa.is_empty() or ob.is_empty():
+		return
+	var alpha: float = pair["alpha"]
+	var extra: float = pair.get("extra", 0.0)
+	match _mode:
+		Const.Mode.ISLAND:
+			_render_island(lerpf(oa[0], ob[0], alpha) + extra)
+		Const.Mode.BALL:
+			_render_ball(oa, ob, alpha, extra, delta)
+			_redraw_objective(false)
+		Const.Mode.MOTHER:
+			_tint_mothers()
+			# Nəbz [method _draw_mother_gauge]-in öz şərti ilə.
+			_redraw_objective(float(maxi(_score_us, _score_em)) / float(Const.MOTHER_CAP)
+				>= Const.MOTHER_HOT)
+
+
+## [member _objective]-in öz rəsmi (halqalar, rəqəmlər, qapılar) yalnız dəyişəndə —
+## [param animated] olanda (ANA-nın nəbzi) hər kadr. Əvvəl hər kadr yenidən qurulurdu.
+func _redraw_objective(animated: bool) -> void:
+	var key := Vector3i(_my_team, _score_us, _score_em)
+	if animated or key != _obj_key:
+		_obj_key = key
+		_objective.queue_redraw()
+
+
+func _render_island(clock: float) -> void:
+	if _island == null:
+		return
+	var wet := Const.wet_circle(int(_mode), clock)
+	var c := Vector2(wet.x, wet.y)
+	var amount := smoothstep(0.0, 1.0,
+		clampf((clock - Const.ISLAND_START) / Const.ISLAND_SHRINK, 0.0, 1.0))
+	# Sıfırda palçıq da, su da, halqa da tam şəffafdır — qat heç çəkilmir.
+	_island.visible = amount > 0.0
+	var mat := _island.material as ShaderMaterial
+	mat.set_shader_parameter("center", c)
+	mat.set_shader_parameter("radius", wet.z)
+	mat.set_shader_parameter("amount", amount)
+	_island_water.position = c
+	_island_water.scale = Vector2.ONE * (wet.z * 2.0 / float(ISLAND_WATER.get_width()))
+	_island_water.modulate.a = ISLAND_WATER_ALPHA * amount
+	_island_rim.position = c
+	_island_rim.scale = Vector2.ONE * (wet.z / (float(ISLAND_RIM.get_width()) * 0.5 * ISLAND_RIM_K))
+	_island_rim.modulate.a = amount
+	# Menisk yavaş fırlanır — damcılar yerində donub qalmasın.
+	_island_rim.rotation = clock * 0.05
+	_wet_center = c
+	_hud.minimap.wet_center = c
+
+
+func _render_ball(oa: PackedFloat32Array, ob: PackedFloat32Array, alpha: float, extra: float,
+		delta: float) -> void:
+	if _ball_spr == null or oa.size() < 7 or ob.size() < 7:
+		return
+	if ob[6] < 0.5:
+		# Nüvə yoxdur: partlayıb və ya qol olub — yenisi mərkəzdə doğulacaq.
+		_ball_spr.visible = false
+		_ball_shadow.visible = false
+		_own_shots.ball = Vector3(0.0, 0.0, -1.0)
+		if pred.ball != null:
+			pred.ball.alive = false
+		_hud.minimap.ball = Vector2.INF
+		return
+	var vel := Vector2(ob[3], ob[4])
+	var pos := Vector2(ob[1], ob[2]) + vel * extra
+	var w := ob[5]
+	# İki snapshot-da da sağdırsa aralarında; yenicə doğulubsa birbaşa yeni yerində.
+	if oa[6] > 0.5:
+		pos = Vector2(oa[1], oa[2]).lerp(Vector2(ob[1], ob[2]), alpha) + vel * extra
+		w = lerpf(oa[5], ob[5], alpha)
+	if not _ball_spr.visible:
+		_ball_spr.visible = true
+		_spawn_fx("spark", pos, 1.1, Color("F4F1E6"))
+	_ball_r = Const.ball_radius(w)
+	_ball_spr.position = pos
+	# Yuvarlanma: sürətin istiqamətində fırlanır (yuxarıdan baxışda yalnız bucaq).
+	_ball_roll += vel.x * delta / maxf(_ball_r, 1.0) * 0.6
+	_ball_spr.rotation = _ball_roll
+	var punch := clampf(1.0 - (_clock - _ball_punch_t) / BALL_PUNCH_TIME, 0.0, 1.0)
+	_ball_spr.scale = Vector2.ONE * (_ball_r * 2.0 / float(NUCLEUS.get_width())) \
+		* (1.0 + 0.14 * punch * punch)
+	_ball_spr.texture = NUCLEUS_CRACKED if w > BALL_CRACK_WEIGHT else NUCLEUS
+	# Öz topun və nişan xətti Nüvənin İNDİKİ təxmini yerinə qarşıdır, ekrandakına yox:
+	# ekrandakı Nüvə göstərilən andadır (~0.1 s + RTT keçmişdə), server isə topu Nüvənin
+	# o anki yerinə qarşı yoxlayır. Keçmişdəki Nüvədə "udulan" proqnoz topu serverdə onun
+	# yanından keçib arxadakı rəqibə dəyirdi və o dəymə proqnozsuz, gec göstərilirdi.
+	var present := _ball_present(pos)
+	_own_shots.ball = Vector3(present.x, present.y, _ball_r)
+	# Nişan xətti proqnozun Nüvəsinə baxır ([method Sim.aim_path]). Proqnoz Nüvəni özü
+	# addımlamır ([method Sim.step_movement]), yəni yazmaq təhlükəsizdir.
+	if pred.ball != null:
+		pred.ball.alive = true
+		pred.ball.pos = present
+		pred.ball.weight = w
+	_hud.minimap.ball = pos
+	_ball_shadow.visible = true
+	_ball_shadow.position = pos + Vector2(7.0, 11.0)
+	if _shadow_r != _ball_r:
+		_shadow_r = _ball_r
+		_ball_shadow.queue_redraw()
+
+
+func _ball_radius() -> float:
+	return _ball_r
+
+
+## Nüvənin serverdəki İNDİKİ yeri — ən təzə snapshot-dan sürəti ilə (suyun müqaviməti
+## ilə sönən) gəlişindən bəri keçən vaxt + RTT qədər irəli. Snapshot yoxdursa [param shown].
+func _ball_present(shown: Vector2) -> Vector2:
+	if _obj.size() < 7 or _obj[6] < 0.5:
+		return shown
+	var age := maxf(_clock - _last_snap_t, 0.0) + _rtt
+	var v := Vector2(_obj[3], _obj[4])
+	return Vector2(_obj[1], _obj[2]) \
+		+ v * ((1.0 - exp(-Const.BALL_DRAG * age)) / Const.BALL_DRAG)
+
+
+## Nüvəyə top dəydi — qısa sıxılma (sprite-ın miqyası hər kadr [method _render_ball]-dadır).
+func _punch_ball() -> void:
+	_ball_punch_t = _clock
+	Sfx.play("hit", 0.05)
+
+
+## Nüvə partladı, qol oldu və ya Ana partladı — obyektin öz partlayışı (mikrobun yox:
+## [method _explode] rəngə görə mikrob axtarır və onu öldürərdi).
+func _objective_burst(pos: Vector2, radius: float) -> void:
+	var fx := BurstFx.new()
+	fx.position = pos
+	fx.setup(Color("F4F1E6"), radius, 10, false, _tex["burst"])
+	_fx.add_child(fx)
+	_juice.shockwave(pos, radius * 1.6, Palette.FOCUS)
+	var spark := Sprite2D.new()
+	spark.texture = CORE_SPARK
+	spark.position = pos
+	var mat := CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	spark.material = mat
+	var s0 := radius * 2.0 / float(CORE_SPARK.get_width())
+	spark.scale = Vector2.ONE * s0
+	_fx.add_child(spark)
+	var tw := spark.create_tween()
+	tw.tween_property(spark, "scale", Vector2.ONE * s0 * 3.0, 0.45) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(spark, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(spark.queue_free)
+	Sfx.play("burst", 0.05)
+	if pos.distance_to(me.pos) < 700.0:
+		_add_shake(9.0)
+		_punch = maxf(_punch, 0.06)
+
+
+## Analar baxanın gözü ilə rənglənir: bizimki laym, onlarınkı narıncı (design/MODES.md §16.1).
+func _tint_mothers() -> void:
+	if _tinted_team == _my_team:
+		return
+	_tinted_team = _my_team
+	var ours := _my_team if _my_team >= 0 else 0
+	for t in _mothers:
+		var dome: Sprite2D = _mothers[t]["dome"]
+		dome.modulate = (Palette.ALLY if int(t) == ours else Palette.FOE).lerp(Color.WHITE, 0.45)
+
+
+func _draw_objective() -> void:
+	var ours := _my_team if _my_team >= 0 else 0
+	match _mode:
+		Const.Mode.MOTHER:
+			for t in _mothers:
+				_draw_mother_gauge(_mothers[t], int(t) == ours,
+					_score_us if int(t) == ours else _score_em)
+		Const.Mode.BALL:
+			# Nüvənin kölgəsi öz node-udur ([member _ball_shadow]).
+			_draw_goals(ours)
+
+
+## Ananın doluluğu: günbəzin ətrafında halqa (yuxarıdan saat əqrəbi ilə) və ortada sayı.
+## 80%-i keçəndə halqanın çölündə qırmızı nəbz — partlamağa az qalıb.
+func _draw_mother_gauge(m: Dictionary, ally: bool, balls: int) -> void:
+	var c: Vector2 = m["c"]
+	var rr := float(m["r"]) + 16.0
+	var fill := clampf(float(balls) / float(Const.MOTHER_CAP), 0.0, 1.0)
+	var col := Palette.ALLY if ally else Palette.FOE
+	_objective.draw_arc(c, rr, 0.0, TAU, 72, Color(Palette.OUTLINE, 0.55), 13.0, true)
+	if fill > 0.0:
+		_objective.draw_arc(c, rr, -PI * 0.5, -PI * 0.5 + TAU * fill, 72, col, 8.0, true)
+	if fill >= Const.MOTHER_HOT:
+		var pulse := 0.5 + 0.5 * sin(_clock * 8.0)
+		_objective.draw_arc(c, rr + 10.0, 0.0, TAU, 72,
+			Color(Palette.DANGER, 0.35 + 0.45 * pulse), 4.0, true)
+	if _obj_font == null:
+		return
+	var txt := str(balls)
+	var size := 44
+	var sw := _obj_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+	var at := c + Vector2(-sw.x * 0.5, size * 0.34)
+	_objective.draw_string_outline(_obj_font, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 10,
+		Palette.OUTLINE)
+	_objective.draw_string(_obj_font, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size,
+		col.lerp(Color.WHITE, 0.25))
+
+
+## NÜVƏ TOPU-nun qapıları — şüşənin üstündəki məsamə: parlaq qövs və içəri sönən işıq.
+## Öz qapın (qoruduğun) laym, rəqibinki (vurduğun) narıncı.
+func _draw_goals(ours: int) -> void:
+	var half := asin(clampf(Const.BALL_GOAL_HALF / _wall, 0.0, 1.0))
+	for t in 2:
+		var mid := PI if t == 0 else 0.0
+		var col := Palette.ALLY if t == ours else Palette.FOE
+		_objective.draw_arc(Vector2.ZERO, _wall - 22.0, mid - half, mid + half, 24,
+			Color(col, 0.16), 34.0, true)
+		_objective.draw_arc(Vector2.ZERO, _wall - 5.0, mid - half, mid + half, 24,
+			Color(col, 0.95), 9.0, true)
+
+
+## NÜVƏ TOPU-nun döşəməsi: şəbəkə yerinə meydan xətləri — orta xətt, mərkəz dairəsi və
+## iki qapının qarşısındakı qövs. Meydan "harada hücum, harada müdafiə" sualına cavab verir.
+func _draw_pitch() -> void:
+	var r := _wall
+	var line := Color(Palette.RIM_LINE, 0.16)
+	_grid.draw_line(Vector2(0.0, -r), Vector2(0.0, r), line, 4.0, true)
+	_grid.draw_arc(Vector2.ZERO, 120.0, 0.0, TAU, 64, line, 4.0, true)
+	_grid.draw_circle(Vector2.ZERO, 7.0, line)
+	for side in [-1.0, 1.0]:
+		var s: float = side
+		var a0 := PI * 0.5 if s > 0.0 else -PI * 0.5
+		_grid.draw_arc(Vector2(s * r, 0.0), 240.0, a0, a0 + PI, 48, line, 4.0, true)
+
+
+## Matçın qalan vaxtı və əlavə vaxt bayrağı: `Vector2(saniyə, 0/1)`.
+##
+## ANA: 2:30, bərabərlikdə +30 s; ADA: 3:00, sonra ilk xal fərqi (4:00-a qədər);
+## NÜVƏ TOPU: 2:30, bərabərlikdə +45 s ilk qol. Saat serverin matç saatıdır (`MF.OBJ[0]`).
+func _objective_left() -> Vector2:
+	var t := _obj[0] if not _obj.is_empty() else 0.0
+	match _mode:
+		Const.Mode.MOTHER:
+			var ot := _obj.size() > 1 and _obj[1] > 0.5
+			var end := Const.MOTHER_TIME + (Const.MOTHER_OT if ot else 0.0)
+			return Vector2(end - t, 1.0 if ot else 0.0)
+		Const.Mode.ISLAND:
+			if t > Const.ISLAND_TIME:
+				return Vector2(Const.MATCH_MAX - t, 1.0)
+			return Vector2(Const.ISLAND_TIME - t, 0.0)
+		Const.Mode.BALL:
+			if t > Const.BALL_TIME:
+				return Vector2(Const.BALL_TIME + Const.BALL_OT - t, 1.0)
+			return Vector2(Const.BALL_TIME - t, 0.0)
+	return Vector2.ZERO
+
+
+## ÖLÇÜ: serverin saydığı, proqnozun görmədiyi öz dəyməni izah edir (yalnız
+## [member ShotPrediction.trace_on] — avtomatik oyunçu). Dəymə nöqtəsinə ən yaxın öz topunun
+## yolu tapılır:
+##   `yolsuz` — heç bir topun yolu oradan keçmir (top proqnozda yox idi və ya başqa yerə uçdu);
+##   `bitdi:<növ>` — top ora çatmamış bitdi (sıçrayış haqqı, maneə, Nüvə/Ana, təsdiqsiz);
+##   `gec` — gec tapılan atəşin geri çatdırılan hissəsi (orada rəqiblər yoxlanmır);
+##   `keçdi[...]` — top oradan keçdi, amma qurbanı hədəf saymadı (qalxan, yoldaş, görünməz).
+## Ölçü: təsdiq gələndə serverin topu proqnozla vaxtca və xətt boyu nə qədər üst-üstə düşür.
+##
+## Server topu atəş tick-i T-də elə həmin tick addımlayır və `k`-cı addımı qurbanın
+## `T + k − rewind` halına qarşı yoxlayır; proqnoz isə `view0 + k`-ya qarşı. Snapshot
+## tick-i S-də top `j` addım atıb: T = S − j + 1.
+func _trace_claim(ghost: ShotPrediction.Ghost, e: Array) -> void:
+	var j := int(round((Const.SHOT_LIFETIME - float(e[Const.SF.LIFE])) / Const.TICK_DELTA))
+	var s_tick := float(_last_snap[Const.Snap.TICK])
+	var v_s := s_tick - float(j) + 1.0 - float(e[Const.SF.REWIND]) / Const.TICK_DELTA
+	var dir := Vector2(float(e[Const.SF.DX]), float(e[Const.SF.DY])).normalized()
+	var srv := Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
+	if ghost.view0 >= 0.0:
+		ghost.srv_dv = v_s - ghost.view0
+	if j >= 0 and j < ghost.trace.size():
+		ghost.srv_along = (srv - ghost.trace[j]).dot(dir)
+	var key := "dv%+d al%+d" % [int(round(ghost.srv_dv)) if not is_nan(ghost.srv_dv) else 99,
+		int(round(ghost.srv_along / 5.0)) * 5 if not is_nan(ghost.srv_along) else 999]
+	var all: Dictionary = hit_stats["claims"]
+	all[key] = int(all.get(key, 0)) + 1
+
+
+func _why_unpredicted(pos: Vector2, victim_color: int) -> String:
+	var best_d := INF
+	var best: ShotPrediction.Ghost = null
+	var best_i := -1
+	var best_t := 0.0
+	var pool: Array = _own_shots.ghosts.duplicate()
+	pool.append_array(_own_shots.recent)
+	for g: ShotPrediction.Ghost in pool:
+		for i in range(g.trace.size() - 1):
+			var a := g.trace[i]
+			var b := g.trace[i + 1]
+			var ab := b - a
+			var t := clampf((pos - a).dot(ab) / maxf(ab.length_squared(), 0.0001), 0.0, 1.0)
+			var d := pos.distance_to(a + ab * t)
+			if d < best_d:
+				best_d = d
+				best = g
+				best_i = i
+				best_t = t
+	if best == null or best_d > 150.0:
+		return "yolsuz %.0f" % best_d
+	var at_end := best_i == best.trace.size() - 2 and best_t > 0.98
+	if at_end and best.end_kind != -1 and best.end_kind != ShotPrediction.Contact.HIT:
+		var names := {-2: "təsdiqsiz", 1: "sıçrayış", 2: "kövrək", 3: "ömür", 4: "udulma"}
+		return "bitdi:%s %.0f" % [names.get(best.end_kind, str(best.end_kind)), best_d]
+	if best.late > 0.0 and float(best_i) * Const.TICK_DELTA <= best.late:
+		return "gec %.0f" % best_d
+	var v := _germ_by_color(victim_color)
+	var vid := -1
+	for gid in _visuals:
+		if _visuals[gid]["node"] == v:
+			vid = int(gid)
+	# Həmin tick-də topun parçasına ən yaxın hədəf: qurbandırmı və gövdəsindən nə qədər uzaq.
+	var near := Vector3(-1.0, INF, -1.0)
+	if best_i < best.trace_near.size():
+		near = best.trace_near[best_i]
+	var who := "qurban" if int(near.x) == vid and vid >= 0 else ("yox" if near.x < 0.0 else "başqa")
+	var flags := "q%d y%d g%d" % [int(v.safe), int(v.is_ally), int(v.visible)] if v != null else "?"
+	var seen := "-"
+	if best.view0 >= 0.0:
+		_tick_targets.clear()
+		for tg in _ghost_targets(best.view0 + float(best_i)):
+			if int(tg["key"]) == vid:
+				seen = "t=%.3f p=%.1f,%.1f sh=%s" % [best.view0 + float(best_i),
+					Vector2(tg["pos"]).x, Vector2(tg["pos"]).y, str(tg["shape"])]
+	# Top bu nöqtəyə ekranda hələ çatmayıbsa — serverin xəbəri proqnozdan TEZ gəlib.
+	var age := (_clock - best.born) / Const.TICK_DELTA
+	if best.alive and age < float(best_i) + best_t:
+		return "tez %.1ftick d%.0f" % [float(best_i) + best_t - age, best_d]
+	return "keçdi[%s v%d] %.0f hədəf=%s/%.0fpx n%d r%.0fms dv%.2f al%.1f id%d a%d e%d yaş%.1f/%.1f %s" % [
+		flags, int(best.view0 >= 0.0), best_d, who, near.y, int(near.z), best.rewind * 1000.0,
+		best.srv_dv, best.srv_along, vid, int(best.alive), best.end_kind, age,
+		float(best_i) + best_t, seen]

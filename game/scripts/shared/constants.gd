@@ -255,6 +255,8 @@ const FOOD_BYTES := 12
 
 ## Dəyişməyən sahələr + massiv başlıqları + ehtiyat.
 const SNAP_FIXED := 330
+## Obyekt rejiminin matç sətrinə əlavəsi (`MF.OBJ` ≤ 7 float + `MF.RESPAWN`) və ehtiyat.
+const SNAP_OBJ := 48
 const FOOD_FRICTION := 1.8      ## Səpilən topların sürtünməsi (1/saniyə)
 ## Atılan top qidaya çevriləndən sonra sahibi onu bu qədər müddət yeyə bilmir —
 ## əks halda öz atdığını dərhal geri udardı.
@@ -280,6 +282,12 @@ enum Mode {
 	SOLO = 1,      ## TƏK QALAN — 10 mikrob, qab quruyur, sona qalan udur.
 	DUO = 2,       ## CÜT — 5 komanda × 2, TƏK QALAN-ın qabı, dirilmə var.
 	TRIO = 3,      ## ÜÇLÜK — 3v3, dar qab, üç raundun ikisini udan qalib.
+	## ANA HÜCEYRƏ — 3v3, rəqibin Anasını toplarla doldurub partlat (design/MODES.md §16.2).
+	MOTHER = 4,
+	## YAŞ ADA — 3v3, qab quruyur, gəzən adanı tutan xal qazanır (§16.3).
+	ISLAND = 5,
+	## NÜVƏ TOPU — 2v2, ağır Nüvəni rəqibin məsaməsinə sal (§16.4).
+	BALL = 6,
 }
 
 
@@ -289,22 +297,76 @@ enum Mode {
 ## rəng, yer paylanması, bot doldurma. Hər yerdə `mode == DUO or mode == TRIO`
 ## yazsaydıq, beşinci rejim gələndə biri mütləq unudulardı.
 static func is_team_mode(mode: int) -> bool:
-	return mode == Mode.DUO or mode == Mode.TRIO
+	return mode == Mode.DUO or mode == Mode.TRIO or is_objective_mode(mode)
+
+
+## OBYEKT rejimi: iki komanda, ölən dirilir, matçı obyekt həll edir (Ana, ada, Nüvə).
+##
+## Sona qalan komanda burada qalib DEYİL — hamı dirilir, ona görə "komanda qırıldı"
+## şərti heç vaxt işləmir və matçı yalnız obyekt və vaxt bitirir.
+static func is_objective_mode(mode: int) -> bool:
+	return mode == Mode.MOTHER or mode == Mode.ISLAND or mode == Mode.BALL
 
 
 ## Rejimdə bir komandada neçə mikrob var (komandasızda 1).
 static func team_size(mode: int) -> int:
 	match mode:
-		Mode.DUO: return 2
-		Mode.TRIO: return 3
+		Mode.DUO, Mode.BALL: return 2
+		Mode.TRIO, Mode.MOTHER, Mode.ISLAND: return 3
 		_: return 1
 
 
 ## Rejimdə dünyanın tam əhalisi.
 static func mode_capacity(mode: int) -> int:
 	match mode:
-		Mode.TRIO: return TRIO_GERMS
+		Mode.TRIO, Mode.MOTHER, Mode.ISLAND: return TRIO_GERMS
+		Mode.BALL: return 4
 		_: return WORLD_CAPACITY
+
+
+## Qabın ŞÜŞƏSİ — mikrobu, topu və qidanı saxlayan divarın radiusu.
+##
+## Köhnə rejimlərin hamısı 1200-lük qabdadır (ÜÇLÜK də — onun dar sahəsi QURU zona ilə
+## çəkilir). Obyekt rejimləri isə öz qabında oynanır: 4–6 mikrob 1200-lük qabda bir-birini
+## axtarardı, NÜVƏ TOPU-nun qapısı isə məhz şüşənin üstündədir (bax design/MODES.md §16.1).
+static func wall_radius(mode: int) -> float:
+	match mode:
+		Mode.MOTHER: return MOTHER_WALL
+		Mode.ISLAND: return ISLAND_WALL
+		Mode.BALL: return BALL_WALL
+		_: return WORLD_RADIUS
+
+
+## Obyekt rejimlərinin öz xəritə düzümləri ([method DishMap.obstacles_for]).
+## Nömrələr [member DishMap.layout]-un ümumi düzümlərindən (0–2) sonra gəlir.
+const LAYOUT_MOTHER := 3
+const LAYOUT_ISLAND := 4
+const LAYOUT_BALL := 5
+
+
+## Rejimin xəritə düzümü. -1 = ümumi düzüm ([member DishMap.layout]) — köhnə
+## rejimlər onu bölüşür.
+static func mode_layout(mode: int) -> int:
+	match mode:
+		Mode.MOTHER: return LAYOUT_MOTHER
+		Mode.ISLAND: return LAYOUT_ISLAND
+		Mode.BALL: return LAYOUT_BALL
+		_: return -1
+
+
+## Komandanın bazası — doğuşun mərkəzi. Komanda 0 qərbdə, 1 şərqdədir.
+static func team_base(mode: int, team: int) -> Vector2:
+	var side := -1.0 if team == 0 else 1.0
+	match mode:
+		Mode.MOTHER: return Vector2(side * 545.0, 0.0)
+		Mode.ISLAND: return Vector2(side * 610.0, 0.0)
+		Mode.BALL: return Vector2(side * 430.0, 0.0)
+		_: return Vector2.ZERO
+
+
+## Ölən mikrob bu qədər saniyə sonra öz bazasında doğulur (obyekt rejimləri).
+static func respawn_time(mode: int) -> float:
+	return BALL_RESPAWN if mode == Mode.BALL else OBJ_RESPAWN
 
 ## Matçın fazası.
 ##
@@ -355,6 +417,91 @@ const ROUND_BREAK := 3.0        ## Raund arası hesab ekranı
 ## Tutum və super doluluğu SIFIRLANIR: dirilmə ikinci şans olmalıdır,
 ## cəzasız davam deyil — yoxsa cüt qəsdən ölüb yenidən doğula bilər.
 const REVIVE_TIME := 15.0
+
+# ---------- Obyekt rejimləri (design/MODES.md §16) ----------
+## Ölən mikrob bu qədər saniyə sonra öz bazasında doğulur. Tutum 10-a qayıdır —
+## ölüm yenə cəzadır, sadəcə matçdan çıxarmır.
+const OBJ_RESPAWN := 5.0
+const BALL_RESPAWN := 4.0
+
+## ANA HÜCEYRƏ. Ana hərəkətsiz maneədir ([constant DishMap.Kind.MOTHER]): rəqibin
+## topu ona adi zərbə kimi +2 verir, tutumu keçəndə partlayır və matç bitir.
+const MOTHER_WALL := 800.0
+const MOTHER_CAP := 140
+const MOTHER_START := 70
+## Anaya dəyən top onu bu qədər doldurur. Mikroba dəyən top +2-dir, Anaya isə +1: +2 ilə
+## botlu matçların üçdə biri 60 s-dən tez bitirdi — partlatmalarla böyüyən bir hücumçu
+## yuvanın ağzında dirilənləri vurur, yoldaşları isə Ananı 35 s-də doldururdu.
+const MOTHER_FEED := 1
+const MOTHER_RADIUS := 100.0
+## Ananın mərkəzi bazanın şüşəyə yaxın tərəfindədir: arxasında 50 px qalır —
+## yalnız amöbün sığdığı arxa qapı (bax [method DishMap._build_mother]).
+const MOTHER_X := 650.0
+## Öz Anana toxunanda hər bu qədər saniyədə bir top Anadan sənə keçir.
+const MOTHER_SUCK := 0.4
+## Ana [constant MOTHER_HOT]-u keçibsə əmmə iki qat tezdir — geridə qalanın şansı.
+const MOTHER_SUCK_FAST := 0.2
+const MOTHER_HOT := 0.80
+## Ana bundan boşdursa əmmək olmur — yuvada oturub Ananı sıfıra endirmək olmasın.
+const MOTHER_SUCK_MIN := 0.30
+## Toxunma: iki gövdənin cəmindən bu qədər piksel uzaqlığa qədər.
+const MOTHER_REACH := 12.0
+const MOTHER_TIME := 150.0
+const MOTHER_OT := 30.0
+## Vaxt bitəndə Analar bundan az fərqlənirsə əlavə vaxt oynanır.
+const MOTHER_TIE := 6
+## Əlavə vaxtda hər Ana saniyədə bu qədər top dolur, əmmək dayanır.
+const MOTHER_OT_FILL := 1.0
+
+## YAŞ ADA. Qab [constant ISLAND_START]-da quruyur, yalnız gəzən ada yaş qalır.
+const ISLAND_WALL := 720.0
+const ISLAND_START := 20.0
+const ISLAND_SHRINK := 5.0
+const ISLAND_RADIUS := 220.0
+## Adanın yolu — orta xətt boyunca şimal–cənub, mərkəzdən bu qədər uzağa gedir.
+const ISLAND_A := 340.0
+const ISLAND_PERIOD := 64.0
+## Quru zona bu rejimdə CƏBBƏXANADIR: dərinlikdən asılı olmayan sabit dövr və doğuş
+## qalxanında yığılmır. Qanunun dərinlik pilləsi burada doğulan kimi öldürərdi —
+## baza adadan 400-600 px aralıdır.
+const ISLAND_DRY_PERIOD := 2.0
+const ISLAND_WIN := 70
+const ISLAND_TIME := 180.0
+## Xal fərqi bundan çoxdursa adadakı bərabərlik geridə qalana yazılır.
+const ISLAND_CATCHUP := 25
+
+## NÜVƏ TOPU. Nüvə neytral ağır kürədir; qapı (məsamə) şüşənin üstündədir.
+const BALL_WALL := 640.0
+## Qapının yarım eni (şüşə boyunca piksel). Komanda 0-ın qapısı qərbdə, 1-inki şərqdə.
+const BALL_GOAL_HALF := 118.0
+const BALL_WEIGHT := 20
+const BALL_WEIGHT_MAX := 40
+const BALL_R0 := 30.0
+const BALL_R_PER_W := 0.8
+## Suyun müqaviməti (1/s): Nüvə ~3 saniyə sürüşür.
+const BALL_DRAG := 0.8
+## Şüşədən və maneədən sıçrayanda sürətin qalan payı.
+const BALL_BOUNCE := 0.6
+## Topla vurmaq: `BALL_SHOT_PUSH × BALL_WEIGHT / çəki` px/s.
+const BALL_SHOT_PUSH := 200.0
+## Çəki hər bu qədər saniyədə 1 azalır, [constant BALL_WEIGHT]-ə qədər.
+const BALL_DECAY := 1.5
+## Gövdə təkanı: mikrobun normal sürətinin bu qədər misli Nüvəyə keçir.
+const BALL_KICK := 2.0
+## Partlayan Nüvə bu qədər saniyə sonra mərkəzdə yenidən doğulur.
+const BALL_REBORN := 2.0
+## Suyun axını ağır Nüvəni bu qədər aparır (mikrobu 1.0). Tam axında Nüvə burulğanla
+## şüşəyə sıxılıb orada qalırdı — ölçülüb, matçın yarısını cənub şüşəsinin yanında keçirirdi.
+const BALL_FLOW := 0.35
+## Şüşənin menisküsü: kənardan bu qədər piksel yaxın Nüvə içəri yuvarlanır (px/s²).
+## Onsuz şüşəyə sıxılmış Nüvənin arxasına keçmək olmurdu — mikrob şüşə ilə Nüvə
+## arasına sığmır və Nüvə orada əbədi ilişirdi.
+const BALL_EDGE := 40.0
+const BALL_EDGE_PUSH := 90.0
+const BALL_GOALS := 2
+const BALL_TIME := 150.0
+## 2:30-da hesab bərabərdirsə ilk qol udur — ən çox bu qədər saniyə, sonra heç-heçə.
+const BALL_OT := 45.0
 
 ## Matçın son anında qabın radiusu.
 ##
@@ -502,6 +649,9 @@ static func mode_from(value: int) -> Mode:
 		int(Mode.SOLO): return Mode.SOLO
 		int(Mode.DUO): return Mode.DUO
 		int(Mode.TRIO): return Mode.TRIO
+		int(Mode.MOTHER): return Mode.MOTHER
+		int(Mode.ISLAND): return Mode.ISLAND
+		int(Mode.BALL): return Mode.BALL
 		_: return Mode.ENDLESS
 
 
@@ -526,6 +676,9 @@ static func mode_name(mode: int) -> String:
 		Mode.SOLO: return "TƏK QALAN"
 		Mode.DUO: return "CÜT"
 		Mode.TRIO: return "ÜÇLÜK"
+		Mode.MOTHER: return "ANA HÜCEYRƏ"
+		Mode.ISLAND: return "YAŞ ADA"
+		Mode.BALL: return "NÜVƏ TOPU"
 		_: return "SONSUZ ARENA"
 
 
@@ -706,6 +859,9 @@ static func mode_brief(mode: int) -> String:
 		Mode.SOLO: return "10 mikrob · sona qalan udur"
 		Mode.DUO: return "5 cüt · dirilmə var"
 		Mode.TRIO: return "3v3 · üç raund"
+		Mode.MOTHER: return "3v3 · rəqibin Anasını partlat"
+		Mode.ISLAND: return "3v3 · gəzən adanı tut"
+		Mode.BALL: return "2v2 · Nüvəni qapıya sal"
 		# Sayı [method mode_capacity]-dən çıxır: burada "6 mikrob" yazılırdı —
 		# o, TRIO_GERMS-in rəqəmidir, səhvən köçürülmüşdü. Sonsuz arenanın
 		# tutumu WORLD_CAPACITY-dir və REJİMLƏR vərəqi ilə ziddiyyət yaranırdı.
@@ -721,6 +877,9 @@ static func mode_goal(mode: int) -> String:
 	match mode:
 		Mode.DUO: return "Sona qalan cüt udur"
 		Mode.TRIO: return "Üç raundun ikisini udan qalib"
+		Mode.MOTHER: return "Rəqibin Anasını doldur, öz Ananı əm"
+		Mode.ISLAND: return "Adada çox ol — 100 xal udur"
+		Mode.BALL: return "Nüvəni rəqibin qapısına sal — 2 qol udur"
 		_: return "Sona qalan udur"
 
 
@@ -730,6 +889,9 @@ static func mode_note(mode: int) -> String:
 		Mode.SOLO: return "10 mikrob · qab quruyur · sona qalan udur"
 		Mode.DUO: return "5 cüt · yoldaşın səni dirildir · sona qalan cüt udur"
 		Mode.TRIO: return "3v3 · dar qab · üç raundun ikisini udan qalib"
+		Mode.MOTHER: return "3v3 · rəqibin Anasını toplarla doldurub partlat, öz Ananı əm"
+		Mode.ISLAND: return "3v3 · qab quruyur · gəzən adada çox olan xal qazanır"
+		Mode.BALL: return "2v2 · ağır Nüvəni rəqibin məsaməsinə sal · 2 qol udur"
 		_: return "matç yoxdur · girdin, oynadın · gözləmə yoxdur"
 
 
@@ -777,9 +939,20 @@ enum MF {
 	ALIVE,    ## int   — sağ qalan mikrob sayı
 	PLACE,    ## int   — baxanın yeri (0 = hələ sağdır)
 	TEAM,     ## int   — baxanın komandası (-1 komandasız)
-	SCORE_US, ## int   — ÜÇLÜK: baxanın komandasının udduğu raund sayı
-	SCORE_EM, ## int   — ÜÇLÜK: rəqibin udduğu raund sayı
+	SCORE_US, ## int   — ÜÇLÜK: baxanın komandasının udduğu raund sayı; ANA HÜCEYRƏ:
+	          ##         öz Ananın top sayı; YAŞ ADA: xal; NÜVƏ TOPU: qol
+	SCORE_EM, ## int   — eyni rəqəm rəqib üçün
+	## Rejimin obyekti, `PackedFloat32Array`, yalnız obyekt rejimlərində. Birinci ədəd
+	## həmişə MATÇIN saatıdır ([constant CLOCK] fazanınkıdır və qoldan sonrakı sayım onu
+	## sıfırlayır); sonra ANA HÜCEYRƏ — `[əlavə vaxt 0/1]`, YAŞ ADA — `[x, y, r]`, NÜVƏ
+	## TOPU — `[x, y, vx, vy, çəki, sağ 0/1]`. SONDA əlavə olunub: köhnə client sahəni
+	## oxumur, yeni client köhnə serverdə onu sadəcə tapmır.
+	OBJ,
+	## float — baxanın dirilməsinə qalan saniyə (0 = sağdır və ya dirilmə yoxdur).
+	RESPAWN,
 }
+## Köhnə serverin matç sətrinin uzunluğu — [constant MF.OBJ]-dan əvvəlki sahələr.
+const MF_BASE := 9
 ## Snapshot-dakı mikrob sətri.
 ##
 ## Sətir SANİYƏDƏ 30 DƏFƏ, görünən hər mikrob üçün gedir — ona görə burada
@@ -913,6 +1086,12 @@ enum FF { ID, X, Y }
 ## hər snapshot-da geri sıçrayar. Eyni səbəbdən axın sahəsi də yalnız
 ## mövqedən asılıdır (bax [method current_at]).
 static func dish_radius(mode: int, t: float) -> float:
+	# Obyekt rejimlərində qab qurumur (ANA, NÜVƏ TOPU), YAŞ ADA-da isə yaş sahə
+	# qabın mərkəzində deyil — gəzən adadır (bax [method wet_circle]).
+	if mode == Mode.ISLAND:
+		return wet_circle(mode, t).z
+	if mode == Mode.MOTHER or mode == Mode.BALL:
+		return wall_radius(mode)
 	# ÜÇLÜK öz ölçüləri ilə işləyir: dar qab, tez quruma, qısa raund.
 	# Böyük qabda üç nəfər bir-birini axtarmaqla raundu bitirərdi.
 	if mode == Mode.TRIO:
@@ -943,6 +1122,54 @@ static func dish_radius(mode: int, t: float) -> float:
 ## Quru zonada bir topun yığılma müddəti. Kənardan nə qədər uzaqsa, o qədər tez.
 static func dry_period(depth: float) -> float:
 	return DRY_GAIN_PERIOD / (1.0 + maxf(depth, 0.0) / DRY_RAMP)
+
+
+## Yaş sahə — `Vector3(mərkəz x, mərkəz y, radius)`.
+##
+## YAŞ ADA-da mərkəz gəzir, qalan rejimlərdə qabın mərkəzidir. [method dish_radius]
+## kimi YALNIZ rejimdən və matç saatından çıxır (prediction şərti).
+##
+## Ada [constant ISLAND_START]-a qədər bütün qabdır, sonra [constant ISLAND_SHRINK]
+## saniyədə [constant ISLAND_RADIUS]-a yığılır və "səkkiz" yolu ilə gəzir. Yolun
+## başlanğıcı lemniskatın düyünüdür — qabın mərkəzi, yəni yığılma sıçrayışsızdır.
+static func wet_circle(mode: int, t: float) -> Vector3:
+	if mode != Mode.ISLAND:
+		return Vector3(0.0, 0.0, dish_radius(mode, t))
+	if t <= ISLAND_START:
+		return Vector3(0.0, 0.0, ISLAND_WALL)
+	var c := island_center(t)
+	var k := clampf((t - ISLAND_START) / ISLAND_SHRINK, 0.0, 1.0)
+	return Vector3(c.x, c.y, lerpf(ISLAND_WALL, ISLAND_RADIUS, smoothstep(0.0, 1.0, k)))
+
+
+## Adanın mərkəzi — orta xətt (x = 0) boyunca şimal–cənub yırğalanır, dövrü
+## [constant ISLAND_PERIOD], yarımoxu [constant ISLAND_A].
+##
+## Bazalar qərbdə və şərqdədir, yəni ada hər an iki bazadan EYNİ uzaqlıqdadır. Əvvəl
+## yol "səkkiz" idi və ilk ilmədə ada qərbə — komanda 0-ın bazasına — gedirdi: şərq–qərb
+## oxunda komanda 0 səkkiz matçın yeddisini, şimal–cənub "səkkizində" isə ondan yeddisini
+## udurdu (səkkizin hər rübü bir tərəfə 113 px əyilir, birinci rüb qərbədir).
+static func island_center(t: float) -> Vector2:
+	if t <= ISLAND_START:
+		return Vector2.ZERO
+	return Vector2(0.0, ISLAND_A * sin(TAU * (t - ISLAND_START) / ISLAND_PERIOD))
+
+
+## NÜVƏ TOPU: Nüvənin radiusu çəkiyə görə — ağır Nüvə böyük və yavaşdır.
+static func ball_radius(weight: float) -> float:
+	return BALL_R0 + maxf(weight - float(BALL_WEIGHT), 0.0) * BALL_R_PER_W
+
+
+## NÜVƏ TOPU: [param pos] hansı komandanın qapısının içindədir (-1 heç birinin).
+##
+## Qapı şüşənin üstündəki yarıqdır: Nüvənin kənarı şüşəyə çatanda və mərkəzi qapının
+## eni boyunca olanda qol sayılır. Komanda 0-ın qapısı qərbdə (bucaq π), 1-inki şərqdə.
+static func goal_at(pos: Vector2, radius: float) -> int:
+	if pos.length() < BALL_WALL - radius - 4.0:
+		return -1
+	if absf(pos.y) > BALL_GOAL_HALF:
+		return -1
+	return 0 if pos.x < 0.0 else 1
 
 
 ## Kameranın göstərdiyi dünya sahəsi — 16:9 ekranın qısa kənarı boyunca.

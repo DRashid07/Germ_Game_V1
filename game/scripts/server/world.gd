@@ -136,6 +136,21 @@ var _revive := {}
 ## partlayanların siyahısına qatır ki, [Lobby] nəticəni göndərsin.
 var _revive_lost: Array = []
 
+## OBYEKT rejimləri (design/MODES.md §16): ölən mikrob öz bazasında yenidən doğulur —
+## `id -> {left, team, bot, name, color, species, charge, eye}`. Ölüm matçdan çıxarmır,
+## ona görə nəticə ekranı da yalnız matçın sonunda gəlir.
+var _respawn := {}
+## Ölən canların partlatmaları — nəticədə matç boyu cəmi göstərilir.
+var _obj_pops := {}
+## YAŞ ADA-nın xalları və NÜVƏ TOPU-nun qolları (indeks = komanda).
+var obj_score := PackedInt32Array([0, 0])
+## Qalib komanda: -1 hələ yoxdur, -2 heç-heçə.
+var obj_winner := -1
+## ANA HÜCEYRƏ: əlavə vaxt gedir.
+var mother_ot := false
+var _ot_fill := 0.0
+var _island_acc := 0.0
+
 var _frame_germs: Array = []    ## [Vector2 pos, Array row]
 var _frame_shots: Array = []
 ## Qida sətir massivi yox, iki sıx massivdir — bax [method _build_frame].
@@ -153,6 +168,8 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	# Atıcının gördüyü keçmişə qarşı yoxlama — həm onlayn serverdə, həm
 	# məşqdə (orada da rəqiblər 100 ms geridə çəkilir, öz topun isə indidə).
 	sim.lag_comp = true
+	# Rejimin öz qabı, xəritəsi və obyekti — doğuşdan ƏVVƏL (bax [method Sim.set_mode]).
+	sim.set_mode(int(mode))
 	# Qabın kənarı elə İNDİ qurulur, ilk tick-i gözləmədən.
 	#
 	# Oyunçu [method add_player] ilə tick-dən ƏVVƏL doğulur və
@@ -161,7 +178,7 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	# dairəsinin üçdə ikisi QURU zonaya düşürdü. Oyunçu geriyə sayımda,
 	# tərpənə bilmədən top yığmağa başlayırdı: doqquz çalışmanın altısı
 	# birinci saniyədə "QURUYUR — mərkəzə get" xəbərdarlığı ilə açılırdı.
-	sim.dish_radius = Const.dish_radius(int(mode), 0.0)
+	_apply_wet()
 	# Matçlı rejim oyunçu gözləyir; sonsuz arena isə həmişə açıqdır.
 	phase = Const.Phase.PLAYING if mode == Const.Mode.ENDLESS else Const.Phase.WAITING
 
@@ -237,6 +254,7 @@ func add_player(peer: int, player_name: String,
 	var g := sim.add_germ(peer, player_name, _free_color(), false, species)
 	g.team = _free_team() if team == -2 else team
 	teams[peer] = g.team
+	_place_at_base(g)
 	return g
 
 
@@ -372,7 +390,7 @@ func _reset_round() -> void:
 	# dəyəridir (ÜÇLÜK-də 220 px). Onsuz altı mikrob quruyub kiçilmiş qabın
 	# mərkəzinə — üstəlik maneənin üstünə — yığılırdı.
 	match_t = 0.0
-	sim.dish_radius = Const.dish_radius(int(mode), 0.0)
+	_apply_wet()
 	for gid in sim.germs.keys():
 		var g: Sim.GermState = sim.germs[gid]
 		g.balls = Const.START_BALLS
@@ -443,6 +461,9 @@ func _step_revive(dt: float) -> void:
 ## oyunçu bütün matç boyu cədvəlin birincisi ola, sonda isə dördüncü çıxa
 ## bilərdi. Üstəlik çox top saxlamaq bacarıq deyil — partlamağa yaxın olmaqdır.
 func _award_survivors() -> void:
+	if Const.is_objective_mode(int(mode)):
+		_award_teams()
+		return
 	var ids := sim.germs.keys()
 	ids.sort_custom(func(a, b) -> bool:
 		var ga: Sim.GermState = sim.germs[a]
@@ -509,7 +530,12 @@ func _match_row(peer: int) -> Array:
 	if mode == Const.Mode.TRIO and team >= 0 and round_wins.size() >= 2:
 		us = round_wins[team]
 		them = round_wins[1 - team]
-	return [
+	var objective := Const.is_objective_mode(int(mode))
+	if objective:
+		var score := team_scores()
+		us = score[team] if team == 0 or team == 1 else score[0]
+		them = score[1 - team] if team == 0 or team == 1 else score[1]
+	var row := [
 		int(mode),
 		int(phase),
 		phase_t,
@@ -520,6 +546,12 @@ func _match_row(peer: int) -> Array:
 		us,
 		them,
 	]
+	# Köhnə rejimlərin sətri dəyişmir — yeni sahələr yalnız obyekt rejimində gedir.
+	if objective:
+		row.append(_obj_row())
+		var r: Dictionary = _respawn.get(peer, {})
+		row.append(maxf(float(r.get("left", 0.0)), 0.0))
+	return row
 
 
 ## Sağ sayılan mikroblar — CÜT-də dirilmə gözləyən də SAĞ sayılır.
@@ -527,7 +559,7 @@ func _match_row(peer: int) -> Array:
 ## Yoxsa HUD-dakı "SAĞ: N" yoldaş öləndə düşür, 15 saniyə sonra qalxır və
 ## oyunçu kiminsə matçdan çıxdığını sanır.
 func _alive_count() -> int:
-	return sim.germs.size() + _revive.size()
+	return sim.germs.size() + _revive.size() + _respawn.size()
 
 
 ## Komandada neçə mikrob sağdır (dirilmə gözləyənlər DAXİL DEYİL).
@@ -549,6 +581,270 @@ func _teams_standing() -> int:
 	for gid in _revive:
 		seen[int(_revive[gid]["team"])] = true
 	return seen.size()
+
+
+# ---------------------------------------------------------------- obyekt rejimləri
+
+## Yaş sahəni dünyaya yazır. Radius və mərkəz YALNIZ rejimdən və matç saatından
+## çıxır ([method Const.wet_circle]) — client-in proqnozu eyni dəyəri özü hesablayır.
+func _apply_wet() -> void:
+	var wet := Const.wet_circle(int(mode), match_t)
+	sim.wet_center = Vector2(wet.x, wet.y)
+	sim.dish_radius = wet.z
+
+
+## Bazanın doğuş dairəsinin radiusu. ANA-da yuvanın içi dardır (Ana, tıxac, yan
+## seliklər), ona görə axtarış geniş dairədə gedir və maneələr yeri özü süzür.
+static func _base_spread(m: int) -> float:
+	match m:
+		Const.Mode.MOTHER: return 170.0
+		Const.Mode.ISLAND: return 100.0
+		_: return 110.0
+
+
+## Mikrobu öz komandasının bazasına qoyur (yalnız obyekt rejimlərində).
+func _place_at_base(g: Sim.GermState) -> void:
+	if not Const.is_objective_mode(int(mode)) or g.team < 0:
+		return
+	g.pos = sim.find_spawn_near(Const.team_base(int(mode), g.team), _base_spread(int(mode)),
+		g.radius())
+	g.vel = Vector2.ZERO
+	# Rəqibin tərəfinə baxır — doğulan kimi öz şüşəsinə atəş açmasın.
+	g.aim = 0.0 if g.team == 0 else PI
+
+
+## Ölən mikrobu bazada doğulma növbəsinə qoyur.
+func _queue_respawn(gid: int, team: int, entry: Dictionary) -> void:
+	_obj_pops[gid] = int(_obj_pops.get(gid, 0)) + int(entry.get("pops", 0))
+	var bot := _bots.has(gid)
+	_respawn[gid] = {
+		"left": Const.respawn_time(int(mode)),
+		"team": team,
+		"bot": bot,
+		"name": String(entry.get("name", "Mikrob")),
+		"color": int(entry.get("color", 0)),
+		"species": int(entry.get("species", 0)),
+		# Superin doluluğu ölümdən keçir (design/MODES.md §16.1) — ölüm tutumu alır, səbri yox.
+		"charge": int(entry.get("charge", 0)),
+		"eye": entry.get("pos", Const.team_base(int(mode), team)),
+	}
+	if bot:
+		_bots.erase(gid)
+
+
+func _step_respawn(dt: float) -> void:
+	if _respawn.is_empty():
+		return
+	for gid in _respawn.keys():
+		var r: Dictionary = _respawn[gid]
+		r["left"] = float(r["left"]) - dt
+		if float(r["left"]) > 0.0:
+			continue
+		_respawn.erase(gid)
+		_respawn_now(gid, r)
+
+
+func _respawn_now(gid: int, r: Dictionary) -> void:
+	var g := sim.add_germ(gid, String(r["name"]), int(r["color"]), bool(r["bot"]),
+		Const.species_from(int(r["species"])))
+	g.team = int(r["team"])
+	g.charge = int(r["charge"])
+	_place_at_base(g)
+	if bool(r["bot"]):
+		_bots[gid] = Bot.new(gid, sim.rng.randf_range(0.7, 1.3), sim.rng.randi())
+	sim.events.append({"t": "super", "pos": g.pos, "arg": 0.0, "color": g.color})
+
+
+## Komandaların hesabı: ANA-da Anaların top sayı, ADA-da xal, TOP-da qol.
+func team_scores() -> PackedInt32Array:
+	if mode == Const.Mode.MOTHER:
+		return sim.mother_balls.duplicate()
+	return obj_score.duplicate()
+
+
+## Adada neçə SAĞ mikrob var — komandaya görə.
+func island_counts() -> PackedInt32Array:
+	var n := PackedInt32Array([0, 0])
+	var r2 := sim.dish_radius * sim.dish_radius
+	for gid in sim.germs:
+		var g: Sim.GermState = sim.germs[gid]
+		if g.alive and (g.team == 0 or g.team == 1) \
+				and g.pos.distance_squared_to(sim.wet_center) <= r2:
+			n[g.team] += 1
+	return n
+
+
+## Matçı obyekt qərar verir — tick-dən SONRA, çünki Ana və qol `sim.step`-in içində olur.
+func _step_objective(dt: float) -> void:
+	match int(mode):
+		Const.Mode.MOTHER:
+			_step_mother(dt)
+		Const.Mode.ISLAND:
+			_step_island(dt)
+		Const.Mode.BALL:
+			_step_ball_match()
+
+
+## ANA HÜCEYRƏ: partlayan Ana matçı bitirir; 2:30-da daha boş Ana udur, yaxındırsa
+## 30 s əlavə vaxt — əmmək dayanır, iki Ana da dolur (design/MODES.md §16.2).
+func _step_mother(dt: float) -> void:
+	if sim.mother_burst >= 0:
+		_finish(1 - sim.mother_burst, false)
+		return
+	if mother_ot:
+		_ot_fill += Const.MOTHER_OT_FILL * dt
+		while _ot_fill >= 1.0:
+			_ot_fill -= 1.0
+			sim.mother_balls[0] += 1
+			sim.mother_balls[1] += 1
+		var over := [sim.mother_balls[0] > Const.MOTHER_CAP, sim.mother_balls[1] > Const.MOTHER_CAP]
+		if over[0] or over[1]:
+			for t in 2:
+				if over[t] and sim.mother_index[t] >= 0:
+					var o := sim.obstacles[sim.mother_index[t]]
+					sim.events.append({"t": "break", "pos": Vector2(o.x, o.y), "arg": o.z, "color": 0})
+			_finish(-2 if over[0] and over[1] else (1 if over[0] else 0), false)
+			return
+		if match_t >= Const.MOTHER_TIME + Const.MOTHER_OT:
+			_finish(_emptier_mother(1), true)
+		return
+	if match_t < Const.MOTHER_TIME:
+		return
+	if _emptier_mother(Const.MOTHER_TIE) >= 0:
+		_finish(_emptier_mother(Const.MOTHER_TIE), true)
+	else:
+		mother_ot = true
+		sim.mother_ot = true
+
+
+## Daha boş Ananın komandası — fərq [param gap]-dən azdırsa -2 (bərabər).
+func _emptier_mother(gap: int) -> int:
+	var d := sim.mother_balls[0] - sim.mother_balls[1]
+	if absi(d) < gap:
+		return -2
+	return 0 if d < 0 else 1
+
+
+## YAŞ ADA: hər saniyə adada SAĞ mikrobu çox olan komandaya +1 xal.
+func _step_island(dt: float) -> void:
+	if match_t >= Const.ISLAND_START + Const.ISLAND_SHRINK:
+		_island_acc += dt
+		while _island_acc >= 1.0:
+			_island_acc -= 1.0
+			_island_point()
+	for t in 2:
+		if obj_score[t] >= Const.ISLAND_WIN:
+			_finish(t, false)
+			return
+	# 3:00-dan sonra bərabərlik "ilk fərq" ilə açılır; 4:00 son həddir.
+	if match_t >= Const.ISLAND_TIME and obj_score[0] != obj_score[1]:
+		_finish(0 if obj_score[0] > obj_score[1] else 1, true)
+	elif match_t >= Const.MATCH_MAX:
+		_finish(-2, true)
+
+
+func _island_point() -> void:
+	var n := island_counts()
+	var t := -1
+	if n[0] != n[1]:
+		t = 0 if n[0] > n[1] else 1
+	elif n[0] > 0:
+		# Bərabərlik geridə qalanındır — yalnız fərq böyükdürsə (qaçan hesabı dondurmasın).
+		var gap := obj_score[0] - obj_score[1]
+		if gap <= -Const.ISLAND_CATCHUP:
+			t = 0
+		elif gap >= Const.ISLAND_CATCHUP:
+			t = 1
+	if t >= 0:
+		obj_score[t] += 1
+
+
+## NÜVƏ TOPU: qol hamını yerinə qaytarır; ilk 2 qol, 2:30-da çox qolu olan, bərabərdirsə
+## ilk qol (ən çox [constant Const.BALL_OT] saniyə, sonra heç-heçə).
+func _step_ball_match() -> void:
+	var g := sim.ball_goal
+	if g >= 0:
+		obj_score[g] += 1
+		if obj_score[g] >= Const.BALL_GOALS or match_t >= Const.BALL_TIME:
+			_finish(g, match_t >= Const.BALL_TIME)
+		else:
+			_kickoff()
+		return
+	if match_t >= Const.BALL_TIME and obj_score[0] != obj_score[1]:
+		_finish(0 if obj_score[0] > obj_score[1] else 1, true)
+	elif match_t >= Const.BALL_TIME + Const.BALL_OT:
+		_finish(-2, true)
+
+
+## Qoldan sonra: ölənlər dərhal doğulur, hamı bazasına qayıdır, Nüvə mərkəzə, 3 s sayım.
+## Matçın saatı dayanır (sayımda `match_t` artmır).
+func _kickoff() -> void:
+	for gid in _respawn.keys():
+		var r: Dictionary = _respawn[gid]
+		_respawn.erase(gid)
+		_respawn_now(gid, r)
+	for gid in sim.germs:
+		var g: Sim.GermState = sim.germs[gid]
+		_place_at_base(g)
+		g.safe_t = maxf(g.safe_t, Const.SPAWN_SAFE_TIME)
+	sim.shots.clear()
+	if sim.ball != null:
+		sim.ball.reset()
+	# Köhnə giriş təkrarlanmasın və gec giriş mikrobu köhnə yerinə qaytarmasın
+	# (bax [method _reset_round] — eyni səbəb).
+	for peer in peers:
+		_inputs.erase(peer)
+		_forget_replay(peer)
+	_set_phase(Const.Phase.COUNTDOWN)
+
+
+func _finish(winner: int, by_time: bool) -> void:
+	obj_winner = winner
+	timed_out = by_time
+	_set_phase(Const.Phase.OVER)
+
+
+## Obyekt rejiminin nəticəsi KOMANDANINDIR: hər insan — sağ da, doğulmağı gözləyən
+## də — eyni anda nəticə alır. Yer: qalib komanda 1, uduzan 2, heç-heçədə hamı 1.
+func _award_teams() -> void:
+	var score := team_scores()
+	for gid in teams:
+		var t := int(teams[gid])
+		places[gid] = 1 if obj_winner == -2 or t == obj_winner else 2
+	for peer in peers:
+		var t := int(teams.get(peer, -1))
+		var g: Sim.GermState = sim.germs.get(peer)
+		var us := score[t] if t == 0 or t == 1 else 0
+		var them := score[1 - t] if t == 0 or t == 1 else 0
+		pending_results.append({
+			"id": peer,
+			"killer_name": "",
+			"pops": int(_obj_pops.get(peer, 0)) + (g.pops if g != null else 0),
+			"cap": g.capacity if g != null else Const.START_CAPACITY,
+			"age": match_t,
+			"won": obj_winner >= 0 and t == obj_winner,
+			"survived": true,
+			"timed_out": timed_out,
+			"draw": obj_winner == -2,
+			"mode": int(mode),
+			"score_us": us,
+			"score_them": them,
+		})
+
+
+## Snapshot-un OBJ sahəsi (bax [enum Const.MF]): birinci ədəd həmişə matçın saatıdır —
+## NÜVƏ TOPU-nda qoldan sonrakı sayım fazanın saatını sıfırlayır, matçınkını yox.
+func _obj_row() -> PackedFloat32Array:
+	var o := PackedFloat32Array([match_t])
+	match int(mode):
+		Const.Mode.MOTHER:
+			o.append(1.0 if mother_ot else 0.0)
+		Const.Mode.ISLAND:
+			o.append_array([sim.wet_center.x, sim.wet_center.y, sim.dish_radius])
+		Const.Mode.BALL:
+			var b := sim.ball
+			o.append_array([b.pos.x, b.pos.y, b.vel.x, b.vel.y, b.weight, 1.0 if b.alive else 0.0])
+	return o
 
 
 # ---------------------------------------------------------------- botlar
@@ -593,6 +889,7 @@ func _add_bot() -> void:
 	var g := sim.add_germ(bid, Bot.random_name(_bot_name_no), _free_color(), true, species)
 	g.team = _free_team()
 	teams[bid] = g.team
+	_place_at_base(g)
 
 
 ## Bir botu çıxarır; [param team] verilibsə, yalnız o komandanın botunu.
@@ -625,7 +922,9 @@ func _keep_population(dt: float) -> void:
 	if mode != Const.Mode.ENDLESS:
 		if phase != Const.Phase.WAITING and phase != Const.Phase.COUNTDOWN:
 			return
-		while sim.germs.size() < Const.mode_capacity(int(mode)):
+		# Doğulmağı gözləyən də yer tutur — NÜVƏ TOPU-nda qoldan sonrakı sayımda
+		# ölənlərin yerinə bot gəlməsin.
+		while sim.germs.size() + _respawn.size() < Const.mode_capacity(int(mode)):
 			_add_bot()
 		return
 
@@ -701,6 +1000,7 @@ func accept_input(peer: int, packed: Array) -> void:
 		if queued.fire and (queued.shot or not inp.shot):
 			inp.fire_aim = queued.aim if is_nan(queued.fire_aim) else queued.fire_aim
 			inp.view_tick = queued.view_tick
+			inp.fire_from = queued.fire_from
 			inp.shot = queued.shot
 			inp.fire_wait = queued.fire_wait
 		inp.fire = inp.fire or queued.fire
@@ -719,7 +1019,7 @@ func tick(dt: float) -> Array:
 	_step_phase(dt)
 	# Qabın kənarı YALNIZ rejimdən və matç saatından çıxır — prediction şərti
 	# (bax [method Const.dish_radius]).
-	sim.dish_radius = Const.dish_radius(int(mode), match_t)
+	_apply_wet()
 	_keep_population(dt)
 	# Spor TƏK QALAN və CÜT-dədir. ÜÇLÜK-də yoxdur: raund 60 saniyədir və
 	# tutum artımı o qədər qısa oyunda balansı pozur (bax design/MODES.md §6.4).
@@ -728,10 +1028,18 @@ func tick(dt: float) -> Array:
 		sim.keep_spores(dt)
 	if phase == Const.Phase.PLAYING:
 		_step_revive(dt)
+		_step_respawn(dt)
 
+	# Geri sayımda botlar da DAYANIR, insanlar kimi (insanın girişi bağlıdır — bax
+	# [method accept_input]). Botun girişi o qapıdan keçmir və əvvəl botlar sayımda
+	# tərpənirdi: TƏK QALAN/CÜT/ÜÇLÜK-də insandan 3 s qabaq yer seçirdilər (ölçülüb — matç
+	# başına mikroblar cəmi 4.5–7.6 min px yer dəyişirdi), NÜVƏ TOPU-nda isə qoldan sonrakı
+	# sayımda Nüvəni qapıya itələyirdilər, qol sayılmırdı və Nüvə yox olurdu.
+	var frozen := phase == Const.Phase.COUNTDOWN
 	for bid in _bots:
 		var bot: Bot = _bots[bid]
-		_inputs[bid] = bot.think(sim, dt)
+		_inputs[bid] = Sim.PlayerInput.make(0, Vector2.ZERO, sim.germs[bid].aim, false) \
+			if frozen and sim.germs.has(bid) else bot.think(sim, dt)
 
 	# Gec gələn girişlər təxmin olunan tick-lər üçün yenidən oynadılır (bax [constant REPLAY_MAX]).
 	_replay_late()
@@ -803,6 +1111,10 @@ func tick(dt: float) -> Array:
 		# (bax [method _step_revive]). Yoldaşı da ölübsə, cüt matçdan çıxır və
 		# adi ölüm yolu işləyir.
 		var t: int = int(teams.get(gid, -1))
+		# OBYEKT rejimi — ölüm həmişə MÜVƏQQƏTİDİR: mikrob bazasında yenidən doğulur.
+		if Const.is_objective_mode(int(mode)):
+			_queue_respawn(gid, t, entry)
+			continue
 		if mode == Const.Mode.DUO and phase == Const.Phase.PLAYING \
 				and _team_alive(t) > 0:
 			_revive[gid] = {
@@ -829,7 +1141,10 @@ func tick(dt: float) -> Array:
 	out.append_array(_revive_lost)
 	_revive_lost.clear()
 
-	if phase == Const.Phase.PLAYING and _match_over():
+	# Obyekt rejimini komandanın qırılması BİTİRMİR (hamı dirilir) — obyekt və vaxt bitirir.
+	if phase == Const.Phase.PLAYING and Const.is_objective_mode(int(mode)):
+		_step_objective(dt)
+	elif phase == Const.Phase.PLAYING and _match_over():
 		# ÜÇLÜK-də bir komandanın qırılması RAUNDU bitirir, matçı yox.
 		if mode == Const.Mode.TRIO:
 			_end_round()
@@ -963,6 +1278,9 @@ static func _flags_of(g: Sim.GermState) -> int:
 func snapshot_for(peer: int) -> Array:
 	var g: Sim.GermState = sim.germs.get(peer)
 	var eye: Vector2 = g.pos if g != null else Vector2.ZERO
+	# Doğulmağı gözləyən öldüyü yeri görür — client-in kamerası da orada qalır.
+	if g == null and _respawn.has(peer):
+		eye = _respawn[peer]["eye"]
 	# Böyük mikrob daha geniş görür, ona görə sahə tutumla birlikdə böyüyür —
 	# əks halda ekranın kənarında obyektlər kəsilərdi.
 	var cap: int = g.capacity if g != null else Const.START_CAPACITY
@@ -980,7 +1298,8 @@ func snapshot_for(peer: int) -> Array:
 	# (nədən qaçıram) → hadisə (nə baş verdi) → qida (sonra yeyərəm).
 	var germs := _near_germs(_frame_germs, eye, r2, eye_bush, peer)
 	var n_germs: int = (germs[0] as PackedInt32Array).size()
-	var left: int = maxi(Const.MTU_SAFE - Const.SNAP_FIXED - n_germs * Const.GERM_BYTES, 120)
+	var fixed := Const.SNAP_FIXED + (Const.SNAP_OBJ if Const.is_objective_mode(int(mode)) else 0)
+	var left: int = maxi(Const.MTU_SAFE - fixed - n_germs * Const.GERM_BYTES, 120)
 
 	var shot_n: int = clampi(left * 40 / 100 / Const.SHOT_BYTES, 4, Const.SHOT_SEND_MAX)
 	left -= shot_n * Const.SHOT_BYTES
@@ -1235,7 +1554,7 @@ func resume_peer(old_peer: int, new_peer: int) -> void:
 	# snapshot-unda komandası -1 olardı və HUD yoldaşını düşmən kimi göstərərdi.
 	# `_revive` də: dirilməni gözləyərkən qayıdan oyunçu YENİ id ilə dirilməlidir,
 	# köhnə id ilə dirilən mikrob heç kimin olmazdı.
-	for src in [tokens, _last_seq, teams, places, _revive]:
+	for src in [tokens, _last_seq, teams, places, _revive, _respawn, _obj_pops]:
 		if src.has(old_peer):
 			src[new_peer] = src[old_peer]
 			src.erase(old_peer)
@@ -1254,7 +1573,7 @@ func is_suspended(peer: int) -> bool:
 ## gözləyir. İkinci hal üçün `sim.germs.has` KİFAYƏT DEYİL — ölü mikrob oradan
 ## çıxır, oyunçu isə matçdadır və yoldaşı onu diriltməlidir.
 func holds(peer: int) -> bool:
-	return sim.germs.has(peer) or _revive.has(peer)
+	return sim.germs.has(peer) or _revive.has(peer) or _respawn.has(peer)
 
 
 ## Oyunçu dünyanı tərk edir (partladı, çıxdı və ya qayıtmadı).
@@ -1269,6 +1588,7 @@ func drop_peer(peer: int) -> void:
 	# Dirilmə növbəsi də: yoxsa matçı tərk edən (və ya qayıtmayan) oyunçunun
 	# mikrobu 15 s sonra dirilir və sahibsiz dünyada qalırdı.
 	_revive.erase(peer)
+	_respawn.erase(peer)
 
 
 func is_empty() -> bool:
@@ -1342,9 +1662,12 @@ func _replay_late() -> void:
 func _scratch_germ(peer: int, g: Sim.GermState, start: Array) -> Sim.GermState:
 	if _scratch == null:
 		_scratch = Sim.new()
+		# Şüşə və maneələr rejimindir — yenidən oynatma eyni həndəsədə getməlidir.
+		_scratch.set_mode(int(mode))
 	_scratch.germs.clear()
 	_scratch.broken = sim.broken
 	_scratch.dish_radius = sim.dish_radius
+	_scratch.wet_center = sim.wet_center
 	var c := Sim.GermState.new()
 	c.id = peer
 	c.species = g.species

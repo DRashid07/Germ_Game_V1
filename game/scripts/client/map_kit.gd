@@ -194,17 +194,18 @@ static func lip_width(angle: float) -> float:
 ## Qabın bayırı: dodaqda `BG_OUTER`, 600 px-də `BG_VIGNETTE`, sonra düz —
 ## bişməmiş radial vinyet, göz qaba yığılır. Xarici radius kameranın ən geniş
 ## baxışından böyükdür: halqanın kənarı heç vaxt ekrana düşmür.
-static func backdrop_mesh() -> ArrayMesh:
-	if _meshes.has("backdrop"):
-		return _meshes["backdrop"]
-	var r := Const.WORLD_RADIUS
+## [param r] — qabın şüşəsi ([method Const.wall_radius]); obyekt rejimlərinin qabı kiçikdir.
+static func backdrop_mesh(r := Const.WORLD_RADIUS) -> ArrayMesh:
+	var key := "backdrop%d" % roundi(r)
+	if _meshes.has(key):
+		return _meshes[key]
 	var near := func(_a: float) -> float: return r - 2.0
 	var mid := func(_a: float) -> float: return r + 600.0
 	var far := func(_a: float) -> float: return r + 2600.0
 	var outer := func(_a: float) -> Color: return Palette.BG_OUTER
 	var dark := func(_a: float) -> Color: return Palette.BG_VIGNETTE
-	_meshes["backdrop"] = ring_mesh([[128, near, mid, outer, dark], [64, mid, far, dark, dark]])
-	return _meshes["backdrop"]
+	_meshes[key] = ring_mesh([[128, near, mid, outer, dark], [64, mid, far, dark, dark]])
+	return _meshes[key]
 
 
 ## Şimal divarı: ayağı dodaqda (V = 1), üstü bayırda (V = 0), eni
@@ -216,10 +217,10 @@ static func backdrop_mesh() -> ArrayMesh:
 ## divar kağızı kimi oxunurdu. Çevrilmiş kafelin kənarı qonşusunun eyni kənarı
 ## ilə görüşür (güzgü), çevrilməmişlə çevrilmiş də, iki çevrilmiş də tikişsizdir —
 ## zolaq özü üfüqi tikişsizdir. Seçim indeksdən deterministik çıxır.
-static func rim_mesh() -> ArrayMesh:
-	if _meshes.has("rim"):
-		return _meshes["rim"]
-	var r := Const.WORLD_RADIUS
+static func rim_mesh(r := Const.WORLD_RADIUS) -> ArrayMesh:
+	var key := "rim%d" % roundi(r)
+	if _meshes.has(key):
+		return _meshes[key]
 	var tiles := maxi(1, roundi(TAU * r / WALL_TILE))
 	var sub := 10
 	var verts := PackedVector2Array()
@@ -252,7 +253,7 @@ static func rim_mesh() -> ArrayMesh:
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	_meshes["rim"] = mesh
+	_meshes[key] = mesh
 	return mesh
 
 
@@ -270,10 +271,10 @@ static func wall_tile_flipped(k: int) -> bool:
 ## Cənub dodağı: şüşənin gövdəsi dərinə doğru sönür, kənarında nazik işıq
 ## xətti var. Cənubda (yaxın divar) daha sıxdır — kamera oradan şüşənin
 ## qalınlığına baxır.
-static func lip_mesh() -> ArrayMesh:
-	if _meshes.has("lip"):
-		return _meshes["lip"]
-	var r := Const.WORLD_RADIUS
+static func lip_mesh(r := Const.WORLD_RADIUS) -> ArrayMesh:
+	var key := "lip%d" % roundi(r)
+	if _meshes.has(key):
+		return _meshes[key]
 	var body_in := func(a: float) -> float: return r - lip_width(a)
 	var body_out := func(_a: float) -> float: return r - 2.5
 	var edge_out := func(_a: float) -> float: return r + 0.5
@@ -282,9 +283,9 @@ static func lip_mesh() -> ArrayMesh:
 		return Color(Palette.DISH_EDGE, 0.16 + 0.16 * pow(maxf(0.0, sin(a)), 1.5))
 	var shine := func(a: float) -> Color:
 		return Color(Palette.RIM_LINE, 0.40 + 0.25 * maxf(0.0, sin(a)))
-	_meshes["lip"] = ring_mesh([[192, body_in, body_out, clear, glass],
+	_meshes[key] = ring_mesh([[192, body_in, body_out, clear, glass],
 		[192, body_out, edge_out, shine, shine]])
-	return _meshes["lip"]
+	return _meshes[key]
 
 
 ## Qapalı halqalardan BİR səthli mesh (bir çəkiliş çağırışı). Hər element:

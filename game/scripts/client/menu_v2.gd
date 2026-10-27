@@ -110,12 +110,15 @@ const STAT_BAR_W := 300.0
 const MENU_GERM_COLOR := 0
 const GRID_GAP := 30.0
 const ROW_W := 700.0
+## İki sütunlu siyahıda sətrin eni və sütunlar arası boşluq (bax [method _build_mode_list]).
+const ROW_W2 := 560.0
+const COL_GAP := 30.0
 const ROW_H := 104.0
 const ROW_GAP := 14.0
 ## Rejimlərin rəngi — [constant Palette.GERM_COLORS] indeksləri. Rejim kartı
 ## bu rənglə dolur (Brawl Stars-da hər rejimin öz rəngi var: Gem Grab
 ## bənövşəyi, Showdown yaşıl) və ikonlar da məhz bu rənglərlə çəkilib.
-const MODE_TINT := [1, 3, 7, 4]
+const MODE_TINT := [1, 3, 7, 4, 5, 6, 9]
 const CARD := Vector2(176.0, 96.0)
 
 ## Vərəqdəki canlı mikrobların tutumu: içindəki topların sayı bundan asılıdır.
@@ -171,6 +174,10 @@ const _MODE_ICONS := {
 	Const.Mode.SOLO: "res://assets/menu/mode_solo.png",
 	Const.Mode.DUO: "res://assets/menu/mode_duo.png",
 	Const.Mode.TRIO: "res://assets/menu/mode_trio.png",
+	# Obyekt rejimləri — eyni ikon dilində Codex ilə (`build/codex/obj_brief/BRIEF_OBJ_B.md`).
+	Const.Mode.MOTHER: "res://assets/menu/mode_mother.png",
+	Const.Mode.ISLAND: "res://assets/menu/mode_island.png",
+	Const.Mode.BALL: "res://assets/menu/mode_ball.png",
 }
 
 ## Qəhrəmanın sığdığı qutu — ekran HÜNDÜRLÜYÜNƏ nisbətdə. Hündürlük, çünki
@@ -2155,16 +2162,27 @@ func _refresh_select() -> void:
 ##
 ## Brawl Stars-ın Events ekranı da belədir: rejimlər bərabər deyil, sıralıdır —
 ## sonsuz arena giriş, ÜÇLÜK isə ən dar oyundur. Göz yuxarıdan aşağı bir dəfə keçir.
+##
+## Yeddi rejim bir sütuna sığmır (7 × 118 = 826 px, ekran 720): sol sütunda döyüş
+## rejimləri (sona qalan, raund), sağda obyekt rejimləri — Ana, ada, Nüvə. Sütun bir
+## sualdır: "kimi partladım" yoxsa "nəyi tutum".
 func _build_mode_list() -> void:
 	var n := Const.Mode.size()
-	var h := ROW_H * float(n) + ROW_GAP * float(n - 1)
+	var first := int(Const.Mode.MOTHER)
+	var per := maxi(first, n - first)
+	var two := n > first
+	var w := ROW_W2 if two else ROW_W
+	var h := ROW_H * float(per) + ROW_GAP * float(per - 1)
 	for i in n:
 		var mode := Const.mode_from(i)
+		var col := 1 if two and i >= first else 0
+		var r := i - first if col == 1 else i
+		var x0 := (-w - COL_GAP * 0.5 if col == 0 else COL_GAP * 0.5) if two else -w * 0.5
 		var row := Button.new()
 		row.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-		row.offset_left = -ROW_W * 0.5
-		row.offset_right = ROW_W * 0.5
-		row.offset_top = -h * 0.5 + 30.0 + float(i) * (ROW_H + ROW_GAP)
+		row.offset_left = x0
+		row.offset_right = x0 + w
+		row.offset_top = -h * 0.5 + 30.0 + float(r) * (ROW_H + ROW_GAP)
 		row.offset_bottom = row.offset_top + ROW_H
 		row.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 		row.pressed.connect(func() -> void:
@@ -2201,7 +2219,7 @@ func _build_mode_list() -> void:
 		nm.theme_type_variation = "Heading"
 		nm.text = Const.mode_name(int(mode))
 		nm.position = Vector2(110, 14)
-		nm.size = Vector2(ROW_W - 130, 38)
+		nm.size = Vector2(w - 130, 38)
 		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		ChunkyBox.stroke(nm, 6, true)
 		row.add_child(nm)
@@ -2209,7 +2227,7 @@ func _build_mode_list() -> void:
 		var note := Hud._make_label(16, Palette.TEXT)
 		note.text = Const.mode_note(int(mode))
 		note.position = Vector2(110, 54)
-		note.size = Vector2(ROW_W - 130, 26)
+		note.size = Vector2(w - 130, 26)
 		note.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		ChunkyBox.stroke(note, 4)
 		row.add_child(note)

@@ -713,6 +713,42 @@ godot --path game -- --practice --mutations
 - **Botlar** eyni hədlərdə, eyni yoxlamadan keçən seçim edir (növünə görə plan) və öz
   məsafəsini mutasiya ilə hesablayır.
 
+**Membran müdafiəsi (eksperimental profil, yalnız SONSUZ ARENA).** Vaxtlama ilə bir atəşi
+geri qaytarmaq: **E** və ya superin üstündəki membran düyməsi (design/MODES.md §20).
+Profillər bit maskasıdır və birlikdə açıla bilər:
+
+```bash
+godot --headless --path game -- --server --ws --profile membrane            # yalnız membran
+godot --headless --path game -- --server --ws --profile mutations,membrane  # ikisi birlikdə
+godot --path game -- --practice --membrane                                   # məşq
+```
+
+| | |
+|---|---|
+| Aktiv pəncərə | 0.18 s — öndən (nişanın ±60°-si, cəmi 120°) gələn **ilk** düşmən mərmisini qaytarır, sonra pəncərə dərhal bitir |
+| Bərpa | 0.35 s — müdafiə yoxdur, atəş və super bloklu (hərəkət və nişan davam edir) |
+| Soyuma | 7 s, aktivləşmədən sayılır |
+| Qiyməti | 1 top; döşəmə atəşinkidir (`FIRE_MIN_BALLS` 4) — aclıqdan öldürmür |
+| Olmaz | super işləyərkən, doğuş qalxanında, soyumada, top azdırsa — rədd heç nə xərcləmir |
+
+- **Qayıtma** səth normalı ilə (`v − 2(v·n)n`). Sahib, komanda, rəng və sonrakı partlatmanın
+  mükafatı müdafiəçiyə keçir; yük (iynə +1 qalır), profil, qalan ömür və sıçrayış sayı
+  dəyişmir. Bir mərmi bir dəfə qayıdır. Qaytarma özü super vermir, HIT yaratmır
+  ([`Sim._reflect`](game/scripts/shared/sim.gd)).
+- Eyni tick-də bir müdafiəçiyə bir neçə mərmi dəyirsə, **təmas anı** ən erkən olan qayıdır
+  (siyahı sırası yox); eyni tick-də atəş/super/membran — əvvəl membran, qəbul olunsa həmin
+  tick-in hücumları atılır. Server və proqnoz eyni kodu işlədir.
+- **Damcı qayıtmır** (yuxarıdan düşür) — düşmə halqasında kiçik aşağı ox bunu göstərir.
+  Kirpiklinin superi və amöbün miniqanı dəyişmir; miniqanın topları da qaytarıla bilər.
+- Geri sarılan atəşdə membranın **tarixi** halı (atıcının gördüyü an) yoxlanır — indiki
+  membran keçmişdə dəymiş topa tətbiq olunmur.
+- **Görüntü:** yalnız ön membranda qısa ağ "sərtləşmə" (aktiv), nazik narıncı qırıq qövs
+  (bərpa — rəqib vaxtını buradan seçir); tam dairəvi qalxan yoxdur, GPU və GDScript yolunda
+  eyni ([`MembraneArc`](game/scripts/client/membrane_arc.gd)). Düymə hazır / aktiv / bərpa /
+  soyuma göstərir, mümkün olmayanda səbəbi yazır.
+- **Botlar** yalnız üzlərinə uçan, dəyməyə az qalmış görünən düz mərmiyə (bacarığa bağlı
+  ehtimalla) membran açır.
+
 **Quru zonada qida yoxdur.** Qab daralanda kənarda qalan qida quruyur və
 doğuş hədəfi də qabın ölçüsü ilə kiçilir. Bu, qaydanı bir cümləyə yığır:
 *quru zonada TOP var, QİDA yoxdur.* Onsuz matçın sonu ilişirdi — aşağıya bax.
@@ -1083,6 +1119,7 @@ game/                    Godot layihəsi
       attack_test.gd     növlərin adi atəşi — `--simtest`-in içindən
       colony_test.gd     qida koloniyaları — `--simtest`-in içindən
       mutation_test.gd   mutasiyalar — `--simtest`-in içindən
+      membrane_test.gd   membran müdafiəsi — `--simtest`-in içindən
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -1171,7 +1208,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar (999 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran (1030 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

@@ -205,6 +205,8 @@ static func run() -> int:
 	ColonyTest.run()
 	# Matç içi mutasiyalar — eksperimental profil (bax [MutationTest]).
 	MutationTest.run()
+	# Vaxtlı membran müdafiəsi — eksperimental profil (bax [MembraneTest]).
+	MembraneTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 

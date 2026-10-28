@@ -752,6 +752,14 @@ yellənən qamçı; **YAPIŞQAN AYAQLAR** — membranın altından çıxan altı
 Üçü də gövdənin ARXASINDA çəkilir, kökləri membranın altında qalır — əlavə halqa yoxdur,
 membran böyümür, yəni toqquşma ölçüsü haqqında yalan demir.
 
+### Membran müdafiəsi — yalnız ÖN qövs (2026-10-28)
+
+[`MembraneArc`](../game/scripts/client/membrane_arc.gd) (design/MODES.md §20) membranın
+yalnız kilidli istiqamətinin ±60°-sini çəkir — faktiki müdafiə bucağından geniş deyil. AKTİV
+pəncərədə qalın ağ-mavi qövs (membran "sərtləşir"), BƏRPA-da nazik narıncı qırıq qövs: rəqib
+"indi açıqdır" anını buradan oxuyur. Tam dairəvi qalxan çəkilmir. Düymənin ikonu da eyni
+qövsdür: hazırda mavi, aktivdə ağ, bərpada narıncı, soyumada boz və halqa dolur.
+
 ---
 
 ### 4b. Xəritənin dərinliyi

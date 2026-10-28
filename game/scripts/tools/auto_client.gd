@@ -129,8 +129,16 @@ func _on_world_joined(info: Dictionary) -> void:
 	if drop_after > 0.0:
 		tree.create_timer(drop_after).timeout.connect(_simulate_drop)
 
+	# Membran profili: hazır olanda ara-sıra basılır (şəbəkə yolu sınağı), serverin təsdiqi sayılır.
+	if Const.rule_on(int(info.get("profile", 0)), Const.Profile.MEMBRANE):
+		_log("PROFİL: membran (eksperimental)")
+		var mem := Timer.new()
+		mem.wait_time = 0.25
+		mem.autostart = true
+		mem.timeout.connect(_membrane_step)
+		add_child(mem)
 	# Mutasiya profili: açılan seçim kartların öz yolu ilə (1-ci kart) seçilir.
-	if int(info.get("profile", 0)) == Const.Profile.MUTATIONS:
+	if Const.rule_on(int(info.get("profile", 0)), Const.Profile.MUTATIONS):
 		_log("PROFİL: mutasiyalar (eksperimental)")
 		_join_ms = Time.get_ticks_msec()
 		var evo := Timer.new()
@@ -167,6 +175,24 @@ func _evolve_step() -> void:
 		_log("MUTASİYA kartı seçilir (girişdən %.1f s, açılmış seçim %d)" % [
 			(Time.get_ticks_msec() - _join_ms) / 1000.0, _arena._evo])
 		cards.key(0)
+
+
+## Membran sınağı: basış sayı və serverin təsdiqlədiyi aktivləşmə (soyuma sıçrayışı).
+var _mem_presses := 0
+var _mem_server := 0
+var _mem_cd_last := 0.0
+
+
+func _membrane_step() -> void:
+	if _arena == null or not is_instance_valid(_arena) or _arena.me == null:
+		return
+	var cd := _arena._mem_cd_srv
+	if cd > _mem_cd_last + 1.0:
+		_mem_server += 1
+	_mem_cd_last = cd
+	if _arena.me.membrane_ready() and randf() < 0.05:
+		_arena._membrane_flag = true
+		_mem_presses += 1
 
 
 static func _mut_names(bits: int) -> String:
@@ -264,7 +290,10 @@ func _log_hits() -> void:
 		_log("DAMCI: öz damcının server zərbələri %d (dərhal göstərildi)" % int(st["lob_hits"]))
 	if st.has("claims") and not (st["claims"] as Dictionary).is_empty():
 		_log("TƏSDİQ: server↔proqnoz (atəş tick fərqi, xətt boyu px): %s" % str(st["claims"]))
-	if _arena._profile == Const.Profile.MUTATIONS:
+	if Const.rule_on(_arena._profile, Const.Profile.MEMBRANE):
+		_log("MEMBRAN: basış %d · serverin aktivləşməsi %d · qaytardığım top %d · qaytarılan topum %d" % [
+			_mem_presses, _mem_server, int(st.get("parry_mine", 0)), int(st.get("parried_me", 0))])
+	if Const.rule_on(_arena._profile, Const.Profile.MUTATIONS):
 		_log("MUTASİYA: aktiv %s · açılmış seçim %d · başqalarında görülən %d mikrob %s" % [
 			_mut_names(_arena.me.mutations), _arena._evo, _others_mut.size(), str(_others_mut.values())])
 	# Qida koloniyaları: client-in gördüyü say, doluluq və bərpa halqası (bax [ColonyView]).

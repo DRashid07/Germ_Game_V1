@@ -97,22 +97,26 @@ var mode := Const.Mode.ENDLESS
 ## Qaydalar profili ([enum Const.Profile]). Mutasiyalar yalnız SONSUZ ARENA-da və yalnız
 ## proses eksperimental profillə işə salınanda işləyir ([method default_rules]). Client
 ## profili join info-dan bilir — öz bayrağı ilə qaydanı dəyişmir.
-var profile := Const.Profile.STANDARD
+var profile: int = Const.Profile.STANDARD
 ## Yeni dünyaların profili; -1 — hələ komanda sətrindən oxunmayıb. Testlər birbaşa yazır.
 static var default_profile := -1
 
 
-## Prosesin qaydalar profili, komanda sətrindən bir dəfə oxunur:
-##   server: `-- --server --ws --profile mutations`
-##   məşq:   `-- --practice --mutations` (yerli dünya serverin özüdür)
+## Prosesin qaydalar profili ([enum Const.Profile] bitləri), komanda sətrindən bir dəfə oxunur:
+##   server: `-- --server --ws --profile mutations,membrane` (vergüllə, biri də olar)
+##   məşq:   `-- --practice --mutations --membrane` (yerli dünya serverin özüdür)
 ## Bayraq yoxdursa — standart profil, yəni buraxılışın indiki davranışı.
 static func default_rules() -> int:
 	if default_profile < 0:
 		var args := OS.get_cmdline_user_args()
 		var i := args.find("--profile")
-		var named := args[i + 1] if i >= 0 and i + 1 < args.size() else ""
-		default_profile = Const.Profile.MUTATIONS if args.has("--mutations") or named == "mutations" \
-			else Const.Profile.STANDARD
+		var named := (args[i + 1] if i >= 0 and i + 1 < args.size() else "").split(",")
+		var p: int = Const.Profile.STANDARD
+		if args.has("--mutations") or named.has("mutations"):
+			p |= Const.Profile.MUTATIONS
+		if args.has("--membrane") or named.has("membrane"):
+			p |= Const.Profile.MEMBRANE
+		default_profile = p
 	return default_profile
 ## Matçın fazası. SONSUZ ARENA həmişə PLAYING-dədir və oradan çıxmır.
 var phase := Const.Phase.PLAYING
@@ -197,6 +201,7 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	if mode == Const.Mode.ENDLESS:
 		sim.setup_colonies(randi())
 		profile = default_rules()
+		sim.membrane_on = Const.rule_on(profile, Const.Profile.MEMBRANE)
 	# Qabın kənarı elə İNDİ qurulur, ilk tick-i gözləmədən.
 	#
 	# Oyunçu [method add_player] ilə tick-dən ƏVVƏL doğulur və
@@ -322,7 +327,7 @@ func join_info_for(peer: int) -> Dictionary:
 ## yaşı ilə), ən çox [constant Const.MUT_MAX]. Rədd səbəbi qaytarılır, "" — qəbul.
 ## Saxta, vaxtından əvvəl, təkrar və rejimə uyğun olmayan seçim heç nə dəyişmir.
 func choose_mutation(peer: int, m: int) -> String:
-	if profile != Const.Profile.MUTATIONS or mode != Const.Mode.ENDLESS:
+	if not Const.rule_on(profile, Const.Profile.MUTATIONS) or mode != Const.Mode.ENDLESS:
 		return "profile"
 	var g: Sim.GermState = sim.germs.get(peer)
 	if g == null or not g.alive:
@@ -341,8 +346,15 @@ func choose_mutation(peer: int, m: int) -> String:
 
 
 ## Baxanın açılmış seçim sayı ([constant Const.Snap.EVO]); mutasiyasız profildə -1.
+## Baxanın öz membranının soyuması ([constant Const.Snap.MEM]); membransız profildə -1.
+func _mem_of(g: Sim.GermState) -> float:
+	if not sim.membrane_on:
+		return -1.0
+	return snappedf(g.mem_cd, 0.01) if g != null else 0.0
+
+
 func _evo_of(g: Sim.GermState) -> int:
-	if profile != Const.Profile.MUTATIONS:
+	if not Const.rule_on(profile, Const.Profile.MUTATIONS):
 		return -1
 	return Const.mut_earned(g.age) if g != null else 0
 
@@ -1075,6 +1087,8 @@ func accept_input(peer: int, packed: Array) -> void:
 			inp.fire_wait = queued.fire_wait
 		inp.fire = inp.fire or queued.fire
 		inp.use_super = inp.use_super or queued.use_super
+		# Membran da bir dəfəlikdir — üstündən yazılan paket onu udmasın.
+		inp.membrane = inp.membrane or queued.membrane
 	_inputs[peer] = inp
 	# Gec gələn girişin hərəkəti saxlanılır — təxmin tick-ləri üçün (bax [method _replay_late]).
 	if peers.has(peer):
@@ -1111,7 +1125,7 @@ func tick(dt: float) -> Array:
 		_inputs[bid] = Sim.PlayerInput.make(0, Vector2.ZERO, sim.germs[bid].aim, false) \
 			if frozen and sim.germs.has(bid) else bot.think(sim, dt)
 		# Botlar da eyni hədlərdə, eyni yoxlamadan keçən seçim edir — gizli üstünlük yoxdur.
-		if profile == Const.Profile.MUTATIONS:
+		if Const.rule_on(profile, Const.Profile.MUTATIONS):
 			var bg: Sim.GermState = sim.germs.get(bid)
 			if bg != null and Const.mut_count(bg.mutations) < Const.mut_earned(bg.age):
 				choose_mutation(bid, Bot.pick_mutation(bg))
@@ -1158,6 +1172,8 @@ func tick(dt: float) -> Array:
 			inp.shot = false
 			inp.fire_wait = 0
 		inp.use_super = false
+		# Saxlanan giriş növbəti tick-də membranı yenidən istəməsin (bir basış — bir cəhd).
+		inp.membrane = false
 
 	# Hal və təxmin sayğacı (snapshot-un SELF sətri üçün, bax [method _self_row]).
 	_record_replay_state()
@@ -1326,6 +1342,7 @@ func _build_frame() -> void:
 			"absorb": kind = Const.EvKind.ABSORB
 			"super": kind = Const.EvKind.SUPER
 			"spore": kind = Const.EvKind.SPORE
+			"parry": kind = Const.EvKind.PARRY
 			"hit": kind = Const.EvKind.HIT
 			"burst": kind = Const.EvKind.BURST
 			"break": kind = Const.EvKind.BREAK
@@ -1361,6 +1378,11 @@ static func _flags_of(g: Sim.GermState) -> int:
 		f |= ((g.team + 1) << Const.GFlag.TEAM_SHIFT) & Const.GFlag.TEAM_MASK
 	# Aktiv mutasiyalar — anatomiya hamıya görünür, proqnoz öz mikrobununkunu buradan alır.
 	f |= (g.mutations << Const.GFlag.MUT_SHIFT) & Const.GFlag.MUT_MASK
+	# Membran: faza və kilidli istiqamət — rəqib aktiv və bərpa hissəsini görür, vaxtını seçir.
+	var ph := Const.membrane_phase(g.mem_left)
+	if ph != Const.MemPhase.NONE:
+		f |= (ph << Const.GFlag.MEM_SHIFT) & Const.GFlag.MEM_MASK
+		f |= (Const.dir_quant(g.mem_dir) << Const.GFlag.MEMDIR_SHIFT) & Const.GFlag.MEMDIR_MASK
 	return f
 
 
@@ -1419,6 +1441,7 @@ func snapshot_for(peer: int) -> Array:
 		_self_row(peer, g),
 		_frame_colony,
 		_evo_of(g),
+		_mem_of(g),
 	]
 
 

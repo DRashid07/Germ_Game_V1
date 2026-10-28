@@ -294,8 +294,56 @@ const MUT_STICKY_FLOW := 0.75
 const MUT_STICKY_SPEED := 0.95
 
 ## Qaydalar profili — server seçir, join info-da client-ə deyir (bax [method World.join_info_for]).
-## Standart profil buraxılışın indiki davranışıdır.
-enum Profile { STANDARD = 0, MUTATIONS = 1 }
+## BİT maskasıdır: eksperimental qaydalar ayrı-ayrı və ya birlikdə açılır. Standart profil (0)
+## buraxılışın indiki davranışıdır.
+enum Profile { STANDARD = 0, MUTATIONS = 1, MEMBRANE = 2 }
+
+
+## Profildə bu eksperimental qayda açıqdırmı ([enum Profile] bitləri).
+static func rule_on(profile: int, flag: int) -> bool:
+	return (profile & flag) != 0
+
+
+# ---------- Membran müdafiəsi (eksperimental profil, design/MODES.md §20) ----------
+## Vaxtlı, istiqamətli müdafiə: qısa pəncərədə ÖNDƏN gələn ilk düşmən mərmisini geri qaytarır.
+## Superlərin heç birini əvəz etmir. Rəqəmlər prototipdir.
+const MEMBRANE_ACTIVE := 0.18     ## aktiv pəncərə (s)
+const MEMBRANE_RECOVER := 0.35    ## sonrakı bərpa (s) — atəş və super bloklu, müdafiə yox
+const MEMBRANE_COOLDOWN := 7.0    ## aktivləşmədən sayılır (s)
+const MEMBRANE_COST := 1          ## top
+## Ön sektorun yarısı — cəmi 120°, mərkəzi aktivləşmə anındakı nişan bucağı.
+const MEMBRANE_HALF := 1.0471976
+## İstiqamət bayraqda 64 addımla gedir (5.6°); server də kilidlənmiş bucağı elə bu addıma
+## yuvarlaqlaşdırır — tarixçə, proqnoz və görüntü eyni bucağı görür.
+const MEMBRANE_DIR_STEPS := 64
+
+## Membranın fazası ([member Sim.GermState.mem_left]-dən).
+enum MemPhase { NONE = 0, ACTIVE = 1, RECOVER = 2 }
+
+
+## Təhlükəsiz top döşəməsi — atəşin öz qaydasından: atəş üçün yetən top müdafiəyə də yetir və
+## qiyməti ödəyəndən sonra mikrob aclıqdan partlamır. İkinci yerdə rəqəm yoxdur.
+static func membrane_floor() -> int:
+	return FIRE_MIN_BALLS
+
+
+static func membrane_phase(left: float) -> int:
+	if left > MEMBRANE_RECOVER:
+		return MemPhase.ACTIVE
+	return MemPhase.RECOVER if left > 0.0 else MemPhase.NONE
+
+
+static func dir_quant(angle: float) -> int:
+	return posmod(roundi(angle / TAU * float(MEMBRANE_DIR_STEPS)), MEMBRANE_DIR_STEPS)
+
+
+static func dir_unquant(q: int) -> float:
+	return float(posmod(q, MEMBRANE_DIR_STEPS)) * TAU / float(MEMBRANE_DIR_STEPS)
+
+
+## Toqquşma nöqtəsinin normalı ön sektordadırmı (sərhəd daxildir).
+static func membrane_in_sector(facing: float, normal: Vector2) -> bool:
+	return normal.dot(Vector2.from_angle(facing)) >= cos(MEMBRANE_HALF) - 0.000001
 
 
 static func has_mut(muts: int, m: int) -> bool:
@@ -420,7 +468,9 @@ const FOOD_FRICTION := 1.8      ## Səpilən topların sürtünməsi (1/saniyə)
 ## əks halda öz atdığını dərhal geri udardı.
 const FOOD_ARM_TIME := 0.7
 
-enum EvKind { FIRE = 0, ABSORB = 1, HIT = 2, BURST = 3, BREAK = 4, SUPER = 5, SPORE = 6 }
+## PARRY — membran mərmini geri qaytardı: `pos` toqquşma nöqtəsi, `arg` yeni istiqamət,
+## `color` müdafiəçinin rəngi. Zərbə deyil: super doldurmur, HIT yaratmır.
+enum EvKind { FIRE = 0, ABSORB = 1, HIT = 2, BURST = 3, BREAK = 4, SUPER = 5, SPORE = 6, PARRY = 7 }
 
 ## Mikrobun növü. Həm görüntü, həm OYNANIŞ — hər növün mühitlə münasibəti
 ## başqadır (bax [constant SPECIES_THRUST]) və hər birinin öz superi var.
@@ -928,7 +978,9 @@ static func hit_payload(arg: float) -> int:
 ## 4: mutasiyalar ([enum Mut]) — mikrob bayrağında üç bit ([enum GFlag] `MUT`), top sətrinin
 ## META-sında "uzun çıxıntı" biti ([method shot_meta]) və snapshot-un sonunda açılmış seçim sayı
 ## ([constant Snap.EVO]). Köhnə client mutasiyalı mikrobun hərəkətini yanlış proqnozlaşdırardı.
-const RULES := 4
+## 5: membran müdafiəsi — girişin 7-ci biti, bayraqda faza və istiqamət ([enum GFlag] `MEM`),
+## snapshot-un sonunda öz soyuması ([constant Snap.MEM]) və PARRY hadisəsi.
+const RULES := 5
 
 
 ## Şəbəkəyə gedən rejim ədədi: aşağı bayt rejim, yuxarı bayt [constant RULES].
@@ -1154,7 +1206,8 @@ static func species_from(value: int) -> Species:
 ## rejimdə boşdur. Hər snapshot-da TAM gedir: paket itsə də növbəti onu bərpa edir.
 ## EVO — baxanın öz mikrobunun açılmış mutasiya seçimlərinin sayı (0..2); mutasiyasız
 ## profildə -1. Şəxsidir: başqalarına getmir (aktiv mutasiyalar isə bayraqdadır).
-enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP, WALLS, MATCH, SELF, COLONY, EVO }
+## MEM — baxanın öz membranının soyumasına qalan saniyə; membransız profildə -1.
+enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP, WALLS, MATCH, SELF, COLONY, EVO, MEM }
 
 ## [constant Snap.SELF] sahəsi — YALNIZ qəbul edən oyunçunun öz mikrobuna aid.
 ##
@@ -1260,6 +1313,10 @@ enum GFlag {
 	## Aktiv mutasiyalar ([enum Mut]) — bit 11-13. Sahə float32-dir və 24 bitə qədər tam
 	## ədədi dəqiq saxlayır; bit 0-10 doludur (yoxlanılıb), 11-23 boşdur — üçü bura girir.
 	MUT_SHIFT = 11, MUT_MASK = 14336,
+	## Membranın fazası ([enum MemPhase]) — bit 14-15; kilidlənmiş istiqaməti — bit 16-21
+	## (64 addım). Ən yüksək bit 21-dir, float32-nin dəqiq 24 bitinə sığır.
+	MEM_SHIFT = 14, MEM_MASK = 49152,
+	MEMDIR_SHIFT = 16, MEMDIR_MASK = 4128768,
 }
 ## `REWIND` — server bu topu qurbanlarının neçə saniyə ƏVVƏLKİ yerinə qarşı
 ## yoxlayır (bax [member Sim.lag_comp]); botun topunda 0. `META` — profil, bir

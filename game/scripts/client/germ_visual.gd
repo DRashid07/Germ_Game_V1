@@ -441,6 +441,10 @@ var aim := 0.0
 ## Rəqibinki bayraqdan, öz mikrobununku proqnozdan gəlir ([method Arena._render_germs]).
 var muts := 0
 var _anatomy: MutationAnatomy = null
+## Membranın fazası ([enum Const.MemPhase]) və kilidli istiqaməti — [MembraneArc] çəkir.
+var mem_phase := 0
+var mem_dir := 0.0
+var _arc: MembraneArc = null
 ## Super İNDİ işləyirmi — ayaqlıda tor açıqdır, amöbdə qabıq bağlıdır.
 ## Serverin bayrağından gəlir (bax [enum Const.GFlag]); görüntü qatı onu
 ## özü hesablamır, çünki rəqibin superini yalnız server bilir.
@@ -1205,6 +1209,12 @@ func _process(delta: float) -> void:
 		return
 	if muts != 0 or _anatomy != null:
 		_update_anatomy(delta)
+	if mem_phase != Const.MemPhase.NONE or _arc != null:
+		if _arc == null:
+			# Gövdənin ÖNÜNDƏ: son uşaq kimi əlavə olunur (GPU qatlarından da sonra).
+			_arc = MembraneArc.new()
+			add_child(_arc)
+		_arc.set_state(mem_phase if alive else Const.MemPhase.NONE, mem_dir, Const.germ_radius(capacity))
 	_promise_t = maxf(0.0, _promise_t - delta)
 	if frozen:
 		return

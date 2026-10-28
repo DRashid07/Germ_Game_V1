@@ -940,3 +940,99 @@ Gizli üstünlük yoxdur.
 - **Yoxlanmayıb:** APK və brauzer (anatomiya 45 s-dən sonra çıxır, avtomatik ssenari yoxdur);
   insanlarla balans. Botlu matçda mutasiyaya çatmaq çətindir (çoxu 45 s yaşamır) — hədlər
   prototipdir.
+
+## 20. Vaxtlı, istiqamətli membran müdafiəsi — eksperimental profil (2026-10-28)
+
+Məqsəd: oyunçu vaxtlama ilə bir atəşi qaytara bilsin, hücum edən isə müdafiəni aldadıb
+(bərpa hissəsinə) sonrakı zərbəni planlasın. Superlərin heç birini əvəz etmir: kirpiklinin
+trixosisti və amöbün miniqanı olduğu kimidir; köhnə qabıq məntiqi qayıtmayıb.
+
+### 20.1 Profil
+
+- Profillər indi BİT maskasıdır: `Const.Profile` { STANDARD 0, MUTATIONS 1, MEMBRANE 2 },
+  `Const.rule_on`. Server `--profile membrane` və ya `--profile mutations,membrane`; məşq
+  `--membrane`. Yalnız SONSUZ ARENA dünyası alır; altı rejim standart qalır (test).
+- `Sim.membrane_on` — serverdə profildən, proqnozda join info-dakı profildən. Client öz
+  bayrağı ilə qaydanı açmır.
+
+### 20.2 Qayda (`constants.gd` «Membran müdafiəsi»)
+
+| Sabit | Dəyər |
+|---|---|
+| `MEMBRANE_ACTIVE` | 0.18 s |
+| `MEMBRANE_RECOVER` | 0.35 s |
+| `MEMBRANE_COOLDOWN` | 7 s (aktivləşmədən) |
+| `MEMBRANE_COST` | 1 top |
+| `MEMBRANE_HALF` | 60° (sektor cəmi 120°) |
+| döşəmə | `membrane_floor()` = `FIRE_MIN_BALLS` |
+
+- İstiqamət aktivləşmə anındakı nişandır, 64 addıma yuvarlaqlaşdırılıb (5.6°) və bu istifadə
+  üçün kilidlidir — server, tarixçə, bayraq və görüntü eyni bucağı görür.
+- `GermState.membrane_ready()`: canlı, super işləmir, doğuş qalxanı yoxdur, soyuma bitib,
+  top ≥ döşəmə. Rədd edilən istək heç nə xərcləmir.
+- Ardıcıllıq `Sim._step_germs`-dədir (server və proqnoz eyni kod): əvvəl qanuni membran,
+  qəbul olunsa həmin tick-in super və atəşi atılır; aktiv + bərpa boyu ikisi də bloklu.
+- İstək girişin 7-ci bitidir (128), BİR tick gedir; birləşən girişlərdə OR ilə köçür, tick-dən
+  sonra sıfırlanır — basılı düymə və saxlanan giriş ikinci cəhd yaratmır.
+
+### 20.3 Qayıtma (`Sim._step_shots`, `_can_parry`, `_resolve_parries`, `_reflect`)
+
+- Mikroba dəyən mərmi üçün qurbanın atıcının GÖRDÜYÜ andakı halı oxunur (`_rewound_bits`:
+  tarixçədə `HIST_MEM` biti və istiqamət). Aktivdirsə, toqquşma nöqtəsinin normalı sektordadırsa,
+  mərmi damcı deyilsə və əvvəl qaytarılmayıbsa — qərar tick-in sonuna saxlanılır.
+- Tick sonunda hər müdafiəçiyə TƏMAS ANI (seqmentdəki pay) ən erkən olan (bərabərdə kiçik id)
+  qayıdır, qalanları adi dəyir: iki iynədən biri qayıdır (+1 qalır), o biri +1 verir.
+- Əks: `v − 2(v·n)n`, top membranın çölünə qoyulur; sahib/komanda/rəng müdafiəçiyə keçir,
+  `rewind` 0, `parried` = true. Qalan ömür, sıçrayış sayı, yük, profil və qrup (`volley` —
+  qida/obyekt büdcəsi köhnə hərəkətinkidir, ikiqat qida və mükafat yoxdur) dəyişmir. Yeni sahib
+  öz topuna dəymir (sahib həmişə keçilir), ilk atıcıya isə dəyir; partlatma müdafiəçinindir.
+- PARRY hadisəsi (`EvKind.PARRY`) yalnız görüntüdür: super doldurmur, HIT deyil.
+- Neytral obyektlər (Nüvə, Ana) qaytarmır; yoldaşın topu onsuz da dəymir; ölmüş atıcının
+  topu adi düşmən topudur — qayıdanda müdafiəçinin olur.
+
+### 20.4 Şəbəkə (qaydalar versiyası 5)
+
+- Bayraq: bit 14–15 faza (`MemPhase`), 16–21 istiqamət (64 addım). Ən yüksək bit 21-dir —
+  float32-nin dəqiq 24 bitinə sığır (yoxlanılıb).
+- Snapshot-un sonunda `Snap.MEM` — baxanın öz soyuması (standartda -1). Faza və istiqamət
+  hamıya bayraqdadır: rəqib aktiv və bərpa hissəsini görür.
+- Proqnoz: öz mikrobunun membranı eyni koddan; düzəlişdə faza bayraqdan, soyuma `Snap.MEM`-dən
+  gəlir — server rədd edibsə faza NONE gəlir və yerli animasiya söner. Öz topun aktiv membrana
+  dəyəndə zərbə serveri gözləyir (`_soft_reason` → "membran"); botun topu sənin aktiv
+  membranına gələndə "əmin dəymə" proqnozlaşdırılmır. Topun rəngi dəyişəndə (qayıdıb) öz
+  proqnoz topu dayanır və server sətri yeni rəngdə çəkilir.
+- Ən pis snapshot (hamısı membranlı və mutasiyalı, uçan toplar): MTU-dan aşağı (test).
+
+### 20.5 Görüntü və idarə
+
+- `MembraneArc` — yalnız kilidli istiqamətin ±60°-si: aktivdə qalın ağ-mavi qövs, bərpada
+  nazik narıncı qırıq qövs. Gövdənin önündə, GermVisual-ın uşağı — GPU və GDScript yolunda
+  eyni (ekran görüntüsü ilə yoxlanıb). Tam dairəvi qalxan yoxdur.
+- `MembraneButton` — superin üstündə (atəşi və superi örtmür, minimap və hərəkət zonasından
+  uzaq); hazır / aktiv / bərpa / soyuma; mümkün olmayanda səbəb yazılır. Klaviaturada E.
+  Matçın əvvəlində qısa izah: "öndən gələn ilk topu qaytarır · damcı yuxarıdan keçir".
+- Damcının düşmə halqasında kiçik aşağı ox — membran onu saxlamır (ilk prototipin açıq
+  istisnası; enmə fazasına xüsusi müdafiə bu işə daxil deyil).
+
+### 20.6 Botlar
+
+Yalnız üzünə uçan, 0.2 s-dən az qalmış, görünən düz mərmiyə (`Bot._incoming_shot`; damcı yox,
+gizli rəqibin yeri istifadə olunmur), tick başına `0.12 × bacarıq` ehtimalla: nişan mərmiyə
+dönür, həmin tick atəş və super yoxdur. Testdə 20 təhlükənin 8-də açdı, hamısında topa dönmüşdü.
+
+### 20.7 Sınaq (2026-10-28)
+
+- `membrane_test.gd` — 31 yoxlama: rəqəmlər, aktivləşmə və qiymət, kilidli istiqamət, beş
+  qanunsuz istək (pulsuz), döşəmə, eyni tick ardıcıllığı və blok, basılı düymə (3 s — bir
+  aktivləşmə), birləşən giriş, pəncərənin içi/bərpa/yox, sektor sərhədi (56° qaytarır, 62° yox,
+  arxa yox), əksin həndəsəsi, birinci qayıdır-ikinci dəyir, iki iynə (+1, təmas anı), sahib və
+  partlatma, super/HIT yoxdur, ömür/sıçrayış, ikinci membran qaytarmır, damcı keçir, tarixi hal
+  (geri sarma), clone/giriş/bayraq/snapshot, standart profil və altı rejim, amöbün superi,
+  bot, proqnoz = server, UI node-ları, ən pis paket.
+- **Onlayn** (`--profile membrane,mutations`, server + client-lər, biri 70±30 ms proksi ilə):
+  birbaşa client 6 basış → serverdə 6 aktivləşmə, botlar onun 2 topunu qaytardı (client
+  sahib dəyişməsini düzgün çəkdi), 45 s-də mutasiya da seçildi; proksili client 8-ci saniyədə
+  qopub nişanla qayıtdı — 2 basış → 2 aktivləşmə; skript xətası yoxdur.
+- **Yoxlanmayıb:** itən UDP paketi (WebSocket TCP-dir — itki proksidə yoxdur; birləşmə və
+  təkrar unit testlərdədir), APK, insanlarla balans. **Balans riski:** 0.18 s pəncərə
+  insan üçün dar ola bilər; botların 12%/tick reaksiyası təxminidir.

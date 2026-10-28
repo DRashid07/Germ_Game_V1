@@ -27,6 +27,7 @@ const FIRE_MARGIN_BOTTOM := 68.0
 ## vacibdir, ona görə bir az uzaqdadır.
 const SUPER_BOX := 108.0
 const SUPER_GAP := 14.0
+const MEMBRANE_BOX := 84.0
 
 const GAUGE_W := 250.0
 const MAP_SIZE := 132.0
@@ -60,6 +61,8 @@ var super_button: SuperButton
 var minimap: Minimap
 ## Mutasiya seçiminin kartları (eksperimental profil, bax [MutationCards]).
 var mutations: MutationCards
+## Membran müdafiəsinin düyməsi — yalnız membran profilində görünür (bax [MembraneButton]).
+var membrane_button: MembraneButton
 
 var _root: Control
 var _safe_root: Control
@@ -528,6 +531,17 @@ func _build_controls(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 	super_button.offset_bottom = -sy
 	_safe_root.add_child(super_button)
 
+	# Membran — superin ÜSTÜNDƏ, eyni sağ baş barmaq üçün: atəşi və superi örtmür, minimapa
+	# (sağ yuxarı) və hərəkət zonasına (sol) çatmır. Yalnız membran profilində görünür.
+	membrane_button = MembraneButton.new()
+	membrane_button.radius = MEMBRANE_BOX * 0.5
+	membrane_button.anchor_top = 1.0
+	membrane_button.anchor_bottom = 1.0
+	membrane_button.offset_top = -(sy + SUPER_BOX + SUPER_GAP + MEMBRANE_BOX)
+	membrane_button.offset_bottom = -(sy + SUPER_BOX + SUPER_GAP)
+	membrane_button.visible = false
+	_safe_root.add_child(membrane_button)
+
 	# Üfüqi yer [method apply_settings]-dədir: sol əl rejimi hamısını güzgüləyir.
 
 
@@ -556,6 +570,9 @@ func apply_settings() -> void:
 	# Güzgüləndikdə də mərkəzə doğru qalır, yəni joystickin zonasına girmir.
 	_pin_horizontal(super_button, lefty,
 		FIRE_MARGIN_RIGHT + FIRE_BOX + SUPER_GAP, SUPER_BOX)
+	# Membran superin mərkəzi üzərindədir.
+	_pin_horizontal(membrane_button, lefty,
+		FIRE_MARGIN_RIGHT + FIRE_BOX + SUPER_GAP + (SUPER_BOX - MEMBRANE_BOX) * 0.5, MEMBRANE_BOX)
 
 
 ## Bir idarəni ekranın sağ (adi) və ya sol (sol əl) kənarına bağlayır.

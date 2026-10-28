@@ -754,7 +754,7 @@ var _colony_flat := PackedFloat32Array()
 var _colonies: ColonyView = null
 
 ## Qaydalar profili (join info) — mutasiyaların kartları yalnız MUTATIONS-da açılır.
-var _profile := Const.Profile.STANDARD
+var _profile: int = Const.Profile.STANDARD
 ## Öz mikrobunun açılmış seçim sayı ([constant Const.Snap.EVO]); -1 — profil yoxdur.
 var _evo := -1
 ## Göndərilmiş, hələ təsdiqlənməmiş seçim (-1 yoxdur) və göndərildiyi an. Seçim təsdiq
@@ -1077,6 +1077,7 @@ func _build_world() -> void:
 	# başına düşəcək damcını görməlidir (bax [LobMarks]).
 	_lob_marks = LobMarks.new()
 	_lob_marks.z_index = 3
+	_lob_marks.membrane = Const.rule_on(_profile, Const.Profile.MEMBRANE)
 	add_child(_lob_marks)
 
 	_entities = Node2D.new()
@@ -1397,6 +1398,11 @@ func _build_hud() -> void:
 	_hud.super_button.blocked.connect(_on_super_blocked)
 	_hud.leave_confirmed.connect(_leave_match)
 	_hud.mutations.chosen.connect(_on_mutation_chosen)
+	_hud.membrane_button.used.connect(_on_membrane_pressed)
+	_hud.membrane_button.blocked.connect(_on_membrane_blocked)
+	_hud.membrane_button.visible = Const.rule_on(_profile, Const.Profile.MEMBRANE)
+	if _hud.membrane_button.visible:
+		_hud.flash_hint("MEMBRAN (E): öndən gələn ilk topu qaytarır · damcı yuxarıdan keçir")
 	# Xəritə rejimin öz qabını və düzümünü göstərir (obyekt rejimlərində kiçik qab).
 	_hud.minimap.wall = _wall
 	_hud.minimap.obstacles = _obstacles
@@ -1434,7 +1440,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Açılıb hələ seçilməmiş seçim sayı (eksperimental profil, design/MODES.md §19).
 func mut_pending() -> int:
-	if _profile != Const.Profile.MUTATIONS or _evo < 0 or me == null:
+	if not Const.rule_on(_profile, Const.Profile.MUTATIONS) or _evo < 0 or me == null:
 		return 0
 	return maxi(0, _evo - Const.mut_count(me.mutations))
 
@@ -1490,6 +1496,8 @@ func _init_prediction() -> void:
 	# Şüşə, maneələr və Ana rejimindir — serverin dünyası ilə eyni həndəsə
 	# (bax [method Sim.set_mode]); yoxsa öz mikrobun hər snapshot-da geri dartılar.
 	pred.set_mode(int(_mode))
+	# Membran yalnız serverin profili deyirsə — client öz bayrağı ilə qaydanı açmır.
+	pred.membrane_on = Const.rule_on(_profile, Const.Profile.MEMBRANE)
 	pred.wet_center = _wet_center
 	pred.dish_radius = _wet_radius
 	_own_shots.wall = _wall
@@ -1590,6 +1598,7 @@ func _process(delta: float) -> void:
 	# superi işlədərdi.
 	if not _finished and not _reconnecting:
 		_poll_super_key()
+		_poll_membrane_key()
 
 	_tick_accum += delta
 	var steps := 0
@@ -1747,6 +1756,7 @@ func _do_tick() -> void:
 		me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst())
 	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready())
 	_update_mutations()
+	_update_membrane()
 	if _mode != Const.Mode.ENDLESS:
 		# Yaş sahənin mərkəzi YAŞ ADA-da gəzir — quruda olmaq ondan olan məsafədir.
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
@@ -1818,6 +1828,7 @@ func _sample_input() -> Sim.PlayerInput:
 	if fire:
 		aim = _shot_angle(aim)
 	var inp := Sim.PlayerInput.make(_seq, move, aim, fire, _super_requested(), _view_tick())
+	inp.membrane = _membrane_requested()
 	# Amöbün damcısının məsafəsi — sürüşmənin gücündən və ya avtomatik hədəfdən
 	# ([method _shot_range]). Proqnoz da eyni ədədi oxuyur, düşmə yeri iki tərəfdə eynidir.
 	if fire and _own_profile() == Const.Shot.LOB:
@@ -2048,6 +2059,83 @@ func _super_requested() -> bool:
 	return v
 
 
+# ================================================================ membran
+
+## Membran istəyi — BİR tick (basılan an). Düymə və E eyni bayrağa yığılır.
+var _membrane_flag := false
+var _membrane_key_held := false
+## Serverin öz membran soyuması ([constant Const.Snap.MEM]); -1 — profil yoxdur.
+var _mem_cd_srv := -1.0
+
+
+func _membrane_requested() -> bool:
+	var v := _membrane_flag
+	_membrane_flag = false
+	return v and pred != null and pred.membrane_on
+
+
+## E — kənarı HƏR KADR yoxlanılır (bax [method _poll_super_key]); basılı saxlamaq yeni cəhd
+## yaratmır.
+func _poll_membrane_key() -> void:
+	var key := Input.is_key_pressed(KEY_E)
+	if key and not _membrane_key_held:
+		if me != null and me.membrane_ready():
+			_membrane_flag = true
+		elif pred != null and pred.membrane_on:
+			_on_membrane_blocked()
+	_membrane_key_held = key
+
+
+func _on_membrane_pressed() -> void:
+	_membrane_flag = true
+	Settings.vibrate(20)
+
+
+## Membran işə düşə bilməz — səbəb oxunur.
+func _on_membrane_blocked() -> void:
+	_hud.flash_hint(membrane_block_reason())
+	Sfx.play("blunk", 0.0, -6.0)
+
+
+func membrane_block_reason() -> String:
+	if me == null or _own_dead():
+		return ""
+	if me.super_t > 0.0:
+		return "SUPER İŞLƏYİR — MEMBRAN OLMAZ"
+	if me.safe_t > 0.0:
+		return "DOĞUŞ QALXANI VAR — MEMBRAN OLMAZ"
+	if me.mem_left > 0.0:
+		return "MEMBRAN İŞLƏYİR"
+	if me.mem_cd > 0.0:
+		return "MEMBRAN %d s SONRA HAZIRDIR" % ceili(me.mem_cd)
+	if me.balls < Const.membrane_floor():
+		return "MEMBRANA AZI %d TOP LAZIMDIR" % Const.membrane_floor()
+	return ""
+
+
+func _update_membrane() -> void:
+	if not _hud.membrane_button.visible or me == null:
+		return
+	_hud.membrane_button.set_state(Const.membrane_phase(me.mem_left),
+		me.mem_cd / Const.MEMBRANE_COOLDOWN, me.membrane_ready() and not _own_dead())
+
+
+## Topun sahibi dəyişib (membran qaytarıb): proqnoz topu dayanır, server sətri yeni rənglə çəkilir.
+func _shot_changed_owner(view: Dictionary, color: int) -> void:
+	var gh = view.get("ghost")
+	if gh is ShotPrediction.Ghost:
+		(gh as ShotPrediction.Ghost).alive = false
+		hit_stats["parried_me"] = int(hit_stats.get("parried_me", 0)) + 1
+	var spr: Sprite2D = view.get("node")
+	if spr == null:
+		spr = _take(_shot_pool, _shot_layer)
+		view["node"] = spr
+		view["ghost"] = null
+	_dress_shot(spr, color, float(view.get("radius", Const.SHOT_RADIUS)))
+	view["mine"] = color == my_color
+	view["color"] = color
+
+
 ## Klaviatura kənarı HƏR KADR yoxlanılır, hər tick yox.
 ##
 ## Tick saniyədə 30 dəfədir, kadr isə 60+ — yoxlama tick-in içində olanda
@@ -2124,6 +2212,7 @@ func _auto_sample() -> Sim.PlayerInput:
 	# superi təkrarlana bilən şəkildə çəkilir.
 	var use_super := _super_requested() if not auto_super else me.super_ready()
 	var inp := Sim.PlayerInput.make(_seq, move, aim, fire, use_super, _view_tick())
+	inp.membrane = _membrane_requested()
 	# Amöbün damcısı rəqibin yerinə düşür (yoxdursa sabit məsafə).
 	if fire and _own_profile() == Const.Shot.LOB:
 		inp.fire_range = me.pos.distance_to(Vector2(target["pos"])) if not target.is_empty() \
@@ -2277,6 +2366,7 @@ func _ingest(data: Array, newest: bool) -> void:
 			_colonies.apply(data[Const.Snap.COLONY])
 			_hud.minimap.colony_state = data[Const.Snap.COLONY]
 		_evo = int(data[Const.Snap.EVO]) if data.size() > Const.Snap.EVO else -1
+		_mem_cd_srv = float(data[Const.Snap.MEM]) if data.size() > Const.Snap.MEM else -1.0
 	_apply_walls(data[Const.Snap.WALLS])
 	_apply_match(data[Const.Snap.MATCH])
 	_queue_events(data[Const.Snap.EVENTS], at)
@@ -2392,6 +2482,19 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	me.mutations = (flags & Const.GFlag.MUT_MASK) >> Const.GFlag.MUT_SHIFT
 	if _evolve_send >= 0 and Const.has_mut(me.mutations, _evolve_send):
 		_evolve_send = -1
+	# MEMBRAN: faza və istiqamət bayraqdan, soyuma snapshot-un MEM sahəsindən. Qalan vaxt
+	# dəqiq getmir — proqnoz eyni fazadadırsa öz sayğacını saxlayır, yoxsa serverə uyur.
+	# Server istəyi rədd edibsə faza NONE gəlir və yerli animasiya dərhal söner.
+	var mph := (flags & Const.GFlag.MEM_MASK) >> Const.GFlag.MEM_SHIFT
+	if mph == Const.MemPhase.NONE:
+		me.mem_left = 0.0
+	else:
+		me.mem_dir = Const.dir_unquant((flags & Const.GFlag.MEMDIR_MASK) >> Const.GFlag.MEMDIR_SHIFT)
+		if Const.membrane_phase(me.mem_left) != mph:
+			me.mem_left = Const.MEMBRANE_ACTIVE + Const.MEMBRANE_RECOVER \
+				if mph == Const.MemPhase.ACTIVE else Const.MEMBRANE_RECOVER
+	if _mem_cd_srv >= 0.0:
+		me.mem_cd = _mem_cd_srv
 	var super_on := (flags & Const.GFlag.SUPER) != 0
 	# Super əvvəlki snapshot-da da işləyirdi — sayğac aşağıda, yenidən oynatmadan
 	# ƏVVƏL geri çəkilir (bax həmin yer).
@@ -3571,6 +3674,8 @@ func _render_germs(render_time: float) -> void:
 	# məhz bu ellipslə "dəyir" (bax [method _remote_shot_pos]), gövdə də onun içində qalır.
 	mine.net_vel = me.vel
 	mine.muts = me.mutations
+	mine.mem_phase = Const.membrane_phase(me.mem_left)
+	mine.mem_dir = me.mem_dir
 	# Aura yalnız HƏQİQƏTƏN işlədilə bilən superdə yanır: doluluq tamdır, amma
 	# top çatmırsa (kirpikli), düymə kimi aura da susur.
 	mine.super_ready = me.super_ready()
@@ -3616,6 +3721,8 @@ func _render_germs(render_time: float) -> void:
 			pos = _clip_to_walls(pos, pos + v.net_vel * extra)
 		var flags := int(n[Const.GF.FLAGS])
 		v.muts = (flags & Const.GFlag.MUT_MASK) >> Const.GFlag.MUT_SHIFT
+		v.mem_phase = (flags & Const.GFlag.MEM_MASK) >> Const.GFlag.MEM_SHIFT
+		v.mem_dir = Const.dir_unquant((flags & Const.GFlag.MEMDIR_MASK) >> Const.GFlag.MEMDIR_SHIFT)
 		v.apply(pos, aim, int(n[Const.GF.BALLS]), int(n[Const.GF.CAP]),
 			(flags & Const.GFlag.SAFE) != 0, true,
 			(flags & Const.GFlag.SUPER) != 0)
@@ -3804,6 +3911,11 @@ func _render_shots(render_time: float) -> void:
 				view["payload"] = Const.SHOT_PROFILE_PAYLOAD[profile]
 				_shot_views[sid] = view
 			view["seen"] = _clock
+			# MEMBRAN topu geri qaytarıb — sahibi (rəngi) dəyişib: proqnozun öz topu artıq bizim
+			# deyil, server sətri çəkilir; başqasının topu yeni rəngə boyanır.
+			if (view.get("node") == null and color != my_color) \
+					or (view.has("color") and int(view["color"]) != color):
+				_shot_changed_owner(view, color)
 			view["base"] = Vector2(float(e[Const.SF.X]), float(e[Const.SF.Y]))
 			view["dir"] = dir
 			# Mikroblarla eyni tick saatı (bax [method _tt]). Tick saxlanılır, an hər kadr
@@ -4005,7 +4117,8 @@ func _remote_shot_pos(sid: int, view: Dictionary, spr: Sprite2D, render_time: fl
 	var sure := _line_depth(at, dir, me_at, shape) <= self_sure_depth(me.vel, dir, shape) \
 		and not _shot_blocked_before(past, at, col, SELF_SURE_GAP) \
 		and not _proxy_blocks(at - dir * PROXY_LOOKBACK, at, col) \
-		and not _rival_tricho_near(at, col) and not _congested() and not own_tricho
+		and not _rival_tricho_near(at, col) and not _congested() and not own_tricho \
+		and not (me.mem_active() and Const.membrane_in_sector(me.mem_dir, (at - me_at).normalized()))
 	view["absorbed"] = true
 	spr.visible = false
 	_trails.drop(sid)
@@ -4580,6 +4693,11 @@ func _soft_outcome(claim: Dictionary, confirmed: bool) -> void:
 
 
 func _soft_reason(c: Dictionary, victim: GermVisual, shooter: ShotPrediction.Ghost) -> String:
+	# Qurbanın membranı aktivdir və top onun ön sektoruna gəlir — qaytarmanı yalnız server
+	# deyir; zərbə serveri gözləyir, saxta "dəydi" göstərilmir.
+	if victim.mem_phase == Const.MemPhase.ACTIVE and Const.membrane_in_sector(victim.mem_dir,
+			(Vector2(c["pos"]) - victim.position).normalized()):
+		return "membran"
 	if float(c.get("depth", 0.0)) > OWN_SURE_DEPTH:
 		return "kənar"
 	if bool(c.get("late", false)):
@@ -5183,6 +5301,14 @@ func _flush_fx(render_time: float) -> void:
 				_eject_from(int(e["ci"]), float(e["arg"]))
 			Const.EvKind.SUPER:
 				_play_super(pos, float(e["arg"]), int(e["ci"]))
+			Const.EvKind.PARRY:
+				# Membran topu qaytardı — müdafiəçinin rəngində qığılcım və dalğa, sərt səs.
+				_spawn_fx("spark", pos, 0.7, Color(MembraneArc.ACTIVE, 1.0))
+				_ripple(pos, 22.0, Color(col, 0.6), "splash", 0.3)
+				Sfx.play("blunk", 0.05, -2.0)
+				if int(e["ci"]) == my_color:
+					hit_stats["parry_mine"] = int(hit_stats.get("parry_mine", 0)) + 1
+					Settings.vibrate(25)
 			Const.EvKind.SPORE:
 				# Tutum artımı — partlatma ilə eyni mükafat, ona görə eyni səs.
 				_spawn_fx("spark", pos, 0.9, Palette.FOCUS)

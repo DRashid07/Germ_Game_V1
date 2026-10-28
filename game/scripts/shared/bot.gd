@@ -184,7 +184,19 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 	move = _avoid(sim, me, move)
 
 	var use_super := me.super_ready() and _wants_super(sim, me, target, meal, hungry)
+	# MEMBRAN (eksperimental profil): yalnız GÖRÜNƏN qanuni təhlükəyə — üzünə uçan, dəyməyə
+	# az qalmış düz mərmiyə. Nişan mərmiyə dönür (istiqamət kilidlənir), həmin tick atəş və
+	# super yoxdur. Reaksiya bacarığa bağlı ehtimaldır — bot hər topu qaytarmır.
+	var guard := false
+	if sim.membrane_on and me.membrane_ready():
+		var threat := _incoming_shot(sim, me)
+		if threat != null and _rng.randf() < MEMBRANE_REACT * difficulty:
+			aim = (-threat.dir).angle()
+			guard = true
+			fire = false
+			use_super = false
 	var inp := Sim.PlayerInput.make(_seq, move, aim, fire, use_super)
+	inp.membrane = guard
 	# Damcının məsafəsi — nişan alınan nöqtəyə qədər (bax [method _aim_at]); hədəfsiz
 	# atəşdə NAN qalır və server sabit məsafə götürür ([constant Const.LOB_AUTO]).
 	if fire and me.species == Const.Species.AMOEBA:
@@ -194,6 +206,35 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 
 ## Damcının bu atəşdəki məsafəsi; NAN = sabit məsafə.
 var _lob_range := NAN
+
+
+## Təhlükə pəncərəsində (dəyməyə [constant MEMBRANE_LEAD] saniyədən az) hər tick membranı
+## açma ehtimalı (bacarıqla vurulur).
+const MEMBRANE_REACT := 0.12
+const MEMBRANE_LEAD := 0.2
+
+
+## Bota dəyməyə az qalmış düşmən mərmisi (damcı yox — membran onu saxlamır). Mərmilər hamıya
+## görünür; atıcının yeri, kolda gizlənən rəqib istifadə olunmur.
+static func _incoming_shot(sim: Sim, me: Sim.GermState) -> Sim.ShotState:
+	var best: Sim.ShotState = null
+	var best_t := Bot.MEMBRANE_LEAD
+	var r := me.radius()
+	for s in sim.shots:
+		if s.is_lob() or s.owner_id == me.id or (me.team >= 0 and s.team == me.team):
+			continue
+		var rel := me.pos - s.pos
+		var along := rel.dot(s.dir)
+		if along <= 0.0 or s.speed <= 0.0:
+			continue
+		var t := along / s.speed
+		if t >= best_t or t > s.life:
+			continue
+		if (rel - s.dir * along).length() > r + s.radius:
+			continue
+		best_t = t
+		best = s
+	return best
 
 
 ## Botun mutasiya seçimi (eksperimental profil, design/MODES.md §19): növünün oyun tərzinə

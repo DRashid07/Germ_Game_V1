@@ -24,6 +24,10 @@ const ARC_HEIGHT := 90.0
 const DROP_TIME := 0.3
 const DOT_GAP := 26.0
 
+## Membran profilində ([enum Const.Profile] `MEMBRANE`) düşmə halqasında kiçik aşağı ox çəkilir:
+## damcı yuxarıdan düşür və membrandan KEÇİR — ön müdafiə onu qaytarmır (design/MODES.md §20).
+var membrane := false
+
 ## Hər damcı: `{"origin", "target", "path": bool, "t0", "t1" (saat), "color": Color}`.
 var _marks: Array[Dictionary] = []
 var _now := 0.0
@@ -64,6 +68,12 @@ func _draw() -> void:
 		if p.x < 1.0:
 			BatchDraw.ring(self, m["target"], Const.LOB_AREA + 6.0, -PI * 0.5,
 				-PI * 0.5 + TAU * (1.0 - p.x), 32, Color(Color.WHITE, 0.55), 2.0)
+		if membrane:
+			# Aşağı ox: "yuxarıdan düşür — membran saxlamır".
+			var t: Vector2 = m["target"]
+			draw_multiline(PackedVector2Array([t + Vector2(-7.0, -9.0), t + Vector2(0.0, -2.0),
+				t + Vector2(0.0, -2.0), t + Vector2(7.0, -9.0), t + Vector2(0.0, -16.0),
+				t + Vector2(0.0, -2.0)]), Color(Color.WHITE, 0.8), 2.0, true)
 	# 3. Qövsün nöqtələri, kölgə və damcının özü.
 	for m in _marks:
 		_draw_drop(m)

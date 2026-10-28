@@ -70,6 +70,25 @@ class GermState:
 	## server yazır ([method World.choose_mutation]); proqnoz onu snapshot-dakı bayraqdan alır.
 	## Təsirləri əmsallardır və HƏR tick vəziyyətdən oxunur — sürətə yığılmır, ikiqat düşmür.
 	var mutations := 0
+	## MEMBRAN (eksperimental profil, design/MODES.md §20): aktiv + bərpa hissəsinə qalan vaxt;
+	## aktivdir — [constant Const.MEMBRANE_RECOVER]-dan çoxdursa ([method Const.membrane_phase]).
+	var mem_left := 0.0
+	## Yeni istifadəyə qədər soyuma (aktivləşmədən sayılır).
+	var mem_cd := 0.0
+	## Aktivləşmə anındakı nişan bucağı, 64 addıma yuvarlaqlaşdırılmış — bu istifadə üçün kilidli.
+	var mem_dir := 0.0
+	## Bu istifadə artıq bir mərmini qaytarıb — ikinci yoxdur.
+	var mem_used := false
+
+	## Membran indi aktiv pəncərədədir (geri qaytarır).
+	func mem_active() -> bool:
+		return mem_left > Const.MEMBRANE_RECOVER
+
+	## Membran İNDİ işə salına bilərmi (profildən asılı olmayan şərtlər). Rədd edilən istək heç
+	## nə xərcləmir. Super işləyərkən və doğuş qalxanı varkən olmaz; top döşəməsi atəşinkidir.
+	func membrane_ready() -> bool:
+		return alive and super_t <= 0.0 and safe_t <= 0.0 and mem_cd <= 0.0 and mem_left <= 0.0 \
+			and balls >= Const.membrane_floor()
 
 	func radius() -> float:
 		return Const.germ_radius(capacity)
@@ -96,6 +115,7 @@ class GermState:
 		c.dry_t = dry_t
 		c.suck_t = suck_t
 		c.mutations = mutations
+		c.mem_left = mem_left; c.mem_cd = mem_cd; c.mem_dir = mem_dir; c.mem_used = mem_used
 		return c
 
 
@@ -161,6 +181,9 @@ class ShotState:
 	## Atıcı atəş anında UZUN ÇIXINTI-lı idi: sürət və ömür bununla hesablanıb. Uçuşda
 	## dəyişmir — mutasiya sonradan seçilsə də havadakı top öz qaydası ilə uçur.
 	var long := false
+	## Membranla bir dəfə geri qaytarılıb — bir fiziki mərmi həyatında ikinci dəfə olmaz
+	## (iki müdafiəçi arasında sonsuz dövr yoxdur); divar sıçrayışları bunu sıfırlamır.
+	var parried := false
 
 	func is_lob() -> bool:
 		return profile == Const.Shot.LOB
@@ -302,6 +325,9 @@ class PlayerInput:
 	## təsdiq gələnə qədər hər girişdə təkrar göndərir; server seçimi bir dəfə tətbiq edir
 	## ([method World.choose_mutation]), təkrarı "artıq seçilib" deyə rədd edir.
 	var evolve := -1
+	## Membran istəyi — BİR tick göndərilir (basılan an), bayraq ədədinin 7-ci biti (128).
+	## Basılı düymə hər tick yeni cəhd yaratmır; birləşən girişlərdə OR ilə köçür.
+	var membrane := false
 
 	static func make(p_seq: int, p_move: Vector2, p_aim: float, p_fire: bool,
 			p_super := false, p_view := -1.0) -> PlayerInput:
@@ -327,7 +353,7 @@ class PlayerInput:
 		var out := [seq, move.x, move.y, aim,
 			(1 if fire else 0) | (2 if use_super else 0) | (4 if shot else 0) \
 				| (8 if newbie else 0) | (16 if ranged else 0) \
-				| (((evolve + 1) & 3) << 5 if evolve >= 0 else 0)]
+				| (((evolve + 1) & 3) << 5 if evolve >= 0 else 0) | (128 if membrane else 0)]
 		var origin := shot and fire and fire_from.is_finite()
 		if fire and (view_tick >= 0.0 or origin or ranged):
 			out.append(view_tick)
@@ -348,6 +374,7 @@ class PlayerInput:
 		i.newbie = (bits & 8) != 0
 		var ev := (bits >> 5) & 3
 		i.evolve = ev - 1 if ev > 0 else -1
+		i.membrane = (bits & 128) != 0
 		# Şəbəkədən gələn ədəd NaN/INF ola bilər — simulyasiyaya düşməməlidir.
 		if i.shot and a.size() > 7:
 			var from := Vector2(float(a[6]), float(a[7]))
@@ -405,6 +432,9 @@ var food: Array[FoodState] = []
 var colonies: Array[ColonyState] = []
 ## Koloniyaların yerinin toxumu ([method setup_colonies]) — dünyanın toxumunun bir hissəsi.
 var colony_seed := 0
+## Membran müdafiəsi bu dünyada açıqdır — server profilindən ([World]), proqnozda join info-dan.
+## Client öz bayrağı ilə açmır.
+var membrane_on := false
 var obstacles: Array[Vector4] = []
 
 ## Dağılmış maneələr — 1 = artıq yoxdur. İndeks [member obstacles] ilə eynidir.
@@ -754,6 +784,8 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 		# tez qopub uzun sürüşür, amöb ağır qopur, ayaqlı isə suya az tabedir.
 		var sp := int(g.species)
 		g.super_t = maxf(0.0, g.super_t - dt)
+		g.mem_left = maxf(0.0, g.mem_left - dt)
+		g.mem_cd = maxf(0.0, g.mem_cd - dt)
 
 		if g.in_cyst():
 			# AMÖBÜN SUPERİ — yerində donmuş MİNİQAN. Nə hərəkət, nə axın, nə
@@ -831,14 +863,21 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 			if mode == Const.Mode.MOTHER:
 				_suck(g, dt)
 
+		# ARDICILLIQ (server və proqnoz eyni kodu işlədir): əvvəl qanuni MEMBRAN; o qəbul
+		# olunarsa, həmin tick-in super və atəş istəkləri atılır. Aktiv və bərpa hissəsində
+		# atəş və super bloklu qalır, hərəkət və nişan isə davam edir.
+		if inp != null and inp.membrane and membrane_on and g.membrane_ready():
+			_start_membrane(g)
+		var guarded := g.mem_left > 0.0
+
 		# Super atəşdən ƏVVƏL yoxlanılır: eyni kadrda ikisi də basılsa,
 		# oyunçunun niyyəti böyük olandır.
-		if inp != null and inp.use_super and g.super_ready():
+		if not guarded and inp != null and inp.use_super and g.super_ready():
 			_use_super(g)
 
 		# Amöbün superi elə bu tick açılıbsa, atəş artıq miniqandır — pulsuz və
 		# sursat həddinə baxmır.
-		if inp != null and inp.fire and g.cooldown <= 0.0 \
+		if not guarded and inp != null and inp.fire and g.cooldown <= 0.0 \
 				and (g.balls >= Const.FIRE_MIN_BALLS or g.in_cyst()):
 			_fire(g, inp.view_tick, inp.fire_aim, g.in_cyst(), inp.fire_from, inp.fire_range)
 
@@ -1370,6 +1409,8 @@ func _step_shots(dt: float) -> void:
 	if not _blasts.is_empty():
 		_apply_blasts(dt)
 	var survivors: Array[ShotState] = []
+	# Membrana dəyən mərmilər: [müdafiəçi, mərmi, təmas anı (0..1), nöqtə, normal].
+	var parries := []
 
 	for s in shots:
 		s.life -= dt
@@ -1393,6 +1434,9 @@ func _step_shots(dt: float) -> void:
 		var victim: Sim.GermState = null
 		var hit_obstacle := Vector4.ZERO
 		var hit_index := -1
+		# Seçilmiş qurbanın (geri sarılmış) mərkəzi və halı — membran qərarı üçün.
+		var victim_at := Vector2.ZERO
+		var victim_bits := 0
 
 		# Kol və cərəyan deşiyi topu BURAXIR (bax [method DishMap.blocks_shot]).
 		# Kolun içindən atəş açmaq mümkündür — gizlənən oyunçunun yeganə
@@ -1454,12 +1498,19 @@ func _step_shots(dt: float) -> void:
 			if t >= 0.0 and t < best:
 				best = t
 				victim = g
+				victim_at = at
+				victim_bits = bits
 				hit_index = -1
 				hit_ball = false
 
 		if best <= 1.0:
 			var hit_pos := from.lerp(to, best)
 			if victim != null:
+				# MEMBRAN: qərar tick-in sonuna saxlanılır — eyni müdafiəçiyə bu tick dəyən
+				# mərmilərdən TƏMAS ANI ən erkən olan qaytarılır, siyahı sırası yox.
+				if _can_parry(victim, s, victim_bits, hit_pos, victim_at):
+					parries.append([victim, s, best, hit_pos, (hit_pos - victim_at).normalized()])
+					continue
 				_inject(victim, hit_pos, s)
 				continue
 			if hit_ball:
@@ -1493,6 +1544,8 @@ func _step_shots(dt: float) -> void:
 
 		survivors.append(s)
 
+	if not parries.is_empty():
+		_resolve_parries(parries, survivors)
 	shots = survivors
 	# Bütün mərmiləri bitən qrup silinir (bax [member _volleys]).
 	if not _volleys.is_empty():
@@ -1533,12 +1586,81 @@ func _record_history() -> void:
 
 ## Tarixçədə mikrobun dəyməni dəyişən halları (bax [method germ_bits]).
 const HIST_SAFE := 1
+## Membran aktiv pəncərədədir; kilidli istiqaməti bit 8-13-dədir (64 addım).
+const HIST_MEM := 2
+const HIST_DIR_SHIFT := 8
 
 
 ## Mikrobun İNDİKİ halı: doğuş qalxanı. Amöbün superi qalxan DEYİL — ona top
 ## adi kimi dəyir (bax [method _step_germs]).
 static func germ_bits(g: GermState) -> int:
-	return HIST_SAFE if g.safe_t > 0.0 else 0
+	var b := HIST_SAFE if g.safe_t > 0.0 else 0
+	if g.mem_active():
+		b |= HIST_MEM | (Const.dir_quant(g.mem_dir) << HIST_DIR_SHIFT)
+	return b
+
+
+## Membranı işə salır: qiymət, kilidli istiqamət, aktiv + bərpa, soyuma. [method
+## GermState.membrane_ready] əvvəl yoxlanılıb.
+func _start_membrane(g: GermState) -> void:
+	g.balls -= Const.MEMBRANE_COST
+	g.mem_dir = Const.dir_unquant(Const.dir_quant(g.aim))
+	g.mem_left = Const.MEMBRANE_ACTIVE + Const.MEMBRANE_RECOVER
+	g.mem_cd = Const.MEMBRANE_COOLDOWN
+	g.mem_used = false
+
+
+## Mərmi bu membrandan geri qayıda bilərmi. [param bits] — qurbanın atıcının GÖRDÜYÜ andakı
+## halı (geri sarılmış tarixçə, [method _rewound_bits]): keçmişdə dəymiş topa İNDİKİ membran
+## tətbiq olunmur. Damcı heç vaxt qayıtmır (yuxarıdan düşür); hər mərmi ən çox bir dəfə.
+func _can_parry(victim: GermState, s: ShotState, bits: int, hit_pos: Vector2, center: Vector2) -> bool:
+	if not membrane_on or s.is_lob() or s.parried or victim.mem_used:
+		return false
+	if (bits & HIST_MEM) == 0:
+		return false
+	var facing := Const.dir_unquant((bits >> HIST_DIR_SHIFT) & (Const.MEMBRANE_DIR_STEPS - 1))
+	return Const.membrane_in_sector(facing, (hit_pos - center).normalized())
+
+
+## Tick-in membran zərbələri: hər müdafiəçiyə TƏMAS ANI ən erkən olan (bərabərdə kiçik id)
+## qaytarılır, qalanları adi kimi dəyir — ikinci iynə eyni tick-də gəlsə də pəncərə sərf olunub.
+func _resolve_parries(parries: Array, survivors: Array[ShotState]) -> void:
+	parries.sort_custom(func(a, b) -> bool:
+		if float(a[2]) != float(b[2]):
+			return float(a[2]) < float(b[2])
+		return (a[1] as ShotState).id < (b[1] as ShotState).id)
+	for p in parries:
+		var d: GermState = p[0]
+		var s: ShotState = p[1]
+		var at: Vector2 = p[3]
+		if not d.alive:
+			s.pos = at
+			survivors.append(s)
+			continue
+		if d.mem_used:
+			_inject(d, at, s)
+			continue
+		d.mem_used = true
+		# Qaytaran kimi aktiv pəncərə dərhal bitir, bərpa başlayır.
+		d.mem_left = minf(d.mem_left, Const.MEMBRANE_RECOVER)
+		_reflect(s, d, at, p[4])
+		survivors.append(s)
+
+
+## Səth normalı ilə əks: `v − 2(v·n)n`. Sahib, komanda və rəng müdafiəçiyə keçir (sonrakı
+## partlatmanın mükafatı da); yük, profil, qrup, QALAN ömür və sıçrayış sayı olduğu kimi
+## qalır. Top membranın çölünə qoyulur — yeni sahibinə dəymir ([method _step_shots] sahibini
+## keçir). Zərbə deyil: super doldurmur, HIT hadisəsi yaratmır.
+func _reflect(s: ShotState, d: GermState, at: Vector2, n: Vector2) -> void:
+	var v := s.dir
+	s.dir = (v - 2.0 * v.dot(n) * n).normalized()
+	s.pos = at + n * 2.0
+	s.owner_id = d.id
+	s.color = d.color
+	s.team = d.team
+	s.rewind = 0.0
+	s.parried = true
+	events.append({"t": "parry", "pos": at, "arg": s.dir.angle(), "color": d.color})
 
 
 ## Mikrobun [param back] tick əvvəlki halı — atıcının ekranındakı kimi.

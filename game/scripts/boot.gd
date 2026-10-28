@@ -41,6 +41,12 @@ func _ready() -> void:
 		_start_preview(args)
 	elif args.has("--germ-bench"):
 		_start_germ_bench(args)
+	elif args.has("--germ3d"):
+		# Kirpiklinin 3D vizual prototipi — müqayisə və ölçü stendi (design/proto3d/README.md).
+		# Yalnız bu bayraqla yüklənir: adi açılış heç bir 3D resursu (glb, shader) açmır.
+		var stand: Node = _tool("germ3d_stand").new()
+		get_tree().root.add_child.call_deferred(stand)
+		get_tree().set_deferred("current_scene", stand)
 	elif args.has("--menu1"):
 		_start_old_menu(args)
 	elif args.has("--map"):

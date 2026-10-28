@@ -207,6 +207,11 @@ static func run() -> int:
 	MutationTest.run()
 	# Vaxtlı membran müdafiəsi — eksperimental profil (bax [MembraneTest]).
 	MembraneTest.run()
+	# 3D vizual prototip yalnız `--germ3d` ilə yüklənir — adi yol onun resursuna toxunmur.
+	_check(not ResourceLoader.has_cached("res://assets/proto3d/ciliate3d.glb")
+			and not ResourceLoader.has_cached("res://shaders/proto3d_jelly.gdshader")
+			and not ResourceLoader.has_cached("res://scripts/tools/germ3d.gd"),
+		"3D prototipin modeli, shader-i və skripti adi yolda yüklənmir")
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 

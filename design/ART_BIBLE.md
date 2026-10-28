@@ -1410,3 +1410,11 @@ növ siluetləri kimi. Rəngli çəkilsəydilər, hər oyunçu rəngi üçün ay
 | `ui/hud_aim_arrow.png` | 256² | Nişan xəttinin ucu — sağa baxan şevron |
 
 Mənbə və promptlar: [`menu_art/`](menu_art/) (`brief/BRIEF_AIM.md`, `brief/PROMPTS_AIM.md`).
+
+## 9. 3D vizual prototip — kirpikli (eksperiment, 2026-10-28)
+
+Kirpiklinin həcmli 3D görüntüsü (Blender skripti ilə qurulan prosedur model, laym jel
+materialı, yuxarı-soldan işıq, aşağı-sağa yumşaq kölgə, ayrı kirpiklər və armaturalı qamçı,
+gövdəyə bağlı məsamə, içində nüvə və toplar) yalnız `--germ3d` stendində var və indiki 2D GPU
+görüntüsü ilə yan-yana müqayisə olunur. Oyunun görüntüsü dəyişməyib. Qurma, işə salma, ölçü
+və nəticə: [proto3d/README.md](proto3d/README.md).

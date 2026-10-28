@@ -1120,6 +1120,8 @@ game/                    Godot layihəsi
       colony_test.gd     qida koloniyaları — `--simtest`-in içindən
       mutation_test.gd   mutasiyalar — `--simtest`-in içindən
       membrane_test.gd   membran müdafiəsi — `--simtest`-in içindən
+      germ3d.gd          kirpiklinin 3D vizual prototipi (yalnız `--germ3d`, design/proto3d/README.md)
+      germ3d_stand.gd    3D prototipin müqayisə və ölçü stendi
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -1208,7 +1210,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran (1030 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası (1031 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

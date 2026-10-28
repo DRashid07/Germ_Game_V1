@@ -36,6 +36,7 @@ static func run() -> int:
 	_test_island_dry_arsenal()
 	_test_island_food_dries()
 	_test_ball_one_way_push()
+	_test_ball_squeeze()
 	_test_ball_shot_and_pop()
 	_test_ball_goal_and_wall()
 	_test_ball_match_flow()
@@ -524,6 +525,56 @@ static func _test_ball_shot_and_pop() -> void:
 	for i in int(3.1 / DT):
 		s.step({}, DT)
 	_check(s.ball.weight <= 28.0 and s.ball.weight >= 27.0, "çəki 1.5 s-də 1 azalır (%.0f)" % s.ball.weight)
+
+
+## İki rəqib Nüvəni sıxanda o sürət YIĞMIR.
+##
+## Təmas əvvəl tam elastik idi və mikrobun sürətini üstə gəlirdi: iki mikrobun arasında
+## Nüvə hər tick o birindən sıçrayıb sürətlənirdi (ölçülüb: 0.3 s-də 350 → 1436 px/s, 5.9
+## s-də iki qol). İndi mikroblar Nüvəni ən güclü tək itələmədən sürətli edə bilmir.
+static func _test_ball_squeeze() -> void:
+	var top := 0.0
+	for offset in [0.0, 6.0, -11.0]:
+		var s := Sim.new()
+		s.set_mode(Const.Mode.BALL)
+		s.obstacles.clear()
+		s._reset_walls()
+		var a := s.add_germ(A_ID, "A", 0)
+		var b := s.add_germ(B_ID, "B", 1)
+		a.team = 0
+		b.team = 1
+		for g in [a, b]:
+			g.safe_t = 0.0
+			g.drain_t = 1.0e9
+			g.vel = Vector2.ZERO
+		a.pos = Vector2(-110.0, 0.0)
+		b.pos = Vector2(110.0, offset)
+		# Nüvə A-dan B-yə doğru uçur, ikisi də onu üz-üzə sıxır.
+		s.ball.vel = Vector2(350.0, 0.0)
+		var press := {A_ID: Sim.PlayerInput.make(1, Vector2.RIGHT, 0.0, false),
+			B_ID: Sim.PlayerInput.make(1, Vector2.LEFT, 0.0, false)}
+		for i in int(1.5 / DT):
+			s.step(press, DT)
+			if s.ball.alive:
+				top = maxf(top, s.ball.vel.length())
+	var limit := maxf(350.0, Const.BALL_KICK * Const.germ_speed(Const.START_CAPACITY)) + 1.0
+	_check(top <= limit,
+		"iki rəqibin sıxdığı Nüvə sürət yığmır (ən çox %.0f px/s, hədd %.0f)" % [top, limit])
+	# Dayanan mikroba çırpılan Nüvə şüşədəki kimi sıçrayır — sürət itir, artmır.
+	var w := Sim.new()
+	w.set_mode(Const.Mode.BALL)
+	w.obstacles.clear()
+	w._reset_walls()
+	var c := w.add_germ(A_ID, "A", 0)
+	c.team = 0
+	c.safe_t = 0.0
+	c.vel = Vector2.ZERO
+	c.pos = Vector2(80.0, 0.0)
+	w.ball.vel = Vector2(300.0, 0.0)
+	for i in int(0.5 / DT):
+		w.step({A_ID: Sim.PlayerInput.make(1, Vector2.ZERO, 0.0, false)}, DT)
+	_check(w.ball.vel.x < 0.0 and w.ball.vel.length() <= 300.0 * Const.BALL_BOUNCE + 1.0,
+		"dayanan mikroba çırpılan Nüvə sıçrayır, sürəti artmır (%.0f px/s)" % w.ball.vel.length())
 
 
 static func _test_ball_goal_and_wall() -> void:

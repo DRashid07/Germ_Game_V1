@@ -46,6 +46,9 @@ var held := false
 var aiming := false
 ## Nişanın istiqaməti (vahid vektor); yalnız [member aiming] ikən mənalıdır.
 var aim_dir := Vector2.RIGHT
+## Son nişanlı buraxılışın gücü 0..1 — sürüşmənin uzunluğu ([method aim_power]).
+## [signal aimed]-dən ƏVVƏL yazılır: amöbün damcısı onu məsafəyə çevirir.
+var released_power := 0.0
 
 var _touch_index := -1
 ## Toxunuşun başladığı yer (yerli koordinat). Nişan ondan ölçülür, düymənin
@@ -168,10 +171,18 @@ func _drag_to(at: Vector2) -> void:
 	queue_redraw()
 
 
+## Sürüşmənin gücü 0..1: ölü zonanın kənarında 0, düymənin radiusu qədər uzaqda 1.
+## Amöbün damcısında bu, MƏSAFƏDİR ([constant Const.LOB_MIN] → [constant Const.LOB_MAX]);
+## düz atəşdə istifadə olunmur.
+func aim_power() -> float:
+	return clampf((_drag.length() - radius * DEAD) / maxf(radius * (1.0 - DEAD), 1.0), 0.0, 1.0)
+
+
 func _release() -> void:
 	var shot := aiming
 	var dir := aim_dir
 	var tap := not _armed
+	released_power = aim_power()
 	cancel()
 	if shot:
 		aimed.emit(dir.angle())

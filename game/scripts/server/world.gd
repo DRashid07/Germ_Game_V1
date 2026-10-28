@@ -279,6 +279,8 @@ func join_info_for(peer: int) -> Dictionary:
 		# Doğuş yeri: klientin proqnozu buradan başlayır (bax `Arena.configure_online`).
 		# Dirilməni gözləyənin mikrobu yoxdur — onun klienti ilk snapshot-u gözləyir.
 		"pos": g.pos if g != null else Vector2.INF,
+		# Qaydaların versiyası — client uyğun gəlməsə açıq deyir (bax [constant Const.RULES]).
+		"rules": Const.RULES,
 	}
 
 
@@ -403,7 +405,7 @@ func _reset_round() -> void:
 		g.newbie = false
 		g.vel = Vector2.ZERO
 		g.pos = sim.find_spawn(g.radius())
-	sim.shots.clear()
+	sim.clear_shots()
 	# İnsanların köhnə raund girişi silinir: geri sayımda girişlər qəbul olunmur, server isə
 	# saxlanan SONUNCU girişi təkrarlayırdı — mikrob doğulduğu yerdən sürüşürdü, proqnoz
 	# (sayımda yerində durur) isə raund başlayanda geri dartılırdı. Gec giriş halı da
@@ -787,7 +789,7 @@ func _kickoff() -> void:
 		var g: Sim.GermState = sim.germs[gid]
 		_place_at_base(g)
 		g.safe_t = maxf(g.safe_t, Const.SPAWN_SAFE_TIME)
-	sim.shots.clear()
+	sim.clear_shots()
 	if sim.ball != null:
 		sim.ball.reset()
 	# Köhnə giriş təkrarlanmasın və gec giriş mikrobu köhnə yerinə qaytarmasın
@@ -1001,6 +1003,7 @@ func accept_input(peer: int, packed: Array) -> void:
 			inp.fire_aim = queued.aim if is_nan(queued.fire_aim) else queued.fire_aim
 			inp.view_tick = queued.view_tick
 			inp.fire_from = queued.fire_from
+			inp.fire_range = queued.fire_range
 			inp.shot = queued.shot
 			inp.fire_wait = queued.fire_wait
 		inp.fire = inp.fire or queued.fire
@@ -1213,6 +1216,13 @@ func _build_frame() -> void:
 
 	_frame_shots.clear()
 	for s in sim.shots:
+		var meta := Const.shot_meta(s.profile, s.payload, s.volley)
+		if s.is_lob():
+			# Damcının sətri baxana görə qurulur (bax [method _lob_row]): burada xam
+			# məlumat — düşmə nöqtəsi, başlanğıc, qalan vaxt, sahib, atıcının kolu, indiki yer.
+			_frame_shots.append([s.target, s.id, s.color, s.target.x, s.target.y,
+				s.origin.x, s.origin.y, maxf(s.life, 0.0), meta, s.owner_id, s.bush, s.pos])
+			continue
 		# Qalan ömür istiqamətin UZUNLUĞUNDADIR: `dir × (1 + ömür)` — ayrıca sahə
 		# paketi böyüdərdi (bax [method Const.unpack_shots]).
 		var packed := s.dir * (1.0 + maxf(s.life, 0.0))
@@ -1220,7 +1230,7 @@ func _build_frame() -> void:
 		# çəkir ki, ekrandakı toxunuş serverin qərarı ilə üst-üstə düşsün
 		# (bax [method Arena._remote_shot_pos]).
 		_frame_shots.append([s.pos, s.id, s.color, s.pos.x, s.pos.y, packed.x, packed.y,
-			s.rewind * Const.TICK_DELTA])
+			s.rewind * Const.TICK_DELTA, meta])
 
 	# Qida düz ədəd axını kimi paketlənir (bax [constant Const.FOOD_STRIDE]).
 	#
@@ -1297,6 +1307,9 @@ func snapshot_for(peer: int) -> Array:
 	# Prioritet sırası oyundan çıxır: mikrob (kimə qarşı oynayıram) → top
 	# (nədən qaçıram) → hadisə (nə baş verdi) → qida (sonra yeyərəm).
 	var germs := _near_germs(_frame_germs, eye, r2, eye_bush, peer)
+	# Baxanın gördüyü mikroblar — damcının atıcısı onların arasında deyilsə, xəbərdarlıq
+	# onun yerini və rəngini AÇMIR (bax [method _lob_row]).
+	var seen: PackedInt32Array = germs[0]
 	var n_germs: int = (germs[0] as PackedInt32Array).size()
 	var fixed := Const.SNAP_FIXED + (Const.SNAP_OBJ if Const.is_objective_mode(int(mode)) else 0)
 	var left: int = maxi(Const.MTU_SAFE - fixed - n_germs * Const.GERM_BYTES, 120)
@@ -1310,7 +1323,8 @@ func snapshot_for(peer: int) -> Array:
 	return [
 		sim.tick,
 		germs,
-		_near_shots(_frame_shots, eye, r2, shot_n),
+		_near_shots(_frame_shots, eye, r2, shot_n, seen, eye_bush, peer,
+			g.radius() if g != null else Const.BASE_RADIUS),
 		_near_food(_frame_food_pos, _frame_food_id, eye, r2, food_n),
 		_near_flat(_frame_events, eye, r2, event_n, g.color if g != null else -1),
 		_frame_board,
@@ -1359,24 +1373,65 @@ static func _near_germs(rows: Array, eye: Vector2, r2: float,
 ## Variant massivində hər ədəd ~9 bayt tutur, `PackedFloat32Array`-də isə 4.
 ## Döyüş qızışanda ekranda 15-ə qədər top olur; köhnə format o anda tək
 ## başına ~690 bayt yeyirdi və snapshot MTU-nu aşırdı.
-static func _near_shots(rows: Array, eye: Vector2, r2: float, limit: int) -> PackedFloat32Array:
+##
+## Hədd aşılanda ən yaxınlar qalır, amma TƏHLÜKƏLİ olan önə keçir: baxanın düşmə
+## sahəsinə yaxın damcı hər topdan əvvəl gedir — oyunçu ona düşən xəbərdarlığı
+## paket sıxlığına görə itirməməlidir. Atılanların sayı [member shots_cut]-a yazılır.
+##
+## Damcı görüş sahəsinə həm düşmə nöqtəsi, həm də havadakı yeri ilə düşə bilər.
+func _near_shots(rows: Array, eye: Vector2, r2: float, limit: int,
+		seen: PackedInt32Array, eye_bush: int, peer: int, eye_r: float) -> PackedFloat32Array:
 	var near: Array = []
+	var danger := pow(eye_r + Const.LOB_AREA + LOB_WARN_PAD, 2.0)
 	for row in rows:
 		var d := eye.distance_squared_to(row[0])
+		var lob: bool = row.size() > 9
+		if lob:
+			if d <= danger:
+				d = -1.0
+			else:
+				d = minf(d, eye.distance_squared_to(row[11]))
 		if d > r2:
 			continue
 		near.append([d, row])
 
 	if near.size() > limit:
 		near.sort_custom(func(x, y) -> bool: return x[0] < y[0])
+		shots_cut += near.size() - limit
 		near.resize(limit)
 
 	var out := PackedFloat32Array()
 	for e in near:
 		var row: Array = e[1]
+		if row.size() > 9:
+			out.append_array(_lob_row(row, seen, eye_bush, peer))
+			continue
 		for i in range(1, row.size()):
 			out.push_back(float(row[i]))
 	return out
+
+
+## Damcının sətri baxana görə ([enum Const.SF], DAMCI).
+##
+## Xəbərdarlıq hamıya gedir — düşmə nöqtəsi və qalan vaxt. Başlanğıc nöqtəsi və
+## atıcının rəngi isə yalnız atıcını GÖRƏNƏ gedir: atıcı baxanın mikrob siyahısındadır
+## və atəş anında başqa kolda deyildi. Yoxsa başlanğıc əvəzinə düşmə nöqtəsi, rəng
+## yerinə -1 gedir: kolda gizlənən və ya ekrandan kənardakı atıcının nə yeri, nə
+## kimliyi paketdən oxunur (qəbul edənə lazım olmayan nöqtə ümumiyyətlə göndərilmir).
+static func _lob_row(row: Array, seen: PackedInt32Array, eye_bush: int, peer: int) -> PackedFloat32Array:
+	var owner: int = row[9]
+	var bush: int = row[10]
+	var open := owner == peer or (seen.has(owner) and (bush < 0 or bush == eye_bush))
+	var tx: float = row[3]
+	var ty: float = row[4]
+	return PackedFloat32Array([row[1], row[2] if open else -1.0, tx, ty,
+		row[5] if open else tx, row[6] if open else ty, row[7], row[8]])
+
+
+## Baxanın gövdəsindən bu qədər piksel uzaqlığa qədər düşən damcı "təhlükəli" sayılır.
+const LOB_WARN_PAD := 120.0
+## Paket büdcəsinə görə göndərilməyən topların sayı (ölçü üçün, bax [method _near_shots]).
+var shots_cut := 0
 
 
 ## Görüş sahəsindəki sətirləri süzür.

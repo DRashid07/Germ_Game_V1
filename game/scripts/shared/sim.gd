@@ -136,6 +136,25 @@ class ShotState:
 	## Atıcının komandası — atılanda yazılır, çünki atıcı top uçarkən ölə bilər, ANA
 	## isə yenə bilməlidir ki, top öz komandasınındır (sıçrayır) yoxsa rəqibin (girir).
 	var team := -1
+	## Mərminin profili ([enum Const.Shot]) və ondan çıxan sürət, radius, yük.
+	var profile := int(Const.Shot.MINIGUN)
+	var speed := Const.SHOT_SPEED
+	var radius := Const.SHOT_RADIUS
+	var payload := Const.SHOT_PAYLOAD
+	## Atəş hərəkətinin nömrəsi — bir hərəkətin mərmiləri (iki iynə) onu bölüşür və
+	## super, qida, kövrək qabıq, Ana və Nüvə mükafatı hərəkət başına bir dəfə verilir
+	## (bax [member _volleys]). Nömrə dünyada təkrarlanmır.
+	var volley := 0
+	## DAMCI: düşmə nöqtəsi, başlanğıc və uçuşun bütün müddəti. Uçuşda [member pos]
+	## başlanğıcdan düşmə nöqtəsinə düz gedir — qövs yalnız görüntüdədir.
+	var target := Vector2.ZERO
+	var origin := Vector2.ZERO
+	var flight := 0.0
+	## Atıcı atəş anında hansı koldaydı (-1 heç biri) — xəbərdarlıq onun yerini açmasın.
+	var bush := -1
+
+	func is_lob() -> bool:
+		return profile == Const.Shot.LOB
 
 
 ## Yerdəki sərbəst top (qida). Atılıb boşa gedən toplar da buna çevrilir —
@@ -233,6 +252,12 @@ class PlayerInput:
 	##
 	## Yalnız [member shot] paketində gedir, massivin sonunda — köhnə server onu oxumur.
 	var fire_from := Vector2.INF
+	## AMÖBÜN damcısı hansı məsafəyə düşsün (px). NAN = demədi — server
+	## [constant Const.LOB_AUTO] götürür. Başqa növlərdə oxunmur.
+	##
+	## Bayraq ədədinin beşinci biti (16) deyir ki, ədəd paketdədir; o, həmişə 8-ci
+	## yerdədir və boş qalan 5–7-ci yerlər doldurulur (bax [method to_array]).
+	var fire_range := NAN
 	## Server tərəfi: proqnozun atəşi neçə tick soyumanı gözləyib.
 	var fire_wait := 0
 
@@ -256,15 +281,19 @@ class PlayerInput:
 	## Görünən tick YALNIZ atəşli paketə yazılır: server onu yalnız topu
 	## doğanda oxuyur, qalan 29 paketdə isə boş yerə 9 bayt olardı.
 	func to_array() -> Array:
+		var ranged := fire and is_finite(fire_range)
 		var out := [seq, move.x, move.y, aim,
 			(1 if fire else 0) | (2 if use_super else 0) | (4 if shot else 0) \
-				| (8 if newbie else 0)]
+				| (8 if newbie else 0) | (16 if ranged else 0)]
 		var origin := shot and fire and fire_from.is_finite()
-		if fire and (view_tick >= 0.0 or origin):
+		if fire and (view_tick >= 0.0 or origin or ranged):
 			out.append(view_tick)
-		if origin:
-			out.append(fire_from.x)
-			out.append(fire_from.y)
+		if origin or ranged:
+			# Başlanğıc bilinmirsə NaN gedir — oxuyan onu atır (bax [method from_array]).
+			out.append(fire_from.x if origin else NAN)
+			out.append(fire_from.y if origin else NAN)
+		if ranged:
+			out.append(fire_range)
 		return out
 
 	static func from_array(a: Array) -> PlayerInput:
@@ -279,6 +308,10 @@ class PlayerInput:
 			var from := Vector2(float(a[6]), float(a[7]))
 			if from.is_finite():
 				i.fire_from = from
+		if (bits & 16) != 0 and i.fire and a.size() > 8:
+			var r := float(a[8])
+			if is_finite(r):
+				i.fire_range = r
 		return i
 
 
@@ -589,6 +622,7 @@ func step_movement(inputs: Dictionary, dt: float, keep_events := true) -> void:
 	if germs.size() > 1:
 		_separate_germs()
 	shots.clear()
+	_volleys.clear()
 	if not keep_events:
 		events.clear()
 
@@ -647,7 +681,7 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 			g.cooldown = maxf(0.0, g.cooldown - dt)
 			g.safe_t = maxf(0.0, g.safe_t - dt)
 			if inp != null and inp.fire and g.cooldown <= 0.0:
-				_fire(g, inp.view_tick, inp.fire_aim, true, inp.fire_from)
+				_fire(g, inp.view_tick, inp.fire_aim, true, inp.fire_from, inp.fire_range)
 				# Geri təpmə amöbü tərpətmir — yerində qalır.
 				g.vel = Vector2.ZERO
 			continue
@@ -713,7 +747,7 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 		# sursat həddinə baxmır.
 		if inp != null and inp.fire and g.cooldown <= 0.0 \
 				and (g.balls >= Const.FIRE_MIN_BALLS or g.in_cyst()):
-			_fire(g, inp.view_tick, inp.fire_aim, g.in_cyst(), inp.fire_from)
+			_fire(g, inp.view_tick, inp.fire_aim, g.in_cyst(), inp.fire_from, inp.fire_range)
 
 		if g.balls < Const.MIN_BALLS and not _no_metabolism:
 			starved.append(g)
@@ -800,7 +834,8 @@ func _super_trichocyst(g: GermState) -> void:
 
 	var survivors: Array[ShotState] = []
 	for shot in shots:
-		if shot.owner_id == g.id:
+		# Havadakı DAMCIYA trixosist çatmır — o, gövdələrin üstündən uçur.
+		if shot.owner_id == g.id or shot.is_lob():
 			survivors.append(shot)
 			continue
 		# İnsanın topu atıcının ekranında `rewind` qədər QABAQDADIR: atıcı bu
@@ -813,8 +848,8 @@ func _super_trichocyst(g: GermState) -> void:
 			continue
 		if shot.pos.distance_squared_to(g.pos) <= reach2:
 			# Sahib SIFIR verilir: dağılan top artıq heç kimin deyil, hamı
-			# eyni anda yeyə bilər.
-			_drop_food(shot.pos, shot.dir * 60.0, 0)
+			# eyni anda yeyə bilər. İki iynə dağılsa da qida birdir (bax [member _volleys]).
+			_waste(shot, shot.pos, shot.dir * 60.0, 0)
 			continue
 		survivors.append(shot)
 	shots = survivors
@@ -986,22 +1021,15 @@ func _separate_germs() -> void:
 ## [param minigun] — amöbün superi: top PULSUZDUR və dövr qısadır
 ## ([constant Const.MINIGUN_COOLDOWN]).
 ## [param from] — atıcının ekranındakı mərkəz ([member PlayerInput.fire_from]); INF = öz mövqeyi.
+## [param distance] — damcının məsafəsi ([member PlayerInput.fire_range]); NAN = [constant Const.LOB_AUTO].
+##
+## Bir HƏRƏKƏT bir top xərcləyir, bir geri təpmə və bir soyuma yaradır — mərmilər nə qədər
+## olursa olsun (bax [enum Const.Shot]). Qaytarır: atəş açıldımı. Damcının düşmə nöqtəsi
+## etibarsızdırsa ([method lob_valid]) atəş AÇILMIR: top xərclənmir, soyuma başlamır.
 func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
-		from := Vector2.INF) -> void:
+		from := Vector2.INF, distance := NAN) -> bool:
 	var dir := Vector2.from_angle(g.aim if is_nan(aim) else aim)
-	var s := ShotState.new()
-	s.id = _next_shot_id
-	_next_shot_id += 1
-	s.owner_id = g.id
-	s.color = g.color
-	s.team = g.team
-	# Geri sarma atəş anında BİR dəfə ölçülür və uçuş boyu sabit qalır: top
-	# client-də də o andan sabit sürətlə uçur, rəqiblər isə eyni gecikmə ilə
-	# görünməyə davam edir. Client uydurma keçmiş göndərə bilər, ona görə
-	# hədd var — ondan uzağa sarmaq olmur.
-	if lag_comp and view_tick >= 0.0:
-		s.rewind = clampf(float(tick) - view_tick, 0.0,
-			Const.REWIND_MAX * float(Const.TICK_RATE))
+	var profile := Const.shot_profile(int(g.species), minigun)
 	# Top mikrobun İÇİNDƏN doğulur və membranı yararaq çıxır.
 	#
 	# Əvvəl membranın kənarında, bir neçə piksel ARALIDA
@@ -1020,12 +1048,56 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 	# kimi (bax [member PlayerInput.fire_from]). Hədd gövdənin içidir
 	# ([constant FIRE_FROM_REACH]): top yenə mikrobun içindən çıxır, maneəyə
 	# girə bilmir, hiylə ilə qazanılan məsafə isə radiusun bir hissəsidir.
-	s.pos = g.pos
+	var start := g.pos
 	if from.is_finite():
-		s.pos = g.pos + (from - g.pos).limit_length(FIRE_FROM_REACH * g.radius())
-	s.dir = dir
-	s.life = Const.SHOT_LIFETIME
-	shots.append(s)
+		start = g.pos + (from - g.pos).limit_length(FIRE_FROM_REACH * g.radius())
+	var landing := Vector2.ZERO
+	if profile == Const.Shot.LOB:
+		landing = lob_landing(start, dir, distance)
+		if not lob_valid(landing):
+			return false
+	# Geri sarma atəş anında BİR dəfə ölçülür və uçuş boyu sabit qalır: top
+	# client-də də o andan sabit sürətlə uçur, rəqiblər isə eyni gecikmə ilə
+	# görünməyə davam edir. Client uydurma keçmiş göndərə bilər, ona görə
+	# hədd var — ondan uzağa sarmaq olmur.
+	#
+	# Damcı geri SARILMIR: düşdüyü yeri hamı əvvəlcədən görür, zərbə düşmə anındakı
+	# server mövqelərinə qarşıdır — xəbərdarlıqdan qaçan sonra köhnə yerində vurulmur.
+	var rewind := 0.0
+	if lag_comp and view_tick >= 0.0 and profile != Const.Shot.LOB:
+		rewind = clampf(float(tick) - view_tick, 0.0,
+			Const.REWIND_MAX * float(Const.TICK_RATE))
+	var volley := _next_volley
+	_next_volley += 1
+	_volleys[volley] = _new_volley()
+	var count := Const.NEEDLE_COUNT if profile == Const.Shot.NEEDLE else 1
+	var first: ShotState = null
+	for k in count:
+		var s := ShotState.new()
+		s.id = _next_shot_id
+		_next_shot_id += 1
+		s.owner_id = g.id
+		s.color = g.color
+		s.team = g.team
+		s.rewind = rewind
+		s.profile = profile
+		s.speed = Const.SHOT_PROFILE_SPEED[profile]
+		s.radius = Const.SHOT_PROFILE_RADIUS[profile]
+		s.payload = Const.SHOT_PROFILE_PAYLOAD[profile]
+		s.volley = volley
+		s.pos = start
+		s.dir = dir
+		if profile == Const.Shot.NEEDLE:
+			s.dir = dir.rotated(Const.NEEDLE_SPREAD * (-1.0 if k == 0 else 1.0))
+		s.life = Const.SHOT_PROFILE_LIFE[profile]
+		if profile == Const.Shot.LOB:
+			s.origin = start
+			s.target = landing
+			s.flight = Const.LOB_FLIGHT
+			s.bush = bush_of(g)
+		shots.append(s)
+		if first == null:
+			first = s
 
 	if minigun:
 		g.cooldown = Const.MINIGUN_COOLDOWN
@@ -1043,15 +1115,159 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 	# Qığılcım topun doğulduğu yerdə YOX, membranı yardığı yerdə çıxır —
 	# mərkəzdə çəkilsə gövdənin altında qalıb heç görünməzdi.
 	# `from` — topun doğulduğu mərkəz: client proqnozu onu serverə göndərir
-	# ([member PlayerInput.fire_from]). Snapshot-a getmir ([method World] yalnız
-	# `pos`, `arg`, `color` oxuyur).
+	# ([member PlayerInput.fire_from]). `profile` və damcının `land` nöqtəsi də
+	# proqnoz üçündür. Snapshot-a getmir ([method World] yalnız `pos`, `arg`,
+	# `color` oxuyur).
 	events.append({
 		"t": "fire",
 		"pos": g.pos + dir * g.radius(),
-		"from": s.pos,
+		"from": first.pos,
 		"arg": dir.angle(),
 		"color": g.color,
+		"profile": profile,
+		"land": landing,
 	})
+	return true
+
+
+## Damcının düşmə nöqtəsi: [param start]-dan [param dir] boyu [param distance] qədər,
+## məsafə [constant Const.LOB_MIN]–[constant Const.LOB_MAX] aralığına salınır.
+## Məsafə bilinmirsə (NAN, köhnə client, bot) — [constant Const.LOB_AUTO].
+static func lob_landing(start: Vector2, dir: Vector2, distance: float) -> Vector2:
+	var d := distance if is_finite(distance) else Const.LOB_AUTO
+	return start + dir.normalized() * clampf(d, Const.LOB_MIN, Const.LOB_MAX)
+
+
+## Damcı bura düşə bilərmi: şüşənin içində ([constant Const.LOB_EDGE] ehtiyatla) və
+## bərk maneənin (selik, bütöv kövrək qabıq, Ana) İÇİNDƏ deyil. Kol və cərəyan
+## deşiyi olar — damcı ora düşür. Nişan xətti də bunu göstərir ([AimGuide]).
+func lob_valid(at: Vector2) -> bool:
+	if not at.is_finite() or at.length() > wall_radius - Const.LOB_EDGE:
+		return false
+	for i in obstacles.size():
+		var o := obstacles[i]
+		if at.distance_squared_to(Vector2(o.x, o.y)) >= o.z * o.z:
+			continue
+		# Client-in proqnozunda vəziyyət snapshot-dan gəlir — ilk snapshot-a qədər qısa ola bilər.
+		var gone := i < broken.size() and DishMap.wall_gone(broken[i])
+		if DishMap.blocks_germ(int(o.w)) and not gone:
+			return false
+	return true
+
+
+## Damcının düşdüyü nöqtədə vurduğu TƏK rəqib, yoxdursa null.
+##
+## Düşmə sahəsi [constant Const.LOB_AREA] radiuslu dairədir və mikrobun TOXUNMA həndəsəsi
+## ilə yoxlanılır — topla eyni ellips, payı damcının sahəsi ([method hit_shape]). Bir neçə
+## rəqib düşürsə, mərkəzi düşmə nöqtəsinə ən yaxın olan, bərabərdə kiçik id seçilir:
+## çoxhədəfli partlayış yoxdur. Yoldaş, atıcının özü və doğuş qalxanlı mikrob vurulmur.
+## Mövqelər İNDİKİDİR — geri sarma yoxdur (bax [method _fire]).
+func lob_victim(at: Vector2, owner_id: int, team: int) -> GermState:
+	var best: GermState = null
+	var best_d := INF
+	for id in germs:
+		var g: GermState = germs[id]
+		if not g.alive or g.id == owner_id or germ_bits(g) & HIST_SAFE:
+			continue
+		if team >= 0 and g.team == team:
+			continue
+		var shape := hit_shape(int(g.species), g.capacity, g.vel, Const.LOB_AREA)
+		if not point_in_ellipse(at, g.pos, shape):
+			continue
+		var d := at.distance_to(g.pos)
+		if best == null or d < best_d - 0.0001 or (absf(d - best_d) <= 0.0001 and g.id < best.id):
+			best = g
+			best_d = d
+	return best
+
+
+## Nöqtə ellipsin içindədirmi (sərhəd daxil) — [method hit_shape] formatında.
+static func point_in_ellipse(at: Vector2, center: Vector2, shape: Vector3) -> bool:
+	var l := (at - center).rotated(-shape.z)
+	return (l.x * l.x) / (shape.x * shape.x) + (l.y * l.y) / (shape.y * shape.y) <= 1.0
+
+
+## Damcı düşdü. Qərar ardıcıllığı açıqdır və testlə saxlanılır:
+##   1. sahədə rəqib varsa — ona +2 ([method lob_victim]);
+##   2. yoxdursa, sahə Nüvəyə toxunursa — Nüvəyə +2 çəki və bir təkan (uçuş istiqamətində);
+##   3. yoxdursa, sahə RƏQİBİN Anasına toxunursa — Ana [constant Const.MOTHER_FEED] dolur;
+##   4. heç nəyə düşməyibsə — suya düşür və qidaya çevrilir.
+## Kövrək qabığa və selikə damcı TOXUNMUR: üstündən keçir və onların içinə düşə bilmir.
+func _land_lob(s: ShotState) -> void:
+	var at := s.target
+	s.pos = at
+	var victim := lob_victim(at, s.owner_id, s.team)
+	if victim != null:
+		_inject(victim, at, s)
+		return
+	if ball != null and ball.alive and at.distance_to(ball.pos) <= ball.radius() + Const.LOB_AREA:
+		_hit_ball(at, s)
+		return
+	if s.team == 0 or s.team == 1:
+		var foe := mother_index[1 - s.team]
+		if foe >= 0:
+			var o := obstacles[foe]
+			if at.distance_to(Vector2(o.x, o.y)) <= o.z + Const.LOB_AREA:
+				_feed_mother(foe, at, s)
+				return
+	# Sıçrantı adi divar zərbəsi kimi yazılır (`arg` 0): client mikrob axtarmır.
+	events.append({"t": "hit", "pos": at, "arg": 0.0, "color": s.color})
+	_waste(s, at, Vector2.ZERO, s.owner_id)
+
+
+## Atəş hərəkətinin ortaq hesabı ([member ShotState.volley]).
+##
+##   • `paid` — hərəkətin xərclədiyi top artıq yerini tapıb: mikroba, Anaya, Nüvəyə
+##     girib və ya QİDAYA çevrilib. Sonra boşa çıxan mərmi yeni qida YARATMIR —
+##     bir hərəkətdən ən çoxu bir qida.
+##   • `super` — atıcı super mükafatını bu hərəkətə görə artıq alıb.
+##   • `crack`, `mother`, `ball` — kövrək qabıq, Ana və Nüvə bu hərəkətdən artıq aldı.
+##   • `taken` — bu hərəkətin dəydiyi mikroblar (qurbanın super payı bir dəfə).
+##
+## Qrup bütün mərmiləri bitənə qədər yaşayır ([method _step_shots] sonda silir);
+## nömrə təkrarlanmır, yəni snapshot təkrarı və ya köhnə nömrə hesabı ikiqat saymır.
+var _volleys := {}
+var _next_volley := 1
+
+
+static func _new_volley() -> Dictionary:
+	return {"paid": false, "super": false, "crack": false, "mother": false,
+		"ball": false, "taken": {}}
+
+
+## Mərminin qrupu. Qrupsuz mərmi (testin əl ilə qurduğu) öz başınadır — köhnə qayda.
+func _volley_of(s: ShotState) -> Dictionary:
+	if s.volley <= 0 or not _volleys.has(s.volley):
+		var solo := _new_volley()
+		if s.volley > 0:
+			_volleys[s.volley] = solo
+		return solo
+	return _volleys[s.volley]
+
+
+## Mərmi boşa çıxdı — hərəkətin topu hələ yerini tapmayıbsa qidaya çevrilir.
+func _waste(s: ShotState, at: Vector2, vel: Vector2, lock_id: int) -> void:
+	var v := _volley_of(s)
+	if bool(v["paid"]):
+		return
+	v["paid"] = true
+	_drop_food(at, vel, lock_id)
+
+
+## Atıcının super mükafatı — hərəkət başına bir dəfə ([constant Const.SUPER_ON_HIT]).
+func _reward(s: ShotState) -> void:
+	var v := _volley_of(s)
+	if bool(v["super"]):
+		return
+	v["super"] = true
+	_charge(germs.get(s.owner_id), Const.SUPER_ON_HIT)
+
+
+## Uçan mərmilər və onların qrupları silinir (raund, qol, testlər).
+func clear_shots() -> void:
+	shots.clear()
+	_volleys.clear()
+	_blasts.clear()
 
 
 func _step_shots(dt: float) -> void:
@@ -1061,12 +1277,20 @@ func _step_shots(dt: float) -> void:
 
 	for s in shots:
 		s.life -= dt
+		# DAMCI havadadır: heç nəyə toxunmur, düz xətlə düşmə nöqtəsinə gedir.
+		if s.is_lob():
+			if s.life <= 0.0:
+				_land_lob(s)
+				continue
+			s.pos = s.origin.lerp(s.target, clampf(1.0 - s.life / maxf(s.flight, 0.001), 0.0, 1.0))
+			survivors.append(s)
+			continue
 		if s.life <= 0.0:
-			_drop_food(s.pos, Vector2.ZERO, s.owner_id)
+			_waste(s, s.pos, Vector2.ZERO, s.owner_id)
 			continue
 
 		var from := s.pos
-		var to := s.pos + s.dir * Const.SHOT_SPEED * dt
+		var to := s.pos + s.dir * s.speed * dt
 
 		# Ən yaxın toqquşmanı tapırıq: maneə mikrobdan öndədirsə, top ona dəyir.
 		var best := 2.0
@@ -1082,7 +1306,7 @@ func _step_shots(dt: float) -> void:
 		# statik çağırış yalnız dəyən maneəyə qalır. Şərtlər yan təsirsizdir.
 		for i in obstacles.size():
 			var o := obstacles[i]
-			var t := _seg_circle_t(from, to, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS)
+			var t := _seg_circle_t(from, to, Vector2(o.x, o.y), o.z + s.radius)
 			if not (t >= 0.0 and t < best):
 				continue
 			if DishMap.wall_gone(broken[i]) or not DishMap.blocks_shot(int(o.w)):
@@ -1095,7 +1319,7 @@ func _step_shots(dt: float) -> void:
 		# NÜVƏ — top ona da dəyə bilər (bax [method _hit_ball]).
 		var hit_ball := false
 		if ball != null and ball.alive:
-			var tb := _seg_circle_t(from, to, ball.pos, ball.radius() + Const.SHOT_RADIUS)
+			var tb := _seg_circle_t(from, to, ball.pos, ball.radius() + s.radius)
 			if tb >= 0.0 and tb < best:
 				best = tb
 				hit_ball = true
@@ -1126,10 +1350,10 @@ func _step_shots(dt: float) -> void:
 			var at := Vector2(state.x, state.y)
 			# Ucuz ilk süzgəc: top-mikrob cütlərinin çoxu uzaqdadır, ellipsin
 			# qurulması və kəsişməsi isə yalnız yaxındakına lazımdır.
-			var near := hit_reach(g.capacity) + Const.SHOT_SPEED * dt
+			var near := hit_reach(g.capacity, s.radius) + s.speed * dt
 			if at.distance_squared_to(from) > near * near:
 				continue
-			var shape := hit_shape(int(g.species), g.capacity, Vector2(state.z, state.w))
+			var shape := hit_shape(int(g.species), g.capacity, Vector2(state.z, state.w), s.radius)
 			var t := seg_ellipse_hit_t(from, to, at, shape)
 			if t >= 0.0 and t < best:
 				best = t
@@ -1164,7 +1388,7 @@ func _step_shots(dt: float) -> void:
 		s.pos = to
 
 		# Qabın şüşə kənarı.
-		var limit := wall_radius - Const.SHOT_RADIUS
+		var limit := wall_radius - s.radius
 		if s.pos.length() > limit:
 			var n := -s.pos.normalized()
 			s.pos = -n * limit
@@ -1174,6 +1398,14 @@ func _step_shots(dt: float) -> void:
 		survivors.append(s)
 
 	shots = survivors
+	# Bütün mərmiləri bitən qrup silinir (bax [member _volleys]).
+	if not _volleys.is_empty():
+		var live := {}
+		for s in shots:
+			live[s.volley] = true
+		for v in _volleys.keys():
+			if not live.has(v):
+				_volleys.erase(v)
 
 
 ## Bu tick-in mikrob mövqelərini tarixçəyə yazır (bax [member lag_comp]).
@@ -1255,9 +1487,9 @@ func _apply_blasts(dt: float) -> void:
 			var s := shots[i]
 			if s.id != int(b[1]):
 				continue
-			var at := s.pos - s.dir * (Const.SHOT_SPEED * dt * (now - float(b[0])))
+			var at := s.pos - s.dir * (s.speed * dt * (now - float(b[0])))
 			if at.distance_squared_to(b[2]) <= float(b[3]):
-				_drop_food(at, s.dir * 60.0, 0)
+				_waste(s, at, s.dir * 60.0, 0)
 				shots.remove_at(i)
 			break
 	_blasts = keep
@@ -1315,7 +1547,7 @@ func _hist_at(t: int, id: int) -> Variant:
 func _bounce(s: ShotState, at: Vector2, normal: Vector2) -> bool:
 	s.bounces += 1
 	if s.bounces > Const.SHOT_BOUNCES:
-		_drop_food(at, Vector2.ZERO, s.owner_id)
+		_waste(s, at, Vector2.ZERO, s.owner_id)
 		return false
 	s.pos = at + normal * 0.5
 	s.dir = s.dir.bounce(normal).normalized()
@@ -1336,6 +1568,12 @@ func _crack(i: int, at: Vector2, s: ShotState) -> void:
 	# Qığılcım adi sıçrayış kimi yazılır (`arg` = 0): client burada mikrob
 	# axtarmamalıdır, çünki vurulan mikrob yoxdur (bax [method Arena._on_impact]).
 	events.append({"t": "hit", "pos": at, "arg": 0.0, "color": s.color})
+	# İki iynə qabığa İKİ zərbə vurmur: hərəkət başına bir zərbə. İkinci iynə qabıqda
+	# sadəcə qalır (onun topu birincinin qidasına artıq yazılıb).
+	var v := _volley_of(s)
+	if bool(v["crack"]):
+		return
+	v["crack"] = true
 	if brittle_hp[i] > 0:
 		brittle_hp[i] -= 1
 	# Zədə sayı BAYTA yazılır ki, client onu görsün və qabığın şəklini
@@ -1347,7 +1585,7 @@ func _crack(i: int, at: Vector2, s: ShotState) -> void:
 		var o := obstacles[i]
 		events.append({"t": "break", "pos": Vector2(o.x, o.y),
 			"arg": o.z, "color": s.color})
-	_drop_food(at, Vector2.ZERO, s.owner_id)
+	_waste(s, at, Vector2.ZERO, s.owner_id)
 
 
 ## ANA HÜCEYRƏ: rəqibin topu Anaya girdi — Ana [constant Const.MOTHER_FEED] top dolur.
@@ -1356,11 +1594,17 @@ func _crack(i: int, at: Vector2, s: ShotState) -> void:
 ## Tutumu keçəndə Ana partlayır və matç bitir ([member mother_burst], qərarı [World] verir).
 func _feed_mother(i: int, at: Vector2, s: ShotState) -> void:
 	var t := mother_team(i)
-	mother_balls[t] += Const.MOTHER_FEED
 	# Hit hadisəsi qurbansızdır (`arg` 0): client mikrob axtarmır, Ananın səthində
 	# dalğa açır və Ana titrəyir (bax [method Arena._map_hit]).
 	events.append({"t": "hit", "pos": at, "arg": 0.0, "color": s.color})
-	_charge(germs.get(s.owner_id), Const.SUPER_ON_HIT)
+	# Hərəkət başına bir dəfə: iki iynə Ananı iki dəfə doldurmur, ikincisi sadəcə udulur.
+	var v := _volley_of(s)
+	v["paid"] = true
+	if bool(v["mother"]):
+		return
+	v["mother"] = true
+	mother_balls[t] += Const.MOTHER_FEED
+	_reward(s)
 	if mother_balls[t] > Const.MOTHER_CAP and mother_burst < 0:
 		mother_burst = t
 		var o := obstacles[i]
@@ -1372,11 +1616,17 @@ func _feed_mother(i: int, at: Vector2, s: ShotState) -> void:
 ## Uzaqdan vurmaq həm atanın topunu yeyir, həm Nüvəni ağırlaşdırır (ağır Nüvə yavaşdır
 ## və 40-ı keçəndə partlayır). Gövdə ilə itələmək isə pulsuzdur — rejimin seçimi budur.
 func _hit_ball(at: Vector2, s: ShotState) -> void:
+	events.append({"t": "hit", "pos": at, "arg": 0.0, "color": s.color})
+	# Hərəkət başına cəmi +2 çəki və BİR təkan: iki iynənin ikincisi Nüvədə sadəcə udulur.
+	var v := _volley_of(s)
+	v["paid"] = true
+	if bool(v["ball"]):
+		return
+	v["ball"] = true
 	var push := Const.BALL_SHOT_PUSH * float(Const.BALL_WEIGHT) / maxf(ball.weight, 1.0)
 	ball.vel += s.dir * push
 	ball.weight += float(Const.SHOT_PAYLOAD)
-	events.append({"t": "hit", "pos": at, "arg": 0.0, "color": s.color})
-	_charge(germs.get(s.owner_id), Const.SUPER_ON_HIT)
+	_reward(s)
 	if ball.weight > float(Const.BALL_WEIGHT_MAX):
 		_pop_ball(s.color)
 
@@ -1426,8 +1676,17 @@ func _step_ball(dt: float) -> void:
 	# yanına qoyurdu və iki rəqib onu sıxanda sonuncunun sözü keçirdi — yəni nəticə
 	# `germs`-in sırasından asılı idi. Ölçülüb: botlu matçlarda bir komanda 14:4 udurdu.
 	# İndi qarşı-qarşıya itələmələr bir-birini sadəcə ləğv edir.
+	#
+	# Təmasın normal sürəti: mikrobun normal sürətinin [constant Const.BALL_KICK] misli
+	# (itələmə) və ya Nüvənin öz gəliş sürətinin [constant Const.BALL_BOUNCE] payı
+	# (sıçrayış) — hansı böyükdürsə. Əvvəl təmas tam elastik idi və mikrobun sürətini
+	# ÜSTƏ GƏLİRDİ: iki rəqibin arasında sıxılan Nüvə hər tick o birindən sıçrayıb
+	# sürət yığırdı — ölçülüb, 0.3 s-də 350 → 1436 px/s, 5.9 s-də iki qol. Mikroblar
+	# Nüvəni əvvəlki sürətindən və ən güclü tək itələmədən sürətli edə bilməz.
 	var shift := Vector2.ZERO
 	var kick := Vector2.ZERO
+	var v0 := ball.vel
+	var top := v0.length()
 	for id in germs:
 		var g: GermState = germs[id]
 		if not g.alive:
@@ -1439,11 +1698,13 @@ func _step_ball(dt: float) -> void:
 			continue
 		var n := (delta / d) if d > 0.001 else Vector2.RIGHT
 		shift += n * (min_d - d)
-		var rel := g.vel.dot(n) - ball.vel.dot(n)
-		if rel > 0.0:
-			kick += n * rel * Const.BALL_KICK
+		var vn := v0.dot(n)
+		var want := maxf(g.vel.dot(n) * Const.BALL_KICK, -vn * Const.BALL_BOUNCE)
+		if want > vn:
+			kick += n * (want - vn)
+			top = maxf(top, want)
 	ball.pos += shift
-	ball.vel += kick
+	ball.vel = (v0 + kick).limit_length(top)
 
 	# Bərk maneələrdən sıçrayır (kol keçir).
 	for i in obstacles.size():
@@ -1488,15 +1749,23 @@ func _step_ball(dt: float) -> void:
 ## atəş dövrü ilə boşalma sürəti eyni olduğuna görə hücumun xalis üstünlüyü
 ## olmalıdır, əks halda dolu rəqib sadəcə atəş açaraq sonsuza qədər sağ qalır.
 func _inject(victim: GermState, at: Vector2, s: ShotState) -> void:
-	victim.balls += Const.SHOT_PAYLOAD
-	# `arg` qurbanı da daşıyır (bax [method Const.hit_victim]): client zərbəni
+	# Mərminin öz yükü: iynə +1, qalanı +2 — hərəkətin cəmi ən çoxu +2-dir.
+	victim.balls += s.payload
+	# `arg` qurbanı və yükü daşıyır (bax [method Const.hit_victim]): client zərbəni
 	# ən yaxın mikroba TƏXMİN etmir, "sənə dəydi" proqnozu isə dəqiq təsdiqlənir.
-	events.append({"t": "hit", "pos": at, "arg": Const.hit_arg(victim.color), "color": s.color})
+	events.append({"t": "hit", "pos": at, "arg": Const.hit_arg(victim.color, s.payload),
+		"color": s.color})
 	# Super hücum edəni mükafatlandırır — Brawl Stars-dakı məntiq. Dəyən
 	# tərəf də bir az alır: üç superdən ikisi qaçış vasitəsidir və məhz
-	# sıxılan oyunçuya lazım olur.
-	_charge(germs.get(s.owner_id), Const.SUPER_ON_HIT)
-	_charge(victim, Const.SUPER_ON_TAKEN)
+	# sıxılan oyunçuya lazım olur. İkisi də HƏRƏKƏT başınadır: eyni rəqibə dəyən
+	# iki iynə ona bir super payı verir, atıcıya da bir mükafat.
+	var v := _volley_of(s)
+	v["paid"] = true
+	_reward(s)
+	var taken: Dictionary = v["taken"]
+	if not taken.has(victim.id):
+		taken[victim.id] = true
+		_charge(victim, Const.SUPER_ON_TAKEN)
 	if victim.balls > victim.capacity:
 		_burst(victim, s.owner_id)
 
@@ -1781,13 +2050,14 @@ func has_line_of_sight(a: Vector2, b: Vector2) -> bool:
 ##
 ## [param team] — atıcının komandası: rəqibin Anası topu UDUR (xətt orada bitir), öz
 ## Anan isə selik kimi sıçradır. Nüvə də xətti kəsir — top ona dəyib dayanır.
+## [param radius] — mərminin radiusu (profildən, [constant Const.SHOT_PROFILE_RADIUS]).
 func aim_path(from: Vector2, dir: Vector2, length: float, bounces: int,
-		team := -1) -> PackedVector2Array:
+		team := -1, radius := Const.SHOT_RADIUS) -> PackedVector2Array:
 	var pts := PackedVector2Array([from])
 	var at := from
 	var d := dir.normalized()
 	var left := length
-	var limit := wall_radius - Const.SHOT_RADIUS
+	var limit := wall_radius - radius
 	for _bounce_i in bounces + 1:
 		var to := at + d * left
 		var best := 2.0
@@ -1795,7 +2065,7 @@ func aim_path(from: Vector2, dir: Vector2, length: float, bounces: int,
 		var stop := false
 		for i in obstacles.size():
 			var o := obstacles[i]
-			var t := _seg_circle_t(at, to, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS)
+			var t := _seg_circle_t(at, to, Vector2(o.x, o.y), o.z + radius)
 			if not (t >= 0.0 and t < best):
 				continue
 			if DishMap.wall_gone(broken[i]) or not DishMap.blocks_shot(int(o.w)):
@@ -1805,7 +2075,7 @@ func aim_path(from: Vector2, dir: Vector2, length: float, bounces: int,
 			stop = int(o.w) == DishMap.Kind.BRITTLE or (int(o.w) == DishMap.Kind.MOTHER
 				and team >= 0 and team != mother_team(i))
 		if ball != null and ball.alive:
-			var tb := _seg_circle_t(at, to, ball.pos, ball.radius() + Const.SHOT_RADIUS)
+			var tb := _seg_circle_t(at, to, ball.pos, ball.radius() + radius)
 			if tb >= 0.0 and tb < best:
 				best = tb
 				normal = Vector2.ZERO
@@ -1893,23 +2163,25 @@ const HIT_SQUEEZE: Array[float] = [0.14, 0.05, 0.28]
 
 
 ## Toqquşma ellipsi: `Vector3(sürət boyu yarım-ox, yana yarım-ox, bucaq)`.
-## Topun payı İKİ oxa da əlavə olunub.
-static func hit_shape(species: int, capacity: int, vel: Vector2) -> Vector3:
+## Topun payı İKİ oxa da əlavə olunub. [param shot_r] — mərminin radiusu (profildən);
+## damcının düşmə sahəsi də buradan yoxlanılır ([method lob_victim]).
+static func hit_shape(species: int, capacity: int, vel: Vector2,
+		shot_r := Const.SHOT_RADIUS) -> Vector3:
 	var r := Const.germ_radius(capacity)
 	var sp := clampi(species, 0, HIT_STRETCH.size() - 1)
 	var s := clampf(vel.length() / maxf(Const.germ_speed(capacity), 1.0), 0.0, 1.0)
 	var angle := vel.angle() if vel.length_squared() > 1.0 else 0.0
 	var a := r * (1.0 + HIT_STRETCH[sp] * s)
 	var b := r * (1.0 - HIT_SQUEEZE[sp] * s)
-	var m := _even_margin(a, b, r + Const.SHOT_RADIUS)
+	var m := _even_margin(a, b, r + shot_r)
 	return Vector3(a + m, b + m, angle)
 
 
 ## Toqquşma ellipsinin mərkəzdən ən uzaq nöqtəsi heç vaxt bundan uzaqda deyil —
 ## ucuz ilk süzgəc üçün (bax [method _step_shots]). `SimTest` hər növ, tutum və
 ## sürətdə yoxlayır.
-static func hit_reach(capacity: int) -> float:
-	return Const.germ_radius(capacity) * 1.3 + Const.SHOT_RADIUS + 2.0
+static func hit_reach(capacity: int, shot_r := Const.SHOT_RADIUS) -> float:
+	return Const.germ_radius(capacity) * 1.3 + shot_r + 2.0
 
 
 ## Ellipsin perimetri (Ramanujan) — bu ölçülərdə xətası 0.01%-dən azdır.

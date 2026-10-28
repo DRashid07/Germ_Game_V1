@@ -102,7 +102,7 @@ func _on_connected() -> void:
 	# Rejim də ötürülür — onsuz TƏK QALAN-ın ONLAYN yolu bu alətlə heç vaxt
 	# sınana bilmirdi: server tərəf hazır idi, alət isə həmişə sonsuz arenaya
 	# girirdi.
-	Net.request_join.rpc_id(1, label, int(species), int(mode))
+	Net.request_join.rpc_id(1, label, int(species), Const.mode_wire(int(mode)))
 
 
 func _on_world_joined(info: Dictionary) -> void:
@@ -173,7 +173,7 @@ func rejoin() -> void:
 	_probe = null
 	_log("yeni matça girir")
 	Net.request_leave.rpc_id(1)
-	Net.request_join.rpc_id(1, label, int(species), int(mode))
+	Net.request_join.rpc_id(1, label, int(species), Const.mode_wire(int(mode)))
 
 
 ## Öz dəymələrin proqnozu serverlə nə qədər üst-üstə düşdü (bax [member Arena.hit_stats]).
@@ -210,6 +210,11 @@ func _log_hits() -> void:
 		_log("GÖZLƏYƏN: öz dəyməsinin zərbəsi serveri niyə gözlədi: %s" % str(st["soft_why"]))
 	if st.has("soft_out") and not (st["soft_out"] as Dictionary).is_empty():
 		_log("GÖZLƏYƏN-SON: səbəb → server saydı(+)/saymadı(-): %s" % str(st["soft_out"]))
+	# Sənə dəyənlər və onların yoldaşdan gələni (dost atəşi yoxdur — 0 olmalıdır).
+	_log("ALINAN: sənə dəyən zərbə %d, yoldaşdan %d" % [int(st.get("taken", 0)), int(st.get("mate_hits", 0))])
+	# Öz damcının zərbələri ayrıca — proqnoz onları qəsdən demir, "yalnız server" deyil.
+	if int(st.get("lob_hits", 0)) > 0:
+		_log("DAMCI: öz damcının server zərbələri %d (dərhal göstərildi)" % int(st["lob_hits"]))
 	if st.has("claims") and not (st["claims"] as Dictionary).is_empty():
 		_log("TƏSDİQ: server↔proqnoz (atəş tick fərqi, xətt boyu px): %s" % str(st["claims"]))
 

@@ -207,10 +207,68 @@ const SHOT_SPEED := 420.0
 ## isə idarəni tam əlindən alır — mikrob deşikdən çıxana qədər oyunçu
 ## seyrçiyə çevrilir.
 const VENT_SPEED := 420.0
+## Topun radiusu, sürəti və ömrü — amöbün MİNİQANININ topudur ([constant Shot.MINIGUN]).
+## Adi atəşin topları növdən asılıdır ([constant SHOT_PROFILE_SPEED]); bu üç ədəd həm də
+## görmə xətti, nişan zolağı və toqquşma ellipsinin İSTİNAD ölçüsüdür.
 const SHOT_RADIUS := 9.0
 const SHOT_LIFETIME := 2.2       ## × sürət ≈ 920 px məsafə (ekran eninin 1.5 misli)
 const SHOT_BOUNCES := 2         ## Divardan/maneədən neçə dəfə sıçraya bilər
 const SHOT_RECOIL := 90.0       ## Top atanda mikrobun geri təpməsi (sürətə nisbətdə hiss olunur)
+
+# ---------- Adi atəşin profilləri ----------
+## Üç növün adi atəşi məsafə, nişan və maneə baxımından fərqlənir, İQTİSADİYYAT isə eynidir:
+## bir atəş hərəkəti atıcıdan BİR top götürür, hərəkətin bütün mərmiləri birlikdə
+## mikroblara ən çoxu [constant SHOT_PAYLOAD] top verir (bax [method Sim._fire]).
+##
+##   • KİRPİKLİ — tək, sürətli, dəqiq ox: uzaqdan vurur, divardan sıçrayır.
+##   • AYAQLI — eyni anda ±7° iki iynə, hərəsi +1: yaxında ikisi də çatır, uzaqda biri.
+##   • AMÖB — qövslə uçan damcı: maneənin üstündən keçir, düşdüyü yerdə tək rəqibə +2.
+##   • MİNİQAN — amöbün superi; əvvəlki düz top, öz profili var ki, super təsadüfən
+##     damcı və ya iynə atmasın.
+##
+## İndeks profil nömrəsidir; snapshot-da topun sətrində gedir ([enum SF] `META`).
+enum Shot { DART = 0, NEEDLE = 1, LOB = 2, MINIGUN = 3 }
+## İynələrin nişan oxundan sapması (radian, 7°) və sayı.
+const NEEDLE_SPREAD := 0.12217305
+const NEEDLE_COUNT := 2
+## DAMCI: atəş məsafəsi, uçuş müddəti və düşmə sahəsinin radiusu.
+const LOB_MIN := 180.0
+const LOB_MAX := 460.0
+const LOB_FLIGHT := 0.85
+const LOB_AREA := 36.0
+## Hədəfsiz avtomatik atəşin damcı məsafəsi — həmişə eyni, oyunçu onu öyrənə bilsin.
+const LOB_AUTO := 320.0
+## Düşmə nöqtəsi qabın şüşəsindən ən azı bu qədər içəridə olmalıdır.
+const LOB_EDGE := 12.0
+const SHOT_PROFILE_SPEED: Array[float] = [560.0, 390.0, 0.0, SHOT_SPEED]
+const SHOT_PROFILE_RADIUS: Array[float] = [6.0, 6.0, 9.0, SHOT_RADIUS]
+## Ömür (s). Damcıda bu, uçuşun özüdür: məsafədən asılı olmayaraq [constant LOB_FLIGHT].
+const SHOT_PROFILE_LIFE: Array[float] = [1.6, 0.9, LOB_FLIGHT, SHOT_LIFETIME]
+## Bir mərminin mikroba verdiyi top. İynə +1-dir: bir hərəkət iki iynədir, cəmi +2.
+const SHOT_PROFILE_PAYLOAD: Array[int] = [2, 1, 2, SHOT_PAYLOAD]
+
+
+## Növün adi atəşinin profili; [param minigun] — amöbün superi işləyir.
+static func shot_profile(species: int, minigun := false) -> int:
+	if minigun:
+		return Shot.MINIGUN
+	match species:
+		int(Species.HELIOZOAN): return Shot.NEEDLE
+		int(Species.AMOEBA): return Shot.LOB
+		_: return Shot.DART
+
+
+## Profil nömrəsi etibarlı aralığa salınır — dəyər şəbəkədən gəlir.
+static func profile_from(value: int) -> int:
+	return clampi(value, 0, SHOT_PROFILE_SPEED.size() - 1)
+
+
+## Bir növün düz atəşinin çatdığı məsafə (sıçrayışsız) — nişan xətti və botlar üçün.
+static func shot_reach(profile: int) -> float:
+	var p := profile_from(profile)
+	if p == Shot.LOB:
+		return LOB_MAX
+	return SHOT_PROFILE_SPEED[p] * SHOT_PROFILE_LIFE[p]
 
 # ---------- Qida ----------
 const FOOD_RADIUS := 10.0
@@ -249,7 +307,10 @@ const MTU_SAFE := 1392
 ## paket MTU-nu aşır — ölçülüb, 10 mikrob + 16 top + 12 hadisə + 32 qida
 ## birlikdə 1604 bayt verirdi.
 const GERM_BYTES := 36
-const SHOT_BYTES := 28
+## Səkkiz `float32` ([constant SHOT_STRIDE]). Əvvəl yeddi idi (28): profil sahəsi əlavə
+## olunanda 10 mikrobluq ən pis paketdə toplara düşən pay 10 topdan 8-ə endi
+## ([method World.snapshot_for]); təhlükəli olanlar (sənə düşən damcı) önə keçir.
+const SHOT_BYTES := 32
 const EVENT_BYTES := 20
 const FOOD_BYTES := 12
 
@@ -480,7 +541,8 @@ const BALL_R0 := 30.0
 const BALL_R_PER_W := 0.8
 ## Suyun müqaviməti (1/s): Nüvə ~3 saniyə sürüşür.
 const BALL_DRAG := 0.8
-## Şüşədən və maneədən sıçrayanda sürətin qalan payı.
+## Şüşədən, maneədən və mikrobdan sıçrayanda sürətin qalan payı. Mikrobdan sıçrayış da
+## elastik deyil — elastik olanda iki mikrobun arasında Nüvə sürət yığırdı ([method Sim._step_ball]).
 const BALL_BOUNCE := 0.6
 ## Topla vurmaq: `BALL_SHOT_PUSH × BALL_WEIGHT / çəki` px/s.
 const BALL_SHOT_PUSH := 200.0
@@ -537,9 +599,10 @@ const SPORE_CAPACITY := CAPACITY_STEP
 ## Üç orqanizmin əsl ekologiyası da elə budur (planktonik, bentik, substrat).
 ##
 ## QAYDA: bu əmsalların heç biri döyüş riyaziyyatına toxunmur —
-## [constant SHOT_PAYLOAD], [constant FIRE_COOLDOWN], [constant CAPACITY_STEP]
-## və [constant MIN_BALLS] hər üç növdə eynidir. Onlar dəyişsə oyun sınır
-## (bax həmin sabitlərin öz izahına) və "güclü növ" yaranar.
+## [constant FIRE_COOLDOWN], [constant CAPACITY_STEP], [constant MIN_BALLS], atəşin
+## qiyməti (bir top) və hərəkətin ən çox verdiyi top ([constant SHOT_PAYLOAD]) hər üç
+## növdə eynidir. Onlar dəyişsə oyun sınır (bax həmin sabitlərin öz izahına) və
+## "güclü növ" yaranar. Növlər yalnız atəşin FORMASI ilə fərqlənir ([enum Shot]).
 ##
 ## İndeks [enum Species] ilə eynidir.
 
@@ -645,7 +708,8 @@ static func super_block_reason(species: int, balls: int) -> String:
 ## etibarsız ola bilər. Çevirmə BİR yerdə olanda "yad dəyər gələndə nə olur"
 ## sualının bir cavabı olur.
 static func mode_from(value: int) -> Mode:
-	match value:
+	# Yuxarı bayt qaydaların versiyasıdır ([method mode_wire]).
+	match value & 0xFF:
 		int(Mode.SOLO): return Mode.SOLO
 		int(Mode.DUO): return Mode.DUO
 		int(Mode.TRIO): return Mode.TRIO
@@ -696,17 +760,45 @@ enum Quality {
 }
 
 
-## HIT hadisəsinin `arg`-ı mikroba dəyəndə: `1 + qurbanın rəngi`.
+## HIT hadisəsinin `arg`-ı mikroba dəyəndə: `1 + qurbanın rəngi + 64 × (yük − 1)`.
 ##
 ## Sıçrayış və qabıq zərbəsi `0`-dır, yəni köhnə `arg > 0.5` yoxlaması
-## ("mikroba dəydimi") dəyişmir. Ayrıca sahə paketi böyüdərdi.
-static func hit_arg(victim_color: int) -> float:
-	return 1.0 + float(maxi(victim_color, 0))
+## ("mikroba dəydimi") dəyişmir. Ayrıca sahə paketi böyüdərdi. Yük də buradadır:
+## iynə +1, qalanı +2 verir və client zərbənin rəqəmini ondan yazır.
+static func hit_arg(victim_color: int, payload := SHOT_PAYLOAD) -> float:
+	return 1.0 + float(posmod(victim_color, 64)) + 64.0 * float(clampi(payload, 1, 8) - 1)
 
 
 ## HIT hadisəsinin qurbanının rəngi; sıçrayışdırsa -1 (bax [method hit_arg]).
 static func hit_victim(arg: float) -> int:
-	return int(round(arg)) - 1 if arg > 0.5 else -1
+	return (int(round(arg)) - 1) % 64 if arg > 0.5 else -1
+
+
+## HIT hadisəsinin mikroba verdiyi top sayı; sıçrayışdırsa 0.
+static func hit_payload(arg: float) -> int:
+	return (int(round(arg)) - 1) / 64 + 1 if arg > 0.5 else 0
+
+
+## Oyun qaydalarının versiyası — server və client EYNİ olmalıdır.
+##
+## 2: növlərin fərqli adi atəşi ([enum Shot]) və 8 ədədlik top sətri. Köhnə client
+## yeni serverin top sətrini yanlış oxuyardı, yeni client köhnəninkini — ona görə
+## uyğunsuzluq açıq idarə olunur: client versiyanı rejim ədədinin yuxarı baytında
+## göndərir ([method mode_wire]), server uyğun gəlməyəni dünyaya buraxmır
+## ([method Lobby.join]), client də serverin dediyini yoxlayır ([method Arena.configure_online]).
+const RULES := 2
+
+
+## Şəbəkəyə gedən rejim ədədi: aşağı bayt rejim, yuxarı bayt [constant RULES].
+## Köhnə server tanımadığı ədədi SONSUZ ARENA sayır, dünyanın qaydaları isə
+## join info-da gəlir — client onu yoxlayıb uyğunsuzluğu deyir.
+static func mode_wire(mode: int) -> int:
+	return (mode & 0xFF) | (RULES << 8)
+
+
+## [method mode_wire] ədədinin qaydalar versiyası; köhnə client-də 0.
+static func wire_rules(value: int) -> int:
+	return value >> 8
 
 
 static func quality_from(value: int) -> Quality:
@@ -1021,15 +1113,40 @@ enum GFlag {
 	TEAM_SHIFT = 8, TEAM_MASK = 1792,
 }
 ## `REWIND` — server bu topu qurbanlarının neçə saniyə ƏVVƏLKİ yerinə qarşı
-## yoxlayır (bax [member Sim.lag_comp]); botun topunda 0. `LIFE` şəbəkədə ayrıca
+## yoxlayır (bax [member Sim.lag_comp]); botun topunda 0. `META` — profil, bir
+## mərminin yükü və atəş qrupu ([method shot_meta]). `LIFE` şəbəkədə ayrıca
 ## getmir — [method unpack_shots] onu istiqamətdən açır.
-enum SF { ID, COLOR, X, Y, DX, DY, REWIND, LIFE }
+##
+## DAMCININ sətri başqa cür oxunur ([constant Shot.LOB]): `X, Y` — DÜŞMƏ nöqtəsi,
+## `DX, DY` — başlanğıc (baxan atıcını görmürsə düşmə nöqtəsinin özü, yəni yol
+## yoxdur), `REWIND` — düşməyə qalan saniyə; `COLOR` atıcı görünmürsə -1-dir.
+## Xəbərdarlıq beləcə gizlənən atıcının yerini və kimliyini açmır (bax
+## [method World._lob_row]).
+enum SF { ID, COLOR, X, Y, DX, DY, REWIND, META, LIFE }
 
-## Bir topun sıx axındakı ədəd sayı — [enum SF] ilə eyni.
+## Bir topun sıx axındakı ədəd sayı — [enum SF]-dən `LIFE`-sız.
 ##
 ## Topun id-si ardıcıl sayğacdır (peer nömrəsi deyil), ona görə mikrobdan
-## fərqli olaraq `float32`-də təhlükəsiz saxlanılır.
-const SHOT_STRIDE := 7
+## fərqli olaraq `float32`-də təhlükəsiz saxlanılır. `META` də tam ədəddir və
+## 2^24-dən kiçikdir (qrup 2^16-ya bölünür).
+const SHOT_STRIDE := 8
+
+
+## `META`: `profil + 4 × yük + 64 × (qrup mod 65536)`.
+static func shot_meta(profile: int, payload: int, volley: int) -> float:
+	return float(profile_from(profile) + 4 * clampi(payload, 0, 15) + 64 * posmod(volley, 65536))
+
+
+static func meta_profile(meta: float) -> int:
+	return profile_from(int(meta) & 3)
+
+
+static func meta_payload(meta: float) -> int:
+	return (int(meta) >> 2) & 15
+
+
+static func meta_volley(meta: float) -> int:
+	return int(meta) >> 6
 
 
 ## Sıx top axınını sətirlərə açır — [method unpack_germs] ilə eyni səbəbdən.
@@ -1038,12 +1155,17 @@ static func unpack_shots(d: PackedFloat32Array) -> Array:
 	var n := d.size() / SHOT_STRIDE
 	for i in n:
 		var b := i * SHOT_STRIDE
+		if meta_profile(d[b + 7]) == Shot.LOB:
+			# Damcı: başlanğıc vektor deyil, nöqtədir; ömür düşməyə qalan vaxtdır.
+			out.append([d[b], d[b + 1], d[b + 2], d[b + 3], d[b + 4], d[b + 5], d[b + 6],
+				d[b + 7], maxf(d[b + 6], 0.0)])
+			continue
 		# İstiqamətin uzunluğu `1 + qalan ömür`-dür (bax [method World._build_frame]):
 		# client topu ömrünün sonundan o yana çəkməsin və ona "dəydi" deməsin.
 		var dir := Vector2(d[b + 4], d[b + 5])
 		var len := dir.length()
 		var unit := dir / len if len > 0.0001 else Vector2.RIGHT
-		out.append([d[b], d[b + 1], d[b + 2], d[b + 3], unit.x, unit.y, d[b + 6],
+		out.append([d[b], d[b + 1], d[b + 2], d[b + 3], unit.x, unit.y, d[b + 6], d[b + 7],
 			maxf(len - 1.0, 0.0)])
 	return out
 enum EF { KIND, X, Y, ARG, COLOR }

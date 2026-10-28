@@ -16,6 +16,8 @@ const MAX_CATCHUP_TICKS := 5
 ## itirməməlidir. Çox uzun da olmamalıdır: mikrob bu müddətdə tərpənmir,
 ## amma vurula bilir.
 const REJOIN_GRACE := 20.0
+## Qaydaları fərqli client-ə deyilən səbəb (bax [constant Const.RULES]).
+const RULES_TEXT := "Oyunun bu versiyası serverlə uyğun deyil — oyunu yenilə."
 
 var worlds := {}                ## world_id -> World
 var peer_world := {}            ## peer_id -> world_id
@@ -97,6 +99,11 @@ func _process(delta: float) -> void:
 func join(peer: int, player_name: String, species := 0, mode := 0) -> void:
 	if peer_world.has(peer):
 		return                      # artıq dünyadadır
+	# Qaydalar fərqlidirsə client top sətrini yanlış oxuyar — dünyaya buraxılmır,
+	# səbəbi açıq deyilir (bax [constant Const.RULES]).
+	if Const.wire_rules(mode) != Const.RULES:
+		Net.on_join_rejected.rpc_id(peer, RULES_TEXT)
+		return
 	names[peer] = _sanitize(player_name)
 
 	# Rejim də client-dən gəlir, yəni ETİBARSIZ ola bilər — növ kimi çərçivəyə salınır.
@@ -122,6 +129,10 @@ func join_party(peers: Array, mode: int) -> void:
 		if peer_world.has(peer):
 			continue
 		var rec: Dictionary = social.online.get(social.tag_of_peer(int(peer)), {})
+		# Köhnə versiyalı üzv komandaya qoşulmur — yerinə "yenilə" deyilir.
+		if int(rec.get("rules", 0)) != Const.RULES:
+			Net.on_join_rejected.rpc_id(int(peer), RULES_TEXT)
+			continue
 		names[peer] = _sanitize(str(rec.get("name", "")))
 		list.append([int(peer), names[peer], int(rec.get("species", 0))])
 	if list.is_empty():

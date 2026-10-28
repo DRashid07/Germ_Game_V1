@@ -1250,7 +1250,14 @@ nadirlik yoxdur (hər növ əvvəldən açıqdır), ona görə rəng oyun tərzi
 |---|---|---|---|
 | KİRPİKLİ | **CƏLD** | kəhrəba `GERM_COLORS[3]` | sürət oxu |
 | AYAQLI | **NƏZARƏTÇİ** | bənövşəyi `GERM_COLORS[4]` | tor |
-| AMÖB | **MÜDAFİƏÇİ** | göy `GERM_COLORS[6]` | qalxan |
+| AMÖB | **TOPÇU** | göy `GERM_COLORS[6]` | hədəfə qövslə düşən damcı (`class_lob.png`) |
+
+> Amöbün sinfi əvvəl **MÜDAFİƏÇİ** idi və ikonu qalxan (`class_guard.png`) — kistin, yəni
+> toxunulmaz qabığın dövründən. İndi amöb damcını örtüyün üstündən atır, sinif atəşi deyir.
+> `class_lob.png` eyni üslubda (qalın tünd kontur, parlaq göy) skriptlə çəkilib; qalxan
+> faylı üslub nümunəsi kimi qalır (bax `menu_art/brief`). Superin ikonu da dəyişib:
+> `super_minigun.png` — top seriyası atan amöb; kristal qabıqlı `super_cyst.png` kistin
+> dövründən idi və artıq işlənmir.
 
 Portretin künclərini şəklin özü kəsir (`process.gd`, `card` rejimi): TextureRect
 künc kəsə bilmir, `clip_children` isə mobil (Compatibility) renderdə etibarsızdır.

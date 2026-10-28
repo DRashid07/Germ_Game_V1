@@ -153,7 +153,8 @@ const _CARD_ART := {
 const _SUPER_ICONS := {
 	Const.Species.CILIATE: "res://assets/menu/super_trichocyst.png",
 	Const.Species.HELIOZOAN: "res://assets/menu/super_net.png",
-	Const.Species.AMOEBA: "res://assets/menu/super_cyst.png",
+	# Miniqan — top seriyası atan amöb. `super_cyst.png` (kristal qabıq) kistin dövründən idi.
+	Const.Species.AMOEBA: "res://assets/menu/super_minigun.png",
 }
 ## DOSTLAR — Brawl Stars-ın sağ lentindəki "Friends" düyməsi və komanda dili.
 const ICON_FRIENDS := "res://assets/menu/icon_friends.png"
@@ -2470,18 +2471,19 @@ static func _species_super_name(kind: Const.Species) -> String:
 ## Növün NƏ ETDİYİ — bir üstünlük, bir qiymət.
 ##
 ## Hər sətirdə ikisi də var və bu, qəsdəndir: menyu "güclü olanı seç" yox,
-## "necə oynamaq istəyirsən" sualını verməlidir. Növlərin DÖYÜŞ riyaziyyatı
-## eynidir — atəş dövrü, topun qiyməti, tutum artımı (bax [constant
-## Const.SPECIES_THRUST] və `sim_test`-dəki yoxlama). Fərq yalnız mühitlə
-## münasibətdə və superdədir.
+## "necə oynamaq istəyirsən" sualını verməlidir. Növlərin döyüş İQTİSADİYYATI
+## eynidir — atəş dövrü, atəşin qiyməti (bir top), hərəkətin ən çox verdiyi top,
+## tutum artımı (bax [constant Const.SPECIES_THRUST] və `sim_test`-dəki yoxlama).
+## Fərq atəşin FORMASINDA ([enum Const.Shot]), mühitlə münasibətdə və superdədir.
+## Birinci sətir adi atəşi deyir.
 static func _species_note_for(kind: Const.Species) -> String:
 	match kind:
 		Const.Species.HELIOZOAN:
-			return "Qidanı özünə çəkir, rəqibi yavaşladır.\nAxına dirənir, amma ən yavaş növdür."
+			return "Yaxından iki iynə atır, hərəsi +1. Qidanı özünə çəkir.\nAxına dirənir, amma ən yavaş növdür."
 		Const.Species.AMOEBA:
-			return "Qabığa çevrilir: top səkir, aclıq dayanır.\nDar yerdən keçir, amma tərpənə bilmir."
+			return "Damcını maneənin üstündən atır, düşdüyü yer əvvəlcədən görünür.\nDar yerdən keçir, amma ağır qopur."
 		_:
-			return "Gələn topları partladıb qaçır.\nƏn cəld, amma axın onu aparır."
+			return "Uzaqdan dəqiq ox atır, gələn topları partladıb qaçır.\nƏn cəld, amma axın onu aparır."
 
 
 ## Növün SİNFİ — Brawl Stars-ın sinifləri (Assassin, Controller, Tank) kimi.
@@ -2496,8 +2498,10 @@ static func _species_class(kind: Const.Species) -> Dictionary:
 			return {"name": "NƏZARƏTÇİ", "color": Palette.GERM_COLORS[4],
 				"icon": "res://assets/menu/class_control.png"}
 		Const.Species.AMOEBA:
-			return {"name": "MÜDAFİƏÇİ", "color": Palette.GERM_COLORS[6],
-				"icon": "res://assets/menu/class_guard.png"}
+			# Əvvəl "MÜDAFİƏÇİ" və qalxan idi — kistin (toxunulmaz qabığın) dövründən. İndi
+			# amöb damcını örtüyün üstündən atır (bax [enum Const.Shot]): sinif atəşdir.
+			return {"name": "TOPÇU", "color": Palette.GERM_COLORS[6],
+				"icon": "res://assets/menu/class_lob.png"}
 		_:
 			return {"name": "CƏLD", "color": Palette.GERM_COLORS[3],
 				"icon": "res://assets/menu/class_swift.png"}
@@ -2592,7 +2596,7 @@ func _on_play() -> void:
 	_arm_join_timeout()
 
 	if Net.is_connected_to_server():
-		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), Const.mode_wire(int(Net.mode)))
 		_set_status("dünyaya girilir")
 		return
 
@@ -2644,7 +2648,7 @@ func _practice() -> void:
 
 func _on_connected() -> void:
 	if _joining:
-		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), Const.mode_wire(int(Net.mode)))
 		_set_status("dünyaya girilir")
 	else:
 		_set_status("ONLAYN")

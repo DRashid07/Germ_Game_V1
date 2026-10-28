@@ -199,6 +199,8 @@ static func run() -> int:
 	SocialTest.run()
 	# Obyekt rejimləri — ayrıca faylda, eyni sayğacla (bax [ObjectiveTest]).
 	ObjectiveTest.run()
+	# Növlərin fərqli adi atəşi — ayrıca faylda, eyni sayğacla (bax [AttackTest]).
+	AttackTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 
@@ -1408,8 +1410,8 @@ static func _test_fire_from() -> void:
 		for e in world.sim.events:
 			if e.get("t") == "fire":
 				center = Vector2(e["pos"]) - Vector2.from_angle(float(e["arg"])) * g.radius()
-		# Top elə atəş tick-ində bir addım atır.
-		var start := shot.pos - shot.dir * Const.SHOT_SPEED * Const.TICK_DELTA if shot != null else Vector2.INF
+		# Top elə atəş tick-ində bir addım atır — öz profilinin sürəti ilə.
+		var start := shot.pos - shot.dir * shot.speed * Const.TICK_DELTA if shot != null else Vector2.INF
 		# Gövdənin içindəki başlanğıc MÜTLƏQ nöqtədir, kəsilən isə atəş anındakı mərkəzdən ölçülür.
 		var want: Vector2 = fire.fire_from if off == Vector2(c[1]) else center + Vector2(c[1])
 		_check(start.distance_to(want) < 1.0, "%s (%.2f px fərq)" % [String(c[3]), start.distance_to(want)])
@@ -1759,6 +1761,7 @@ static func _test_prediction_tick_targets() -> void:
 		record[s.tick] = s._hist_at(s.tick, B_ID)
 	var view := float(s.tick + 1) - 7.5
 	var origin := Vector2.INF
+	var profile := int(Const.Shot.MINIGUN)
 	var server_hit := Vector2.INF
 	for i in 30:
 		a.pos = a_at
@@ -1771,7 +1774,8 @@ static func _test_prediction_tick_targets() -> void:
 		s.step(inputs, Const.TICK_DELTA)
 		record[s.tick] = s._hist_at(s.tick, B_ID)
 		if i == 0 and not s.shots.is_empty():
-			origin = s.shots[0].pos - s.shots[0].dir * Const.SHOT_SPEED * Const.TICK_DELTA
+			origin = s.shots[0].pos - s.shots[0].dir * s.shots[0].speed * Const.TICK_DELTA
+			profile = s.shots[0].profile
 		for e in s.events:
 			if e.get("t") == "hit" and float(e["arg"]) > 0.5:
 				server_hit = e["pos"]
@@ -1784,11 +1788,14 @@ static func _test_prediction_tick_targets() -> void:
 		if p0 == null or p1 == null:
 			return []
 		var st := (p0 as Vector4).lerp(p1 as Vector4, t - float(t0))
+		# Növ, tutum və sürət də gedir: ellips proqnozun topunun öz radiusu ilə qurulur.
 		return [{"pos": Vector2(st.x, st.y), "radius": Const.germ_radius(cap),
 			"shape": Sim.hit_shape(int(Const.Species.CILIATE), cap, Vector2(st.z, st.w)),
+			"species": int(Const.Species.CILIATE), "cap": cap, "vel": Vector2(st.z, st.w),
 			"key": B_ID}]
 	var p := ShotPrediction.new()
-	p.spawn(origin, Vector2.RIGHT, 0.0, view)
+	# Proqnoz serverin topu ilə EYNİ profildədir (kirpiklinin oxu: sürət və radius ondandır).
+	p.spawn(origin, Vector2.RIGHT, 0.0, view, profile)
 	var ghost_hit := Vector2.INF
 	for i in 90:
 		for c in p.step(1.0 / 60.0, float(i) / 60.0, [] as Array[Vector4], PackedByteArray(), targets):
@@ -3723,6 +3730,12 @@ static func _test_world_keeps_population() -> void:
 	var ticks := int((Const.MIN_POPULATION + 1) * World.BOT_RESPAWN / Const.TICK_DELTA)
 	for i in ticks:
 		world.tick(Const.TICK_DELTA)
+	# Yoxlama anında bot (bəzən iki) təzəcə partlamış ola bilər — hər yer növbəti
+	# doğuşda dolur, doğuşlar arası [constant World.BOT_RESPAWN]-dır.
+	var wait := int((3.0 * World.BOT_RESPAWN + 1.0) / Const.TICK_DELTA)
+	while world.sim.germs.size() < Const.MIN_POPULATION and wait > 0:
+		world.tick(Const.TICK_DELTA)
+		wait -= 1
 
 	_check(world.sim.germs.size() >= Const.MIN_POPULATION,
 		"botlar əhalini saxlayır (%d / %d)" % [world.sim.germs.size(), Const.MIN_POPULATION])
@@ -5415,7 +5428,10 @@ static func _test_aim_path() -> void:
 	_check(p.size() == 3 and p[2].x < p[1].x and absf(walked - 500.0) < 1.0,
 		"selikdən səkir və uzunluq saxlanılır (%d nöqtə, %.1f px)" % [p.size(), walked])
 
-	# Əsl top eyni yerdə səkməli və eyni tərəfə getməlidir.
+	# Əsl top eyni yerdə səkməli və eyni tərəfə getməlidir. Kirpiklinin oxu 6 px-dir —
+	# xətt də onun radiusu ilə qurulur ([method Arena._show_aim]).
+	p = s.aim_path(Vector2.ZERO, Vector2.RIGHT, 500.0, 1, -1,
+		Const.SHOT_PROFILE_RADIUS[Const.Shot.DART])
 	var g := s.add_germ(A_ID, "A", 0)
 	g.pos = Vector2.ZERO
 	g.aim = 0.0

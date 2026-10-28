@@ -37,6 +37,10 @@ enum Contact {
 	CRACK,   ## kövrək qabığa dəyib qaldı
 	SPENT,   ## ömrü və ya sıçrama haqqı bitdi — serverdə qidaya çevrilir
 	ABSORB,  ## rəqibin Anası və ya Nüvə topu udub — top orada bitir (obyekt rejimləri)
+	## Amöbün damcısı düşdü. Kimə dəydiyini proqnoz DEMİR: zərbə düşmə anındakı server
+	## mövqelərinə qarşıdır, rəqiblər isə ekranda keçmişdə çəkilir — nəticə serverin
+	## hadisəsi ilə gəlir. Proqnoz yalnız sıçrantını vaxtında göstərir.
+	LAND,
 }
 
 ## Server bu qədər saniyəyə topu təsdiqləməsə, atəş qəbul edilməyib sayılır.
@@ -67,6 +71,17 @@ class Ghost:
 	var first_dir := Vector2.RIGHT
 	## Serverdəki kimi saniyə ilə, hər tick bir [constant Const.TICK_DELTA] azalır.
 	var life := Const.SHOT_LIFETIME
+	## Profil ([enum Const.Shot]) və ondan çıxanlar — serverin [Sim.ShotState]-i kimi.
+	var profile := int(Const.Shot.MINIGUN)
+	var speed := Const.SHOT_SPEED
+	var radius := Const.SHOT_RADIUS
+	var payload := Const.SHOT_PAYLOAD
+	## Bir atəş hərəkətinin topları (iki iynə) eyni nömrəni bölüşür — client-in öz sayğacı.
+	var volley := 0
+	## DAMCI: başlanğıc, düşmə nöqtəsi və uçuş müddəti ([member Sim.ShotState.target]).
+	var origin := Vector2.ZERO
+	var target := Vector2.ZERO
+	var flight := 0.0
 	var bounces := 0
 	var born := 0.0
 	## Atəş anında ekrandakı server tick-i ([member Sim.PlayerInput.view_tick]):
@@ -114,6 +129,7 @@ class Ghost:
 
 var ghosts: Array[Ghost] = []
 var _next_id := 1
+var _next_volley := 1
 ## Ölçü üçün ([Arena]-nın `hit_stats`-ı): topların yolu yazılır və ölən toplar [member recent]-də
 ## bir müddət qalır — proqnozun görmədiyi dəymənin səbəbi onlardan oxunur. Oyunda söndürülüdür.
 var trace_on := false
@@ -129,7 +145,11 @@ var ball := Vector3(0.0, 0.0, -1.0)
 
 
 ## Yeni top — mikrobun MƏRKƏZİNDƏN, eynilə [method Sim._fire] kimi.
-func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0) -> Ghost:
+##
+## [param profile] — atəşin profili ([enum Const.Shot]); susmaya görə miniqanın topu,
+## yəni köhnə düz top.
+func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
+		profile := int(Const.Shot.MINIGUN)) -> Ghost:
 	var g := Ghost.new()
 	g.id = _next_id
 	_next_id += 1
@@ -140,10 +160,52 @@ func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0) -> Ghost:
 	g.first_dir = g.dir
 	g.born = now
 	g.view0 = view0
+	var p := Const.profile_from(profile)
+	g.profile = p
+	g.speed = Const.SHOT_PROFILE_SPEED[p]
+	g.radius = Const.SHOT_PROFILE_RADIUS[p]
+	g.payload = Const.SHOT_PROFILE_PAYLOAD[p]
+	g.life = Const.SHOT_PROFILE_LIFE[p]
+	g.volley = _next_volley
+	_next_volley += 1
 	if trace_on:
 		g.trace.append(center)
 	ghosts.append(g)
 	return g
+
+
+## Bir atəş HƏRƏKƏTİ — [method Sim._fire] kimi: iynə profili iki top (±7°), qalanı bir.
+## Hərəkətin topları bir qrupdadır ([member Ghost.volley]).
+func spawn_volley(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
+		profile := int(Const.Shot.MINIGUN)) -> Array[Ghost]:
+	var out: Array[Ghost] = []
+	var p := Const.profile_from(profile)
+	if p != Const.Shot.NEEDLE:
+		out.append(spawn(center, dir, now, view0, p))
+		return out
+	for k in Const.NEEDLE_COUNT:
+		var g := spawn(center, dir.rotated(Const.NEEDLE_SPREAD * (-1.0 if k == 0 else 1.0)),
+			now, view0, p)
+		if not out.is_empty():
+			g.volley = out[0].volley
+		out.append(g)
+	return out
+
+
+## Amöbün DAMCISI — [param center]-dən [param target]-ə [constant Const.LOB_FLIGHT]-da.
+## Uçuşda heç nəyə toxunmur ([method Sim._step_shots]), düşəndə [constant Contact.LAND].
+func spawn_lob(center: Vector2, target: Vector2, now: float) -> Ghost:
+	var g := spawn(center, (target - center).normalized(), now, -1.0, Const.Shot.LOB)
+	g.origin = center
+	g.target = target
+	g.flight = Const.LOB_FLIGHT
+	return g
+
+
+## Damcının yerdən hündürlüyü 0..1 — uçuşun payı [param t]-də (parabola). Görüntü üçün.
+static func lob_height(t: float) -> float:
+	var k := clampf(t, 0.0, 1.0)
+	return 4.0 * k * (1.0 - k)
 
 
 ## Gec tapılmış atəşin topunu İNDİYƏ çatdırır — [param seconds] qədər uçuş.
@@ -172,10 +234,15 @@ func catch_up(g: Ghost, seconds: float, now: float, obstacles: Array[Vector4],
 ## Varsa, atəş proqnozda oynadılıb və serverin FIRE hadisəsi ikinci dəfə
 ## göstərilməməlidir. Top işarələnir ki, növbəti atəşin hadisəsi onu yenidən
 ## "tapmasın".
+##
+## Bir hərəkətin bütün topları (iki iynə) birlikdə işarələnir: server hərəkətə BİR
+## atəş hadisəsi göndərir və ikinci iynə növbəti atəşin hadisəsini "udmamalıdır".
 func take_unseen_fire(now: float, window: float) -> bool:
 	for g in ghosts:
 		if not g.fire_seen and now - g.born <= window:
-			g.fire_seen = true
+			for other in ghosts:
+				if other.volley == g.volley:
+					other.fire_seen = true
 			return true
 	return false
 
@@ -199,13 +266,26 @@ func claim(sid: int, server_dir: Vector2, now: float,
 		server_pos := Vector2.INF) -> Ghost:
 	var d := server_dir.normalized()
 	for g in ghosts:
-		if g.sid >= 0 or now - g.born > CLAIM_GRACE:
+		# Damcı istiqamətlə tanınmır — serverin damcı sətri başqa yolla gəlir ([method claim_lob]).
+		if g.sid >= 0 or now - g.born > CLAIM_GRACE or g.profile == Const.Shot.LOB:
 			continue
 		if g.first_dir.dot(d) > 0.99 or g.dir.dot(d) > 0.99:
 			g.sid = sid
 			if g.alive and server_pos.is_finite() and g.dir.dot(d) > 0.99:
 				var side := d.orthogonal()
 				g.nudge = -side * (g.pos - server_pos).dot(side)
+			return g
+	return null
+
+
+## Serverin öz damcısı göründü — düşmə nöqtəsi [param reach] px yaxın olan ən köhnə
+## təsdiqlənməmiş proqnoz damcısı. Damcını proqnoz çəkir, serverinki gizli qalır.
+func claim_lob(sid: int, target: Vector2, now: float, reach := 24.0) -> Ghost:
+	for g in ghosts:
+		if g.sid >= 0 or g.profile != Const.Shot.LOB or now - g.born > CLAIM_GRACE:
+			continue
+		if g.target.distance_to(target) <= reach:
+			g.sid = sid
 			return g
 	return null
 
@@ -245,7 +325,8 @@ func stop_nearest(at: Vector2, reach: float, now: float) -> Ghost:
 	var best: Ghost = null
 	var best_d := reach * reach
 	for g in ghosts:
-		if not g.alive:
+		# Damcı öz anında düşür — başqa topun hadisəsi onu havada dayandırmır.
+		if not g.alive or g.profile == Const.Shot.LOB:
 			continue
 		var dd := g.pos.distance_squared_to(at)
 		if dd <= best_d:
@@ -265,7 +346,9 @@ func stop_nearest(at: Vector2, reach: float, now: float) -> Ghost:
 func blast(at: Vector2, reach: float, now: float) -> Array[Ghost]:
 	var out: Array[Ghost] = []
 	for g in ghosts:
-		if g.alive and g.pos.distance_squared_to(at) <= reach * reach:
+		# Havadakı damcıya trixosist çatmır ([method Sim._super_trichocyst]).
+		if g.alive and g.profile != Const.Shot.LOB \
+				and g.pos.distance_squared_to(at) <= reach * reach:
 			_end(g, now)
 			out.append(g)
 	return out
@@ -350,18 +433,25 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 	# yox, 65 tick uçur. Görüntü son nöqtədə bu tick-in sonuna qədər qalır —
 	# serverin sonuncu snapshot-u da topu məhz orada göstərir.
 	g.life -= Const.TICK_DELTA
+	# DAMCI: düz xətlə düşmə nöqtəsinə, heç nəyə toxunmadan (serverdəki kimi).
+	if g.profile == Const.Shot.LOB:
+		if g.life <= 0.0:
+			_finish(g, Contact.LAND, g.target, float(k + 1), -1)
+			return
+		g.seg_to = g.origin.lerp(g.target, clampf(1.0 - g.life / maxf(g.flight, 0.001), 0.0, 1.0))
+		return
 	if g.life <= 0.0:
 		_finish(g, Contact.SPENT, from, float(k + 1), -1)
 		return
 
-	var to := from + g.dir * Const.SHOT_SPEED * Const.TICK_DELTA
+	var to := from + g.dir * g.speed * Const.TICK_DELTA
 	var best := 2.0
 	var hit_index := -1
 	var hit_obstacle := Vector4.ZERO
 	var victim: Dictionary = {}
 	for i in obstacles.size():
 		var o := obstacles[i]
-		var t := Sim._seg_circle_t(from, to, Vector2(o.x, o.y), o.z + Const.SHOT_RADIUS)
+		var t := Sim._seg_circle_t(from, to, Vector2(o.x, o.y), o.z + g.radius)
 		if not (t >= 0.0 and t < best):
 			continue
 		if i < broken.size() and DishMap.wall_gone(broken[i]):
@@ -374,7 +464,7 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 	# Nüvə: top ona dəyib dayanır (serverdə onu itələyir və ağırlaşdırır).
 	var hit_ball := false
 	if ball.z > 0.0:
-		var tb := Sim._seg_circle_t(from, to, Vector2(ball.x, ball.y), ball.z + Const.SHOT_RADIUS)
+		var tb := Sim._seg_circle_t(from, to, Vector2(ball.x, ball.y), ball.z + g.radius)
 		if tb >= 0.0 and tb < best:
 			best = tb
 			hit_ball = true
@@ -394,9 +484,9 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 	for target in list:
 		# Server kimi: mikroba içində başlayan parça da dəyir (bax
 		# [method Sim.seg_ellipse_hit_t]).
-		var t := Sim.seg_ellipse_hit_t(from, to, target["pos"], target["shape"]) \
+		var t := Sim.seg_ellipse_hit_t(from, to, target["pos"], _shape_of(target, g.radius)) \
 			if target.has("shape") else Sim._seg_circle_t(from, to, target["pos"],
-				float(target["radius"]) + Const.SHOT_RADIUS)
+				float(target["radius"]) + g.radius)
 		if t >= 0.0 and t < best:
 			best = t
 			victim = target
@@ -414,10 +504,10 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 			_finish(g, Contact.HIT, at, when, key, best)
 			# Xəttin qurbandan nə qədər dərin keçdiyi — sərhəddəki dəymənin zərbəsini
 			# [Arena] serverin təsdiqinə saxlayır (bax [constant Arena.OWN_SURE_DEPTH]).
-			var reach := float(victim.get("radius", 0.0)) + Const.SHOT_RADIUS
+			var reach := float(victim.get("radius", 0.0)) + g.radius
 			var contact: Dictionary = g.pending[-1]["contact"]
 			contact["depth"] = Sim.line_depth(at, g.dir, victim["pos"],
-				victim.get("shape", Vector3(reach, reach, 0.0)))
+				_shape_of(victim, g.radius) if victim.has("shape") else Vector3(reach, reach, 0.0))
 			contact["late"] = g.life < LATE_LIFE
 			return
 		if hit_index >= 0:
@@ -435,12 +525,22 @@ func _sim_tick(g: Ghost, obstacles: Array[Vector4], broken: PackedByteArray,
 
 	g.seg_to = to
 	# Qabın şüşə kənarı — serverdəki kimi addımın sonundan radial proyeksiya.
-	var limit := wall - Const.SHOT_RADIUS
+	var limit := wall - g.radius
 	if to.length() > limit:
 		var n := -to.normalized()
 		var at := -n * limit
 		g.seg_to = at
 		_bounce(g, at, n, 1.0, float(k + 1), -1)
+
+
+## Hədəfin toqquşma ellipsi bu topun radiusu ilə ([method Sim.hit_shape]). Hədəf
+## `species/cap/vel` daşıyırsa ellips topun öz radiusu ilə qurulur; yalnız hazır
+## `shape` varsa (köhnə çağıran, testlər) o götürülür.
+static func _shape_of(target: Dictionary, shot_r: float) -> Vector3:
+	if target.has("cap"):
+		return Sim.hit_shape(int(target.get("species", 0)), int(target["cap"]),
+			Vector2(target.get("vel", Vector2.ZERO)), shot_r)
+	return target["shape"]
 
 
 ## [method Sim._bounce] ilə eyni: haqq bitibsə top dayanır. [param frac] —

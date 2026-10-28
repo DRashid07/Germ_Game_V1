@@ -647,6 +647,8 @@ və aşağıda niyə belə olduqları yazılıb. Testlər: `game/scripts/tools/o
   iki Ana da saniyədə +1 top dolur, birinci partlayan uduzur; sonda yenə bərabərdirsə —
   heç-heçə.
 - Botlu ölçü (20 matç): 8:11 qələbə, 1 heç-heçə; 4 matç partlamaqla bitir, ən qısası 61 s.
+- Növlərin fərqli adi atəşindən sonra (§17, 20 matç, eyni toxumlar): hamısı qaliblə; Ana
+  **1** matçda partlayır (köhnə kodda 6), matç başına Anaya dəymə 73 (köhnə 77).
 
 ### 16.3 YAŞ ADA
 
@@ -671,6 +673,10 @@ və aşağıda niyə belə olduqları yazılıb. Testlər: `game/scripts/tools/o
 - Gövdə ilə itələmək **pulsuzdur** (Nüvə mikrobu itələmir — proqnoz toxunulmaz qalır).
   Təkan mikrobun normal sürətinin **2 misli**dir; Nüvə suda ~3 s sürüşür. Bir neçə mikrobun
   təkanı toplanıb bir dəfə tətbiq olunur — sıradan asılı deyil, qarşı-qarşıya itələmə ləğv olur.
+- Mikroba çırpılan Nüvə şüşədəki kimi **0.6** ilə sıçrayır; mikroblar Nüvəni əvvəlki
+  sürətindən və ən güclü tək itələmədən sürətli edə bilmir. Əvvəl təmas tam elastik idi və
+  mikrobun sürətini üstə gəlirdi: iki rəqibin arasında sıxılan Nüvə hər tick sürət yığırdı
+  (ölçülüb: 0.3 s-də 350 → 1436 px/s, 5.9 s-də iki qol). İndi ən çox ~400 px/s.
 - Topla vurmaq onu itələyir (`200 × 20 / çəki` px/s) və **+2 çəki** verir; 40-ı keçəndə
   Nüvə partlayır, 2 s sonra mərkəzdə yenisi. Çəki 1.5 s-də 1 azalır (20-yə qədər).
 - TRİXOSİST itələməsi Nüvəyə də təsir edir. Suyun burulğanı onu **35%** aparır (tam axında
@@ -680,7 +686,8 @@ və aşağıda niyə belə olduqları yazılıb. Testlər: `game/scripts/tools/o
   iki yanında selik dirəyi (585, ±150). Nüvə rəqibin qapısına girəndə **qol**: hamı yerinə
   qayıdır, 3 s sayım (matçın saatı dayanır).
 - İlk **2** qol udur; 2:30-da çox qolu olan; bərabərdirsə **45 s** ərzində ilk qol, sonra heç-heçə.
-- Botlu ölçü (20 matç): 14-ü qaliblə, matç başına 1.1 qol.
+- Botlu ölçü (20 matç): 14-ü qaliblə, matç başına 1.1 qol. §17-dən və təkanın düzəlişindən
+  sonra (20 matç, eyni toxumlar): 15-i qaliblə, 22 qol (köhnə kod: 13 qaliblə, 20 qol).
 
 ### 16.5 Şəbəkə
 
@@ -694,3 +701,30 @@ və aşağıda niyə belə olduqları yazılıb. Testlər: `game/scripts/tools/o
   matçın sonunda gedir (`draw`, `score_us`, `score_them` əlavə açarları ilə).
 - Köhnə client yeni sahələri oxumur; yeni client köhnə serverdə də işləyir (sahələr yoxdursa
   sadəcə istifadə olunmur).
+
+## 17. Növlərin fərqli adi atəşi və obyekt rejimləri (2026-10-28)
+
+Qaydalar README-dədir («Hər növün öz atəşi»): kirpiklinin oxu, ayaqlının iki iynəsi (hərəsi +1),
+amöbün damcısı, superdə miniqan. Hərəkət başına −1 top, mikroblara cəmi ən çox +2.
+
+- **Ana** hərəkət başına `MOTHER_FEED` (+1) dolur — iki iynə də, damcı da Ananı iki dəfə
+  doldurmur. Damcı Ananın kənarına düşəndə (sahəsi Anaya toxunur) Ana onu udur; öz Ananın
+  yanına düşən damcı qida olur. Damcı yuvanın seliklərinin üstündən keçir.
+- **Nüvə** hərəkət başına cəmi **+2 çəki və bir təkan** alır. Damcının təkanı uçuş
+  istiqamətindədir.
+- **Düşmə qərarı:** sahədə rəqib varsa — ona; yoxdursa Nüvəyə; yoxdursa rəqibin Anasına;
+  yoxdursa qida.
+- **Botlar:** ayaqlı Anaya yalnız iynələrin çatdığı yerdən atır (iynə məsafəsinin 85%-i),
+  amöb düşmə nöqtəsini Ananın kənarında, rəqib mikroblardan ən uzaq yerdə seçir
+  (Anaya nişanlanan damcıların 93%-i Anaya düşür; əvvəl 31%-i Anaya toxunub əmən
+  müdafiəçiyə düşürdü). Nüvəyə atəş profilə görədir: iynələr yalnız ikisi də dəyəcəyi
+  yaxınlıqdan (əvvəl 320 px-dən atılan iynələr Nüvənin yanından keçirdi).
+- Ölçü (`--objtest --probe --no-human`, 20 toxum, köhnə → yeni): NÜVƏ TOPU qalibli 13 → 15,
+  qol 20 → 22; ANA HÜCEYRƏ qalibli 20 → 20, Ananın partlaması 6 → 1; YAŞ ADA (14 toxum)
+  xalla bitən 14 → 13.
+- **Ana niyə az partlayır:** matçlar bərabərləşib. Matç başına Ana yemləməsi 72 → 65,
+  komandalar arasındakı fərq 46 → 26 yemləmə, ölüm 31 → 35. Əvvəl bir komanda birtərəfli
+  üstün gəlib rəqibin Anasını partladırdı. İki variant yoxlandı — Ananın tutumu 140 → 130 və
+  başlanğıc doluluğu 70 → 76; hər ikisi 20 matçda yenə 1 partlama verdi, ona görə qayda
+  dəyişmədi. Partlama tez-tez olsun, yoxsa bərabər matçlar xalla bitsin — sahibin qərarıdır
+  (rəqəmlər botlarladır, insanlarla yoxlanmalıdır).

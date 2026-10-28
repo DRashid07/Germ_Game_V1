@@ -62,6 +62,22 @@ static func pick(from: Vector2, targets: Array, max_reach: float, sight: Sim) ->
 	return best
 
 
+## Damcının avtomatik hədəfi: ən yaxın GÖRÜNƏN rəqib, damcının çata biləcəyi məsafədə
+## ([constant Const.LOB_MIN]–[constant Const.LOB_MAX], düşmə sahəsi qədər ehtiyatla).
+## Görmə xətti yoxlanılmır — damcı maneənin üstündən keçir. Yoxdursa boş sözlük.
+static func pick_lob(from: Vector2, targets: Array) -> Dictionary:
+	var best := {}
+	var best_d := INF
+	for t in targets:
+		var d := from.distance_to(Vector2(t["pos"]))
+		if d < Const.LOB_MIN - Const.LOB_AREA or d > Const.LOB_MAX + Const.LOB_AREA:
+			continue
+		if d < best_d:
+			best_d = d
+			best = t
+	return best
+
+
 ## Bir atəşlik xəta. Atəş başına BİR dəfə çəkilir, tick başına yox: BOŞLUQ
 ## basılı ikən istək bir neçə tick gözləyir və xəta orada titrəməməlidir.
 static func roll_error(rng: RandomNumberGenerator) -> float:

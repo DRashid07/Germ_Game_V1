@@ -20,8 +20,12 @@ const BOT_NAMES := [
 	"Toksin", "Mikoz", "Virion", "Koloniya", "Flagel", "Zülal", "Bakter",
 ]
 
-## Botun saxlamağa çalışdığı döyüş məsafəsi.
+## Botun saxlamağa çalışdığı döyüş məsafəsi (obyekt rejimlərinin planları və super üçün).
 const IDEAL_RANGE := 380.0
+## Növün öz döyüş məsafəsi — atəşinin formasından: kirpikli uzaqdan vurur (oxu ~900 px
+## uçur), ayaqlı yaxınlaşır (iynələr 350 px uçur və yelpik kimi açılır — iki iynənin də
+## çatması üçün yaxın olmalıdır), amöb damcının orta məsafəsindədir.
+const SPECIES_RANGE: Array[float] = [470.0, 190.0, 320.0]
 ## Bu məsafədən uzaq rəqib bota maraqlı deyil.
 ## Ac bot quru zonada bu qədər piksel dərinliyə qədər qala bilər.
 ##
@@ -62,6 +66,7 @@ static func random_name(index: int) -> String:
 
 func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 	_seq += 1
+	_lob_range = NAN
 	var me: Sim.GermState = sim.germs.get(id)
 	if me == null or not me.alive:
 		return Sim.PlayerInput.make(_seq, Vector2.ZERO, 0.0, false)
@@ -142,14 +147,15 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 		var side := Vector2(-forward.y, forward.x) * _strafe
 
 		# Dolu botun məsafəsi daha uzaqdır — rəqibin bir topu onu partlada bilər.
-		var want := IDEAL_RANGE * (1.6 if bloated else 1.0)
+		var want := SPECIES_RANGE[int(me.species)] * (1.6 if bloated else 1.0)
 		var radial := signf(dist - want)
 		move = (forward * radial * 0.9 + side * 0.7).limit_length(1.0)
 
 		aim = _aim_at(me, target)
-		# Yalnız açıq xətt olanda atır — maneəyə atmağın mənası yoxdur.
+		# Yalnız açıq xətt olanda atır — maneəyə atmağın mənası yoxdur. Amöbün damcısı
+		# isə örtüyün ÜSTÜNDƏN keçir: ona xətt yox, məsafə və görünən hədəf lazımdır.
 		# Özünü acdan qorumaq üçün ehtiyat saxlayır.
-		fire = me.balls > Const.FIRE_MIN_BALLS and sim.has_line_of_sight(me.pos, target.pos)
+		fire = me.balls > Const.FIRE_MIN_BALLS and _can_hit(sim, me, target, dist)
 	elif meal != null:
 		var to_food := meal.pos - me.pos
 		move = to_food.normalized()
@@ -171,7 +177,35 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 	move = _avoid(sim, me, move)
 
 	var use_super := me.super_ready() and _wants_super(sim, me, target, meal, hungry)
-	return Sim.PlayerInput.make(_seq, move, aim, fire, use_super)
+	var inp := Sim.PlayerInput.make(_seq, move, aim, fire, use_super)
+	# Damcının məsafəsi — nişan alınan nöqtəyə qədər (bax [method _aim_at]); hədəfsiz
+	# atəşdə NAN qalır və server sabit məsafə götürür ([constant Const.LOB_AUTO]).
+	if fire and me.species == Const.Species.AMOEBA:
+		inp.fire_range = _lob_range
+	return inp
+
+
+## Damcının bu atəşdəki məsafəsi; NAN = sabit məsafə.
+var _lob_range := NAN
+
+
+## Bu hədəfə adi atəş çatarmı.
+##
+## Düz atəş (ox, iynə) açıq xətt və profilin uçuş məsafəsi istəyir. Damcı xətt istəmir —
+## maneənin üstündən keçir — amma KOLDA gizlənəni hədəf almır: server onu bota
+## göstərməsə də bot simulyasiyanın özündən oxuyur, ona görə gizlənmə qaydası burada da
+## saxlanılır (bax [method Sim.bush_of]). Düşmə nöqtəsi etibarsızdırsa atmır.
+func _can_hit(sim: Sim, me: Sim.GermState, target: Sim.GermState, dist: float) -> bool:
+	var profile := Const.shot_profile(int(me.species), me.in_cyst())
+	if profile != Const.Shot.LOB:
+		return dist < Const.shot_reach(profile) * 0.9 \
+			and sim.has_line_of_sight(me.pos, target.pos)
+	if dist > Const.LOB_MAX + Const.LOB_AREA or dist < Const.LOB_MIN - Const.LOB_AREA:
+		return false
+	var hide := sim.bush_of(target)
+	if hide >= 0 and hide != sim.bush_of(me):
+		return false
+	return sim.lob_valid(Sim.lob_landing(me.pos, Vector2.from_angle(_aim_at_angle), _lob_range))
 
 
 ## Maneədən yan keçir.
@@ -235,7 +269,10 @@ static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
 					continue
 				# İnsanın topunu trixosist `rewind` GEC tutur (bax [member Sim._blasts]) —
 				# bot da insan qurban kimi topu o qədər qabaqda görür.
-				var ahead := shot.pos + shot.dir * (Const.SHOT_SPEED * shot.rewind * Const.TICK_DELTA)
+				# Damcı havadadır — trixosist ona çatmır.
+				if shot.is_lob():
+					continue
+				var ahead := shot.pos + shot.dir * (shot.speed * shot.rewind * Const.TICK_DELTA)
 				if ahead.distance_to(me.pos) < reach:
 					return true
 			return false
@@ -254,10 +291,13 @@ static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
 ## Topun uçuş müddətində hədəfin gedəcəyi nöqtə.
 ## İki dəfə hesablanır: birinci təxmin məsafəni, ikinci artıq qabaqlanmış
 ## nöqtəyə görə uçuş vaxtını dəqiqləşdirir.
-static func _lead_point(from: Vector2, target: Sim.GermState) -> Vector2:
+##
+## [param speed] — mərminin sürəti; sıfırdırsa (damcı) uçuş məsafədən asılı deyil.
+static func _lead_point(from: Vector2, target: Sim.GermState, speed := Const.SHOT_SPEED) -> Vector2:
 	var point := target.pos
 	for _i in 2:
-		var flight := from.distance_to(point) / Const.SHOT_SPEED
+		var flight := Const.LOB_FLIGHT + Const.TICK_DELTA if speed <= 0.0 \
+			else from.distance_to(point) / speed
 		point = target.pos + target.vel * flight
 	return point
 
@@ -268,11 +308,23 @@ static func _lead_point(from: Vector2, target: Sim.GermState) -> Vector2:
 ## və bacarığı [constant Const.NEWBIE_BOT_SKILL]-dən yuxarı olmur: səhv ən azı iki
 ## dəfə böyükdür. Təsadüfi ədəd həmişə BİR dəfə çəkilir — toxumlu dünyada (testlər,
 ## balans ölçüsü) botun qərarları əvvəlki ardıcıllıqla qalır.
+##
+## Qabaqlama atəşin öz sürəti ilə hesablanır ([constant Const.SHOT_PROFILE_SPEED]); amöbün
+## damcısında məsafə də nişandır — [member _lob_range] nişan nöqtəsinə qədər yazılır.
 func _aim_at(me: Sim.GermState, target: Sim.GermState) -> float:
-	var point := target.pos if target.newbie else _lead_point(me.pos, target)
+	var profile := Const.shot_profile(int(me.species), me.in_cyst())
+	var speed := Const.SHOT_PROFILE_SPEED[profile]
+	var point := target.pos if target.newbie else _lead_point(me.pos, target, speed)
 	var skill := minf(difficulty, Const.NEWBIE_BOT_SKILL) if target.newbie else difficulty
-	return (point - me.pos).angle() \
+	if profile == Const.Shot.LOB:
+		_lob_range = me.pos.distance_to(point)
+	_aim_at_angle = (point - me.pos).angle() \
 		+ _rng.randf_range(-AIM_ERROR, AIM_ERROR) / maxf(skill, 0.1)
+	return _aim_at_angle
+
+
+## Son [method _aim_at]-ın bucağı — damcının düşmə yeri onunla yoxlanılır.
+var _aim_at_angle := 0.0
 
 
 ## Yeni oyunçu ilk [constant Const.NEWBIE_GRACE] saniyəsində hədəf seçilmir.
@@ -383,9 +435,12 @@ func _mother_plan(sim: Sim, me: Sim.GermState, target: Sim.GermState, meal: Sim.
 	# Rəqibin Anasına açıq xətt varsa — Ananın səthinə atır.
 	var dist := me.pos.distance_to(foe_c)
 	var surface := foe_c + (me.pos - foe_c).normalized() * (foe.z + Const.SHOT_RADIUS + 4.0)
-	if not defender and dist < 520.0 and sim.has_line_of_sight(me.pos, surface):
-		_o_aim = (foe_c - me.pos).angle() \
+	var aim_pt := _mother_aim_point(sim, me, foe_c, foe.z, surface)
+	if not defender and dist < 520.0 and aim_pt.is_finite():
+		_o_aim = (aim_pt - me.pos).angle() \
 			+ _rng.randf_range(-AIM_ERROR, AIM_ERROR) / maxf(difficulty, 0.1)
+		# Amöbün damcısı Ananın kənarına düşür — oradan Ana onu udur ([method Sim._land_lob]).
+		_lob_range = me.pos.distance_to(aim_pt)
 		_o_fire = me.balls > Const.FIRE_MIN_BALLS
 		# Atəş məsafəsində yan-yana addımlayır — sabit hədəf olmasın.
 		var to := (foe_c - me.pos).normalized()
@@ -413,6 +468,56 @@ func _mother_plan(sim: Sim, me: Sim.GermState, target: Sim.GermState, meal: Sim.
 		_o_aim = _aim_at(me, target)
 		_o_fire = true
 	return true
+
+
+## Rəqibin Anasına bu yerdən atəşin nişan nöqtəsi; çatmırsa INF.
+##
+## Düz atəş Ananın mərkəzinə atılır və səthinə açıq xətt istəyir. İynələr isə 0.9 s
+## yaşayır (~350 px): 520 px-dən atılan iynə Anaya çatmadan sönürdü — ölçülüb (14 matç),
+## ayaqlının Anaya dəyən hərəkəti 21%-dən 15%-ə düşmüşdü.
+##
+## Damcıya xətt lazım deyil — yuvanın divarının üstündən keçir. O, Ananın kənarına, sahəsi
+## Anaya toxunan nöqtəyə düşür ([method Sim._land_lob]) və bu nöqtə mikroblardan ən uzaq
+## yer seçilir: müdafiəçilər Anaya toxunub əmir və onların üstünə düşən damcı Ananı yox,
+## onları doldurur (ölçülüb: Anaya atılan damcıların 31%-i mikroba düşürdü).
+func _mother_aim_point(sim: Sim, me: Sim.GermState, foe_c: Vector2, foe_r: float,
+		surface: Vector2) -> Vector2:
+	match Const.shot_profile(int(me.species), me.in_cyst()):
+		Const.Shot.LOB:
+			return _lob_mother_point(sim, me, foe_c, foe_r)
+		Const.Shot.NEEDLE:
+			if me.pos.distance_to(surface) < Const.shot_reach(Const.Shot.NEEDLE) * 0.85 \
+					and sim.has_line_of_sight(me.pos, surface):
+				return foe_c
+		_:
+			if sim.has_line_of_sight(me.pos, surface):
+				return foe_c
+	return Vector2.INF
+
+
+## Damcının Anaya düşəcəyi nöqtə — Ananın kənarında, bota baxan tərəfdə (±0.8 rad),
+## damcının aralığında, etibarlı və rəqib mikroblardan ən uzaq. Yoxdursa INF.
+func _lob_mother_point(sim: Sim, me: Sim.GermState, foe_c: Vector2, foe_r: float) -> Vector2:
+	var best := Vector2.INF
+	var best_score := -INF
+	var base := (me.pos - foe_c).angle()
+	for k in range(-4, 5):
+		var p := foe_c + Vector2.from_angle(base + float(k) * 0.2) * (foe_r + 14.0)
+		var d := me.pos.distance_to(p)
+		if d < Const.LOB_MIN or d > Const.LOB_MAX or not sim.lob_valid(p):
+			continue
+		# Damcı yoldaşa dəymir — yalnız rəqiblərdən uzaqlıq sayılır.
+		var clear := 120.0
+		for gid in sim.germs:
+			var g: Sim.GermState = sim.germs[gid]
+			if g.id == me.id or not g.alive or (me.team >= 0 and g.team == me.team):
+				continue
+			clear = minf(clear, p.distance_to(g.pos) - g.radius())
+		var score := clear - absf(float(k)) * 4.0
+		if score > best_score:
+			best_score = score
+			best = p
+	return best
 
 
 ## Komandanın sağ botları arasında id-si ən kiçik olan mənəmmi.
@@ -608,15 +713,21 @@ func _ball_plan(sim: Sim, me: Sim.GermState, target: Sim.GermState, meal: Sim.Fo
 			_o_aim = _aim_at(me, target)
 			_o_fire = true
 		elif lined and gap > 60.0 and gap < 320.0 and b.weight < float(Const.BALL_WEIGHT_MAX) - 10.0 \
-				and me.balls > Const.FIRE_MIN_BALLS + 1 and sim.has_line_of_sight(me.pos, b.pos):
+				and me.balls > Const.FIRE_MIN_BALLS + 1 and _ball_in_reach(sim, me, b):
 			# Düz xətdə, bir az aralıdan — topla vurur (zərbə Nüvəni ağırlaşdırır, ona
 			# görə çəki ehtiyatı qalanda).
 			_o_aim = (b.pos - me.pos).angle()
+			_lob_range = me.pos.distance_to(b.pos)
 			_o_fire = true
 		elif dump:
 			# Dolu vurucu qapıya doğru boşalır — yolda Nüvəyə dəyən top onu da itələyir.
 			_o_aim = to_goal.angle()
 			_o_fire = true
+			# Damcı yolda heç nəyə dəymir — Nüvənin üstündən uçardı. Xətdədirsə ona düşür
+			# (uçuş istiqaməti qapıya doğrudur və təkan da oradır).
+			if lined and _ball_in_reach(sim, me, b):
+				_o_aim = (b.pos - me.pos).angle()
+				_lob_range = me.pos.distance_to(b.pos)
 		return true
 
 	# İkinci oyunçu. Nüvə qapıya yaxındırsa və o, qapı tərəfindədirsə — Nüvəni gövdəsi ilə
@@ -650,14 +761,32 @@ func _ball_plan(sim: Sim, me: Sim.GermState, target: Sim.GermState, meal: Sim.Fo
 		_o_fire = true
 	elif b.pos.distance_to(own_goal) < 320.0 and me.balls > Const.FIRE_MIN_BALLS \
 			and me.pos.distance_to(own_goal) < b.pos.distance_to(own_goal) \
-			and sim.has_line_of_sight(me.pos, b.pos):
+			and _ball_in_reach(sim, me, b):
 		# Nüvə qapıya yaxınlaşır, qapıçı onun qapı tərəfindədir — topla uzaqlaşdırır.
 		_o_fire = true
+		_lob_range = me.pos.distance_to(b.pos)
 	elif dump:
 		# Dolu qapıçı rəqibin tərəfinə boşalır, rəqibə yox — ölüm az olsun.
 		_o_aim = 0.0 if fwd > 0.0 else PI
 		_o_fire = true
 	return true
+
+
+## Nüvəyə atılan atəş ona çatar və dəyərmi — profilə görə.
+##
+## Düz atəş açıq xətt istəyir; iynələr isə ±7° açılır: 320 px-də ikisi də Nüvənin
+## yanından keçirdi (sapma ±39 px, Nüvə 30 px) və ayaqlı vurucu Nüvəni heç itələyə
+## bilmirdi. Damcı xətt istəmir, amma ən azı [constant Const.LOB_MIN] məsafə istəyir.
+func _ball_in_reach(sim: Sim, me: Sim.GermState, b: Sim.BallState) -> bool:
+	var d := me.pos.distance_to(b.pos)
+	match Const.shot_profile(int(me.species), me.in_cyst()):
+		Const.Shot.LOB:
+			return d >= Const.LOB_MIN - Const.LOB_AREA and d <= Const.LOB_MAX
+		Const.Shot.NEEDLE:
+			# Yan sapma Nüvənin radiusundan az olsun — ikisi də dəysin.
+			return d * tan(Const.NEEDLE_SPREAD) < b.radius() and sim.has_line_of_sight(me.pos, b.pos)
+		_:
+			return sim.has_line_of_sight(me.pos, b.pos)
 
 
 ## Vurucunun hədəfi: rəqib qapıçının OLMADIĞI yarıq tərəfi. Nüvə qapının yanındakı

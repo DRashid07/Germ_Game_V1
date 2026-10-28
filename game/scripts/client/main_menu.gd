@@ -226,7 +226,7 @@ func _play() -> void:
 	_save_settings()
 
 	if Net.is_connected_to_server():
-		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), Const.mode_wire(int(Net.mode)))
 		_set_busy(true, "Dünyaya girilir...")
 		return
 
@@ -251,7 +251,7 @@ func _cancel_join() -> void:
 
 func _on_connected() -> void:
 	if _joining:
-		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
+		Net.request_join.rpc_id(1, Net.nickname, int(Net.species), Const.mode_wire(int(Net.mode)))
 		_status.text = "Dünyaya girilir..."
 
 

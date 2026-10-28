@@ -31,7 +31,7 @@ Mikrobun içindəki top sayı həm **sursat**, həm **candır**:
 
 | Hadisə | Nəticə |
 |---|---|
-| **Top atırsan** | səndə −1, dəydiyi rəqibdə **+2** (top içəridə bölünür) |
+| **Top atırsan** | səndə −1, dəydiyi rəqibdə **+2** (top içəridə bölünür; ayaqlının hər iynəsi +1, ikisi birlikdə +2) |
 | **Top haradan çıxır** | mikrobun **öz içindən** — membranı yararaq |
 | **Rəqibin sayı tutumu aşır** | rəqib **partlayır**, sən **+5 tutum** alırsan |
 | **Sənin sayın 2-dən aşağı düşür** | **acından partlayırsan** — heç kim hesab almır |
@@ -49,6 +49,71 @@ Mikrobun içindəki top sayı həm **sursat**, həm **candır**:
 
 Böyüməyin qiyməti var: tutum artdıqca mikrob **böyüyür** (iri hədəf),
 **yavaşlayır** və **daha tez acır**. Lider sonsuz böyüyə bilmir.
+
+### Hər növün öz atəşi
+
+Üç növün adi atəşi **forması** ilə fərqlənir, iqtisadiyyatı ilə yox: bir atəş
+hərəkəti atıcıdan **bir top** götürür, bir soyuma (1 s) və bir geri təpmə yaradır,
+hərəkətin bütün mərmiləri mikroblara cəmi **ən çoxu +2** verir
+([`Const.Shot`](game/scripts/shared/constants.gd), [`Sim._fire`](game/scripts/shared/sim.gd)).
+
+| Növ | Atəş | Rəqəmlər (prototip) | Nə üçündür |
+|---|---|---|---|
+| **KİRPİKLİ** | tək ox, divardan sıçrayır | 560 px/s, 6 px, 1.6 s, +2 | uzaqdan dəqiq atəş |
+| **AYAQLI** | eyni anda iki iynə, ±7° | 390 px/s, 6 px, 0.9 s, hərəsi +1 | yaxında ikisi də çatır (+2), uzaqda biri (+1) |
+| **AMÖB** | qövslə uçan damcı | 180–460 px, 0.85 s, düşmə sahəsi 36 px, +2 | maneənin üstündən — örtük arxasına |
+| **Amöbün superi** | miniqan — köhnə düz top | 420 px/s, 9 px, 2.2 s, +2, pulsuz | super təsadüfən damcı və ya iynə atmır |
+
+**Hərəkətin ortaq hesabı** ([`Sim._volleys`](game/scripts/shared/sim.gd)). İki iynə
+bir qrupdur və hər mükafat hərəkət başına bir dəfədir: atıcının super payı
+(+3), qurbanın super payı (+1), kövrək qabığa zərbə, Anaya `MOTHER_FEED`, Nüvəyə
++2 çəki və bir təkan. Hərəkətdən **ən çoxu bir qida** yaranır: iynələrdən biri
+dəyibsə, boşa çıxan ikincisi qida yaratmır, ikisi də boşa çıxsa (ömür, sıçrayış,
+trixosist) qida birdir. Qrup bütün mərmiləri bitəndə silinir, nömrəsi təkrarlanmır.
+Atıcı partlasa da mərmilər komandasını saxlayır — yoldaşa dəymir.
+
+**Damcı** uçuşda heç nəyə toxunmur: seliyin və kövrək qabığın üstündən keçir, yolundakı
+mikroba dəymir, trixosist ona çatmır. Düşəndə qərar ardıcıllığı belədir: sahədə rəqib
+varsa — **tək** ona +2 (düşmə nöqtəsinə ən yaxın, bərabərdə kiçik id); yoxdursa Nüvəyə
+toxunursa — +2 çəki və təkan; yoxdursa rəqibin Anasına toxunursa — Ana dolur; heç
+nəyə düşməyibsə — qidaya çevrilir. Zərbə **düşmə anındakı** server mövqelərinə
+qarşıdır (geri sarma yoxdur): xəbərdarlığı görüb çəkilən vurulmur. Düşmə nöqtəsi
+şüşədən kənarda və ya bərk maneənin (selik, bütöv qabıq, Ana) içindədirsə atəş
+**açılmır** — top xərclənmir, soyuma başlamır, nişan bunu qırmızı göstərir.
+
+**Damcının məsafəsi:** sürüşdürəndə sürüşmənin uzunluğu (180 → 460 px), qısa
+toxunuşda yalnız görünən uyğun hədəfin məsafəsi, hədəf yoxdursa həmişə 320 px.
+Məsafə girişin bayraq ədədinin 16 bitində və massivin 8-ci yerində gedir
+([`Sim.PlayerInput.fire_range`](game/scripts/shared/sim.gd)); girişlər birləşəndə atəşlə köçür.
+
+**Xəbərdarlıq gizlənəni açmır** ([`World._lob_row`](game/scripts/server/world.gd)).
+Düşmə nöqtəsi və qalan vaxt hamıya gedir və qurbana düşən damcı paket büdcəsi
+kəsiləndə də önə keçir. Başlanğıc nöqtəsi və atıcının rəngi isə yalnız atıcını
+görənə gedir: kolda gizlənən və ya ekrandan kənardakı atıcının damcısı neytral
+işarədir, yolu yoxdur, damcı son anda yuxarıdan düşür ([`LobMarks`](game/scripts/client/lob_marks.gd)).
+
+**Şəbəkə formatı.** Top sətri 8 ədəddir (`SHOT_STRIDE`, 32 bayt): profil, bir
+mərminin yükü və qrup `META` sahəsindədir; damcının sətrində `X, Y` düşmə nöqtəsi,
+`DX, DY` başlanğıc, `REWIND` qalan vaxtdır. Zərbə hadisəsinin `arg`-ı yükü də daşıyır
+(+1/+2). Köhnə client yeni sətri yanlış oxuyardı — ona görə qaydaların versiyası var
+([`Const.RULES`](game/scripts/shared/constants.gd)): client onu rejim ədədinin yuxarı
+baytında göndərir, server uyğun gəlməyəni "oyunu yenilə" deyib dünyaya buraxmır,
+yeni client də köhnə serverdə matçı açmır.
+
+**Botlar** növünə görə məsafə saxlayır (kirpikli 470, amöb 320, ayaqlı 190 px),
+amöb botu örtük arxasındakı rəqibə damcı atır, kolda gizlənənə atmır
+([`Bot._can_hit`](game/scripts/shared/bot.gd)). Obyekt rejimlərində atəş profilə
+görədir: ayaqlı Anaya və Nüvəyə yalnız iynələrin çatdığı yerdən atır, amöb damcını
+Ananın kənarında müdafiəçilərdən uzaq nöqtəyə salır (bax design/MODES.md §17).
+
+**Proqnoz və ölçü.** Damcının kimə dəydiyini client proqnozlaşdırmır (rəqiblər
+ekranda keçmişdə çəkilir, zərbə isə düşmə anındakı server mövqelərinədir): sıçrantı
+vaxtında göstərilir, zərbə serverin hadisəsi gələn kimi — interpolyasiyanı gözləmədən.
+Avtomatik client-in hesabatında öz damcının zərbələri `DAMCI:` sətrindədir, "yalnız
+serverin saydığı" dəymələrə qarışmır; `ALINAN:` sətri sənə dəyən zərbələri və onların
+yoldaşdan gələnini sayır (dost atəşi yoxdur — 0 olmalıdır).
+
+Menyuda amöbün sinfi **TOPÇU**-dur (əvvəl MÜDAFİƏÇİ və qalxan idi — kistin dövründən).
 
 ### Qab su ilə doludur
 
@@ -129,8 +194,9 @@ Avtomatik nişan **qəsdən dəqiq deyil** ([`AutoAim`](game/scripts/client/auto
 - hər atəşə **±10°**-yə qədər təsadüfi xəta düşür (üçbucaq paylanma, çox vaxt
   kiçik). Yerində duran rəqibə 300 px-də ~91%, 400 px-də ~78%, ekranın kənarında
   (600 px) ~58% dəyir; hərəkət edənə çox vaxt dəymir;
-- hədəf **ekranda görünən** ən yaxın rəqibdir; maneə arxasındakı və kistdəki amöb
-  (top ondan səkir) yalnız başqası yoxdursa seçilir. Ekranda heç kim yoxdursa,
+- hədəf **ekranda görünən** ən yaxın rəqibdir; maneə arxasındakı yalnız başqası
+  yoxdursa seçilir (amöbün damcısında maneə nəzərə alınmır — damcı üstündən keçir,
+  hədəf isə damcının çata biləcəyi məsafədə olmalıdır). Ekranda heç kim yoxdursa,
   top getdiyin tərəfə gedir.
 
 Dəqiq vurmaq istəyən nişan alır: xətt topun ÖZ yoludur — [`Sim.aim_path`](game/scripts/shared/sim.gd)
@@ -943,7 +1009,8 @@ game/                    Godot layihəsi
       touch_slider.gd    Səs sürgüsü — barmaq üçün (Godot-un HSlider-i çox kiçikdir)
       web_text.gd        Telefon brauzerində yazı sahəsi — HTML pəncərəsi (iOS klaviaturası üçün)
     tools/
-      sim_test.gd        657 headless test (`--simtest`)
+      sim_test.gd        headless testlər (`--simtest`)
+      attack_test.gd     növlərin adi atəşi — `--simtest`-in içindən
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -1032,7 +1099,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda testləri (845 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri (937 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

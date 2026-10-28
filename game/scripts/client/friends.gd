@@ -257,14 +257,14 @@ func badge_count() -> int:
 func hello() -> void:
 	if Net.is_server or not Net.is_connected_to_server():
 		return
-	social_hello.rpc_id(1, secret, Net.nickname, int(Net.species), int(Net.mode),
+	social_hello.rpc_id(1, secret, Net.nickname, int(Net.species), Const.mode_wire(int(Net.mode)),
 		PackedStringArray(friends.keys()))
 
 
 ## Menyuda ad, növ və ya rejim dəyişdi — komanda yoldaşları podiumda dərhal görsün.
 func profile_changed() -> void:
 	if _can_send(false):
-		social_profile.rpc_id(1, Net.nickname, int(Net.species), int(Net.mode))
+		social_profile.rpc_id(1, Net.nickname, int(Net.species), Const.mode_wire(int(Net.mode)))
 
 
 func request(raw_tag: String) -> bool:

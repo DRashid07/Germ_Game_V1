@@ -103,6 +103,8 @@ func hello(peer: int, secret: String, player_name: String, species: int,
 		"name": _clean_name(player_name),
 		"species": int(Const.species_from(species)),
 		"mode": int(Const.mode_from(mode)),
+		# Qaydaların versiyası — komanda oyuna girəndə yoxlanılır ([method Lobby.join_party]).
+		"rules": Const.wire_rules(mode),
 		"friends": list,
 	}
 	peer_tag[peer] = tag
@@ -131,6 +133,7 @@ func profile(peer: int, player_name: String, species: int, mode: int) -> void:
 	rec["name"] = _clean_name(player_name)
 	rec["species"] = int(Const.species_from(species))
 	rec["mode"] = int(Const.mode_from(mode))
+	rec["rules"] = Const.wire_rules(mode)
 	_announce(tag)
 	if party_of.has(tag):
 		_broadcast(parties[party_of[tag]])

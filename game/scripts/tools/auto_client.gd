@@ -129,6 +129,53 @@ func _on_world_joined(info: Dictionary) -> void:
 	if drop_after > 0.0:
 		tree.create_timer(drop_after).timeout.connect(_simulate_drop)
 
+	# Mutasiya profili: açılan seçim kartların öz yolu ilə (1-ci kart) seçilir.
+	if int(info.get("profile", 0)) == Const.Profile.MUTATIONS:
+		_log("PROFİL: mutasiyalar (eksperimental)")
+		_join_ms = Time.get_ticks_msec()
+		var evo := Timer.new()
+		evo.wait_time = 0.5
+		evo.autostart = true
+		evo.timeout.connect(_evolve_step)
+		add_child(evo)
+
+
+## Açılmış seçim varsa kartı oyunçu kimi seçir və təsdiqi qeyd edir.
+var _muts_seen := 0
+## Başqa mikroblarda (botlar, digər client) görülən mutasiyalar: id → bitlər.
+var _others_mut := {}
+var _join_ms := 0
+
+
+func _evolve_step() -> void:
+	if _arena == null or not is_instance_valid(_arena) or _arena.me == null:
+		return
+	var mine := _arena.me.mutations
+	if mine != _muts_seen:
+		# Vaxt dünyaya girişdən sayılır: proqnozdakı yaş serverdən gəlmir və yenidən oynatmada böyüyür.
+		_log("MUTASİYA təsdiqləndi: %s (girişdən %.1f s, açılmış seçim %d)" % [
+			_mut_names(mine), (Time.get_ticks_msec() - _join_ms) / 1000.0, _arena._evo])
+		_muts_seen = mine
+	for gid in _arena._visuals:
+		var v = _arena._visuals[gid].get("node")
+		if gid != _arena.my_id and v is GermVisual and (v as GermVisual).muts != 0:
+			_others_mut[gid] = (v as GermVisual).muts
+	var cards: MutationCards = _arena._hud.mutations
+	if _arena.mut_pending() > 0 and _arena._evolve_send < 0:
+		if not cards.is_open():
+			cards.toggle()
+		_log("MUTASİYA kartı seçilir (girişdən %.1f s, açılmış seçim %d)" % [
+			(Time.get_ticks_msec() - _join_ms) / 1000.0, _arena._evo])
+		cards.key(0)
+
+
+static func _mut_names(bits: int) -> String:
+	var out := []
+	for m in Const.MUT_COUNT:
+		if Const.has_mut(bits, m):
+			out.append(MutationCards.TEXT[m][0])
+	return ", ".join(out) if not out.is_empty() else "yoxdur"
+
 
 ## Tunelə girmiş telefonu təqlid edir: peer bağlanır və oyun bunu
 ## adi bağlantı kəsilməsi kimi görür. Sonrasını [Arena] öz üzərinə götürür.
@@ -217,6 +264,9 @@ func _log_hits() -> void:
 		_log("DAMCI: öz damcının server zərbələri %d (dərhal göstərildi)" % int(st["lob_hits"]))
 	if st.has("claims") and not (st["claims"] as Dictionary).is_empty():
 		_log("TƏSDİQ: server↔proqnoz (atəş tick fərqi, xətt boyu px): %s" % str(st["claims"]))
+	if _arena._profile == Const.Profile.MUTATIONS:
+		_log("MUTASİYA: aktiv %s · açılmış seçim %d · başqalarında görülən %d mikrob %s" % [
+			_mut_names(_arena.me.mutations), _arena._evo, _others_mut.size(), str(_others_mut.values())])
 	# Qida koloniyaları: client-in gördüyü say, doluluq və bərpa halqası (bax [ColonyView]).
 	var cols: ColonyView = _arena._colonies
 	if cols != null:

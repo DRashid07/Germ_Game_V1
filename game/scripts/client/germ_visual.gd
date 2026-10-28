@@ -437,6 +437,10 @@ var species := Const.Species.CILIATE
 var balls := Const.START_BALLS
 var capacity := Const.START_CAPACITY
 var aim := 0.0
+## Aktiv mutasiyalar ([enum Const.Mut] bitləri) — anatomiyada görünür ([MutationAnatomy]).
+## Rəqibinki bayraqdan, öz mikrobununku proqnozdan gəlir ([method Arena._render_germs]).
+var muts := 0
+var _anatomy: MutationAnatomy = null
 ## Super İNDİ işləyirmi — ayaqlıda tor açıqdır, amöbdə qabıq bağlıdır.
 ## Serverin bayrağından gəlir (bax [enum Const.GFlag]); görüntü qatı onu
 ## özü hesablamır, çünki rəqibin superini yalnız server bilir.
@@ -830,6 +834,19 @@ func setup(p_color: int, p_name: String, p_is_local: bool,
 	_t = float(p_color) * 1.37
 
 
+## Mutasiyanın anatomiyası — İLK uşaqdır və node-un ARXASINDA çəkilir: həm GDScript yolunun
+## gövdəsi, həm GPU gövdə qatı onun köklərini örtür. Yalnız mutasiyalı mikrobda yaranır.
+func _update_anatomy(delta: float) -> void:
+	if _anatomy == null:
+		_anatomy = MutationAnatomy.new()
+		add_child(_anatomy)
+		move_child(_anatomy, 0)
+	_anatomy.visible = muts != 0 and alive
+	if muts != 0:
+		_anatomy.setup(muts, Const.germ_radius(capacity), _base, _light, _shadow)
+		_anatomy.set_aim(aim, delta)
+
+
 ## Mikrob partladı: görüntü [BurstFx]-ə ötürülür və bu node susur.
 func kill() -> void:
 	burst = true
@@ -1186,6 +1203,8 @@ func _place_label() -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
+	if muts != 0 or _anatomy != null:
+		_update_anatomy(delta)
 	_promise_t = maxf(0.0, _promise_t - delta)
 	if frozen:
 		return

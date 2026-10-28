@@ -203,6 +203,8 @@ static func run() -> int:
 	AttackTest.run()
 	# SONSUZ ARENA-nın qida koloniyaları (bax [ColonyTest]).
 	ColonyTest.run()
+	# Matç içi mutasiyalar — eksperimental profil (bax [MutationTest]).
+	MutationTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 

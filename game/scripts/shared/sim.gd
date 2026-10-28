@@ -66,12 +66,17 @@ class GermState:
 	var newbie := false
 	## ANA HÜCEYRƏ: öz Anasından növbəti topu əmməyə qalan vaxt (yalnız serverdə).
 	var suck_t := 0.0
+	## Seçilmiş mutasiyalar — [enum Const.Mut] bitləri (bax design/MODES.md §19). Yalnız
+	## server yazır ([method World.choose_mutation]); proqnoz onu snapshot-dakı bayraqdan alır.
+	## Təsirləri əmsallardır və HƏR tick vəziyyətdən oxunur — sürətə yığılmır, ikiqat düşmür.
+	var mutations := 0
 
 	func radius() -> float:
 		return Const.germ_radius(capacity)
 
 	func speed() -> float:
-		return Const.germ_speed(capacity) * Const.SPECIES_SPEED[int(species)]
+		return Const.germ_speed(capacity) * Const.SPECIES_SPEED[int(species)] \
+			* Const.mut_speed(mutations)
 
 	## Doluluq 0..1 — HUD-dakı zolaq və membranın gərginliyi bundan gəlir.
 	func fill() -> float:
@@ -90,6 +95,7 @@ class GermState:
 		c.charge = charge; c.super_t = super_t; c.food_acc = food_acc
 		c.dry_t = dry_t
 		c.suck_t = suck_t
+		c.mutations = mutations
 		return c
 
 
@@ -152,6 +158,9 @@ class ShotState:
 	var flight := 0.0
 	## Atıcı atəş anında hansı koldaydı (-1 heç biri) — xəbərdarlıq onun yerini açmasın.
 	var bush := -1
+	## Atıcı atəş anında UZUN ÇIXINTI-lı idi: sürət və ömür bununla hesablanıb. Uçuşda
+	## dəyişmir — mutasiya sonradan seçilsə də havadakı top öz qaydası ilə uçur.
+	var long := false
 
 	func is_lob() -> bool:
 		return profile == Const.Shot.LOB
@@ -288,6 +297,11 @@ class PlayerInput:
 	var fire_range := NAN
 	## Server tərəfi: proqnozun atəşi neçə tick soyumanı gözləyib.
 	var fire_wait := 0
+	## Mutasiya seçimi ([enum Const.Mut]), -1 — yoxdur. Bayraq ədədinin 5-6-cı bitlərində
+	## `m + 1` kimi gedir: massivin düzümü dəyişmir, köhnə server onu sadəcə görmür. Client
+	## təsdiq gələnə qədər hər girişdə təkrar göndərir; server seçimi bir dəfə tətbiq edir
+	## ([method World.choose_mutation]), təkrarı "artıq seçilib" deyə rədd edir.
+	var evolve := -1
 
 	static func make(p_seq: int, p_move: Vector2, p_aim: float, p_fire: bool,
 			p_super := false, p_view := -1.0) -> PlayerInput:
@@ -312,7 +326,8 @@ class PlayerInput:
 		var ranged := fire and is_finite(fire_range)
 		var out := [seq, move.x, move.y, aim,
 			(1 if fire else 0) | (2 if use_super else 0) | (4 if shot else 0) \
-				| (8 if newbie else 0) | (16 if ranged else 0)]
+				| (8 if newbie else 0) | (16 if ranged else 0) \
+				| (((evolve + 1) & 3) << 5 if evolve >= 0 else 0)]
 		var origin := shot and fire and fire_from.is_finite()
 		if fire and (view_tick >= 0.0 or origin or ranged):
 			out.append(view_tick)
@@ -331,6 +346,8 @@ class PlayerInput:
 			(bits & 1) != 0, (bits & 2) != 0, view)
 		i.shot = (bits & 4) != 0 and i.fire
 		i.newbie = (bits & 8) != 0
+		var ev := (bits >> 5) & 3
+		i.evolve = ev - 1 if ev > 0 else -1
 		# Şəbəkədən gələn ədəd NaN/INF ola bilər — simulyasiyaya düşməməlidir.
 		if i.shot and a.size() > 7:
 			var from := Vector2(float(a[6]), float(a[7]))
@@ -764,9 +781,13 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 			g.vel = g.vel.lerp(target,
 				1.0 - exp(-Const.FLUID_THRUST * Const.SPECIES_THRUST[sp] * dt))
 		else:
-			g.vel *= exp(-Const.FLUID_DRAG * Const.SPECIES_DRAG[sp] * dt)
+			# İMPULS QAMÇISI əyləc ƏMSALINI azaldır (sürətə vurulmur): sürüşmə uzanır.
+			g.vel *= exp(-Const.FLUID_DRAG * Const.SPECIES_DRAG[sp] * Const.mut_brake(g.mutations) * dt)
 
-		var flow := (Const.current_at(g.pos) + _vent_push(g.pos)) * Const.SPECIES_FLOW[sp]
+		# YAPIŞQAN AYAQLAR su axınını və cərəyan deşiyinin itələməsini azaldır — ikisi də
+		# suyun hərəkətidir. Döyüş itələməsi və atəşin geri təpməsi bura daxil deyil.
+		var flow := (Const.current_at(g.pos) + _vent_push(g.pos)) * Const.SPECIES_FLOW[sp] \
+			* Const.mut_flow(g.mutations)
 		g.pos += (g.vel + flow) * dt
 		_confine(g)
 
@@ -1125,7 +1146,7 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 		start = g.pos + (from - g.pos).limit_length(FIRE_FROM_REACH * g.radius())
 	var landing := Vector2.ZERO
 	if profile == Const.Shot.LOB:
-		landing = lob_landing(start, dir, distance)
+		landing = lob_landing(start, dir, distance, g.mutations)
 		if not lob_valid(landing):
 			return false
 	# Geri sarma atəş anında BİR dəfə ölçülür və uçuş boyu sabit qalır: top
@@ -1153,7 +1174,9 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 		s.team = g.team
 		s.rewind = rewind
 		s.profile = profile
-		s.speed = Const.SHOT_PROFILE_SPEED[profile]
+		# Sürət və ömür atıcının mutasiyasından — proqnozla eyni funksiya ([method Const.shot_speed]).
+		s.long = Const.has_mut(g.mutations, Const.Mut.LONG)
+		s.speed = Const.shot_speed(profile, g.mutations)
 		s.radius = Const.SHOT_PROFILE_RADIUS[profile]
 		s.payload = Const.SHOT_PROFILE_PAYLOAD[profile]
 		s.volley = volley
@@ -1161,11 +1184,11 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 		s.dir = dir
 		if profile == Const.Shot.NEEDLE:
 			s.dir = dir.rotated(Const.NEEDLE_SPREAD * (-1.0 if k == 0 else 1.0))
-		s.life = Const.SHOT_PROFILE_LIFE[profile]
+		s.life = Const.shot_life(profile, g.mutations)
 		if profile == Const.Shot.LOB:
 			s.origin = start
 			s.target = landing
-			s.flight = Const.LOB_FLIGHT
+			s.flight = Const.lob_flight(g.mutations)
 			s.bush = bush_of(g)
 		shots.append(s)
 		if first == null:
@@ -1177,7 +1200,7 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 		g.balls -= 1
 		g.cooldown = Const.FIRE_COOLDOWN
 	# Geri təpmə: atəş həm də manevr vasitəsidir.
-	g.vel -= dir * Const.SHOT_RECOIL
+	g.vel -= dir * Const.recoil(g.mutations)
 	# Atəş açan toxunulmazlığını itirir — doğuş qorunması hücum qalxanı deyil.
 	# Yeni oyunçu istisnadır: onun ilk refleksi atəşdir və adi qayda qalxanı elə
 	# ilk saniyədə söndürürdü (bax [constant Const.NEWBIE_SAFE_TIME]).
@@ -1204,10 +1227,11 @@ func _fire(g: GermState, view_tick := -1.0, aim := NAN, minigun := false,
 
 ## Damcının düşmə nöqtəsi: [param start]-dan [param dir] boyu [param distance] qədər,
 ## məsafə [constant Const.LOB_MIN]–[constant Const.LOB_MAX] aralığına salınır.
-## Məsafə bilinmirsə (NAN, köhnə client, bot) — [constant Const.LOB_AUTO].
-static func lob_landing(start: Vector2, dir: Vector2, distance: float) -> Vector2:
+## Məsafə bilinmirsə (NAN, köhnə client, bot) — [constant Const.LOB_AUTO]. UZUN ÇIXINTI
+## ən uzaq məsafəni artırır ([method Const.lob_max]).
+static func lob_landing(start: Vector2, dir: Vector2, distance: float, muts := 0) -> Vector2:
 	var d := distance if is_finite(distance) else Const.LOB_AUTO
-	return start + dir.normalized() * clampf(d, Const.LOB_MIN, Const.LOB_MAX)
+	return start + dir.normalized() * clampf(d, Const.LOB_MIN, Const.lob_max(muts))
 
 
 ## Damcı bura düşə bilərmi: şüşənin içində ([constant Const.LOB_EDGE] ehtiyatla) və

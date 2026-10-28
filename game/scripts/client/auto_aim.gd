@@ -65,12 +65,12 @@ static func pick(from: Vector2, targets: Array, max_reach: float, sight: Sim) ->
 ## Damcının avtomatik hədəfi: ən yaxın GÖRÜNƏN rəqib, damcının çata biləcəyi məsafədə
 ## ([constant Const.LOB_MIN]–[constant Const.LOB_MAX], düşmə sahəsi qədər ehtiyatla).
 ## Görmə xətti yoxlanılmır — damcı maneənin üstündən keçir. Yoxdursa boş sözlük.
-static func pick_lob(from: Vector2, targets: Array) -> Dictionary:
+static func pick_lob(from: Vector2, targets: Array, muts := 0) -> Dictionary:
 	var best := {}
 	var best_d := INF
 	for t in targets:
 		var d := from.distance_to(Vector2(t["pos"]))
-		if d < Const.LOB_MIN - Const.LOB_AREA or d > Const.LOB_MAX + Const.LOB_AREA:
+		if d < Const.LOB_MIN - Const.LOB_AREA or d > Const.lob_max(muts) + Const.LOB_AREA:
 			continue
 		if d < best_d:
 			best_d = d

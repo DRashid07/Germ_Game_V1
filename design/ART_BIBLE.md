@@ -743,6 +743,15 @@ Ehtiyat FORMA ilə oxunur, rəqəmlə yox: hüceyrələr bir-bir kiçilib sönü
 boz-qəhvəyi nüvə qalır və ətrafında 12-dən saat əqrəbi ilə dolan ağımtıl **bərpa halqası**
 çıxır. Hamısı sadə disk və nazik halqadır — YÜKSƏK və MİNİMUM-da eyni oxunur.
 
+### Mutasiya ANATOMİYADIR, halqa deyil (2026-10-28)
+
+Eksperimental profilin mutasiyaları ([`MutationAnatomy`](../game/scripts/client/mutation_anatomy.gd),
+design/MODES.md §19) mikrobun bədənində görünür: **UZUN ÇIXINTI** — nişan tərəfə iti,
+gövdə rəngindən tünd çıxıntı (top oradan çıxır); **İMPULS QAMÇISI** — arxada qalın, yavaş
+yellənən qamçı; **YAPIŞQAN AYAQLAR** — membranın altından çıxan altı açıq-sarımtıl yastıq.
+Üçü də gövdənin ARXASINDA çəkilir, kökləri membranın altında qalır — əlavə halqa yoxdur,
+membran böyümür, yəni toqquşma ölçüsü haqqında yalan demir.
+
 ---
 
 ### 4b. Xəritənin dərinliyi

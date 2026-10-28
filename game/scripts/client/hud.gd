@@ -58,6 +58,8 @@ var move_stick: TouchStick
 var fire_button: FireButton
 var super_button: SuperButton
 var minimap: Minimap
+## Mutasiya seçiminin kartları (eksperimental profil, bax [MutationCards]).
+var mutations: MutationCards
 
 var _root: Control
 var _safe_root: Control
@@ -128,6 +130,9 @@ func build(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 	_build_result()
 	_build_system()
 	_build_controls(base_tex, knob_tex)
+	# Mutasiya kartları — yuxarı ortada, idarə düymələrinin üstündə, çıxış təsdiqinin altında.
+	mutations = MutationCards.new()
+	_safe_root.add_child(mutations)
 	# SONUNCU: çıxış təsdiqi atəş və super düymələrinin ÜSTÜNDƏ olmalıdır —
 	# ağacda sonra gələn həm üstdə çəkilir, həm toxunuşu birinci alır.
 	_build_leave_prompt()

@@ -741,6 +741,8 @@ func configure_online(info: Dictionary) -> void:
 	var cols = info.get("colonies", null)
 	if cols is PackedFloat32Array:
 		_colony_flat = cols
+	# Qaydalar profili SERVERİNDİR — client öz bayrağı ilə mutasiya qaydasını açmır.
+	_profile = int(info.get("profile", Const.Profile.STANDARD))
 
 
 ## Server başqa qaydalar versiyasındadır — arena açılan kimi menyuya qayıdır.
@@ -750,6 +752,17 @@ var _rules_mismatch := false
 ## koloniyasız rejimdə boşdur. Görüntüsü [ColonyView], vəziyyəti hər snapshot-dadır.
 var _colony_flat := PackedFloat32Array()
 var _colonies: ColonyView = null
+
+## Qaydalar profili (join info) — mutasiyaların kartları yalnız MUTATIONS-da açılır.
+var _profile := Const.Profile.STANDARD
+## Öz mikrobunun açılmış seçim sayı ([constant Const.Snap.EVO]); -1 — profil yoxdur.
+var _evo := -1
+## Göndərilmiş, hələ təsdiqlənməmiş seçim (-1 yoxdur) və göndərildiyi an. Seçim təsdiq
+## gələnə qədər HƏR girişdə gedir ([member Sim.PlayerInput.evolve]) — itən paket onu itirmir.
+var _evolve_send := -1
+var _evolve_at := 0.0
+## Bu qədər saniyədə bayraqda görünməyən seçim rədd sayılır.
+const EVOLVE_WAIT := 3.0
 
 
 ## Rejimin qabını və xəritəsini qurur — serverin [method Sim.set_mode]-u ilə eyni mənbədən.
@@ -796,6 +809,7 @@ func configure_practice() -> void:
 	my_color = g.color
 	# Məşq də eyni koloniyalarla oynanır — yerlər onlayndakı kimi join info-dan.
 	_colony_flat = _local_world.join_info_for(my_id).get("colonies", PackedFloat32Array())
+	_profile = int(_local_world.join_info_for(my_id).get("profile", Const.Profile.STANDARD))
 	if start_at.is_finite():
 		g.pos = start_at
 		g.vel = Vector2.ZERO
@@ -1382,6 +1396,7 @@ func _build_hud() -> void:
 	_hud.super_button.used.connect(_on_super_pressed)
 	_hud.super_button.blocked.connect(_on_super_blocked)
 	_hud.leave_confirmed.connect(_leave_match)
+	_hud.mutations.chosen.connect(_on_mutation_chosen)
 	# Xəritə rejimin öz qabını və düzümünü göstərir (obyekt rejimlərində kiçik qab).
 	_hud.minimap.wall = _wall
 	_hud.minimap.obstacles = _obstacles
@@ -1406,6 +1421,42 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		_ask_leave()
+	# Mutasiya kartları açıqdırsa 1/2/3 seçir.
+	elif event is InputEventKey and event.pressed and not event.echo and _hud != null \
+			and _hud.mutations.is_open():
+		var n := [KEY_1, KEY_2, KEY_3].find((event as InputEventKey).keycode)
+		if n >= 0:
+			get_viewport().set_input_as_handled()
+			_hud.mutations.key(n)
+
+
+# ================================================================ mutasiyalar
+
+## Açılıb hələ seçilməmiş seçim sayı (eksperimental profil, design/MODES.md §19).
+func mut_pending() -> int:
+	if _profile != Const.Profile.MUTATIONS or _evo < 0 or me == null:
+		return 0
+	return maxi(0, _evo - Const.mut_count(me.mutations))
+
+
+## Seçim göndərilir — təsdiq mikrobun bayrağında gələnə qədər hər girişdə təkrarlanır.
+## Server onu yalnız bir dəfə tətbiq edir; saxta və ya vaxtından əvvəl olanı rədd edir.
+func choose_mutation(m: int) -> void:
+	if mut_pending() <= 0 or _evolve_send >= 0 or Const.has_mut(me.mutations, m):
+		return
+	_evolve_send = m
+	_evolve_at = _clock
+
+
+func _on_mutation_chosen(m: int) -> void:
+	choose_mutation(m)
+
+
+func _update_mutations() -> void:
+	if _evolve_send >= 0 and _clock - _evolve_at > EVOLVE_WAIT:
+		_evolve_send = -1
+		_hud.mutations.reject()
+	_hud.mutations.set_state(mut_pending(), me.mutations if me != null else 0, _evolve_send)
 
 
 func _notification(what: int) -> void:
@@ -1599,6 +1650,8 @@ func _do_tick() -> void:
 
 	var inp := _sample_input()
 	inp.newbie = _newbie
+	if _evolve_send >= 0:
+		inp.evolve = _evolve_send
 	# Doğulmağı gözləyən mikrobun idarəsi yoxdur: proqnoz onu öldüyü yerdə saxlayır
 	# (serverdə mikrob yoxdur, giriş onsuz da atılır — bax [method World.accept_input]).
 	if _own_dead():
@@ -1664,7 +1717,7 @@ func _do_tick() -> void:
 			# Server topu məhz bu mərkəzdən doğur (bax [member Sim.PlayerInput.fire_from]).
 			inp.fire_from = Vector2(e["from"])
 			if int(e.get("profile", -1)) == Const.Shot.LOB:
-				_own_shots.spawn_lob(inp.fire_from, Vector2(e["land"]), _clock)
+				_own_shots.spawn_lob(inp.fire_from, Vector2(e["land"]), _clock, me.mutations)
 			else:
 				_spawn_own_shot(Vector2(e["pos"]), float(e["arg"]), 0.0, inp.view_tick,
 					inp.fire_from, int(e.get("profile", Const.Shot.MINIGUN)))
@@ -1693,6 +1746,7 @@ func _do_tick() -> void:
 	_hud.set_fire_state(me.cooldown / Const.FIRE_COOLDOWN,
 		me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst())
 	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready())
+	_update_mutations()
 	if _mode != Const.Mode.ENDLESS:
 		# Yaş sahənin mərkəzi YAŞ ADA-da gəzir — quruda olmaq ondan olan məsafədir.
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
@@ -1872,7 +1926,7 @@ var _auto_range := Const.LOB_AUTO
 ## uyğun hədəfin məsafəsi, hədəf yoxdursa sabit [constant Const.LOB_AUTO].
 func _shot_range() -> float:
 	if not is_nan(_shot_aim):
-		return lerpf(Const.LOB_MIN, Const.LOB_MAX, _shot_power if not is_nan(_shot_power) else 0.5)
+		return lerpf(Const.LOB_MIN, Const.lob_max(me.mutations), _shot_power if not is_nan(_shot_power) else 0.5)
 	return _auto_range
 
 
@@ -1888,15 +1942,15 @@ func _shot_angle(fallback: float) -> float:
 		return _shot_aim
 	var profile := _own_profile()
 	_auto_range = Const.LOB_AUTO
-	var t := AutoAim.pick_lob(me.pos, _aim_targets()) if profile == Const.Shot.LOB \
+	var t := AutoAim.pick_lob(me.pos, _aim_targets(), me.mutations) if profile == Const.Shot.LOB \
 		else AutoAim.pick(me.pos, _aim_targets(),
-			minf(AutoAim.reach(me.capacity), Const.shot_reach(profile) + 60.0), pred)
+			minf(AutoAim.reach(me.capacity), Const.shot_reach(profile, me.mutations) + 60.0), pred)
 	if t.is_empty():
 		_shot_key = -1
 		return fallback
 	_shot_key = int(t["key"])
 	if profile == Const.Shot.LOB:
-		_auto_range = clampf(me.pos.distance_to(Vector2(t["pos"])), Const.LOB_MIN, Const.LOB_MAX)
+		_auto_range = clampf(me.pos.distance_to(Vector2(t["pos"])), Const.LOB_MIN, Const.lob_max(me.mutations))
 	return (Vector2(t["pos"]) - me.pos).angle() + _shot_err
 
 
@@ -1965,12 +2019,12 @@ func _show_aim(fb: FireButton) -> void:
 	if profile == Const.Shot.LOB:
 		var from := _shown_pos()
 		var to := Sim.lob_landing(from, fb.aim_dir,
-			lerpf(Const.LOB_MIN, Const.LOB_MAX, fb.aim_power()))
+			lerpf(Const.LOB_MIN, Const.lob_max(me.mutations), fb.aim_power()), me.mutations)
 		_aim_guide.show_lob(from, to, col, live, pred.lob_valid(to))
 		return
 	var r := Const.germ_radius(me.capacity)
 	var shot_r := Const.SHOT_PROFILE_RADIUS[profile]
-	var length := Const.shot_reach(profile) - r
+	var length := Const.shot_reach(profile, me.mutations) - r
 	var dirs: Array[Vector2] = [fb.aim_dir]
 	if profile == Const.Shot.NEEDLE:
 		dirs = [fb.aim_dir.rotated(-Const.NEEDLE_SPREAD), fb.aim_dir.rotated(Const.NEEDLE_SPREAD)]
@@ -2222,6 +2276,7 @@ func _ingest(data: Array, newest: bool) -> void:
 		if _colonies != null and data.size() > Const.Snap.COLONY:
 			_colonies.apply(data[Const.Snap.COLONY])
 			_hud.minimap.colony_state = data[Const.Snap.COLONY]
+		_evo = int(data[Const.Snap.EVO]) if data.size() > Const.Snap.EVO else -1
 	_apply_walls(data[Const.Snap.WALLS])
 	_apply_match(data[Const.Snap.MATCH])
 	_queue_events(data[Const.Snap.EVENTS], at)
@@ -2332,6 +2387,11 @@ func _reconcile(entry: Array, me_self: Array) -> void:
 	# Ona görə bayrağın QALXMASI sayğacı özü qurur, düşməsi isə sıfırlayır.
 	var flags := int(entry[Const.GF.FLAGS])
 	me.charge = (flags & Const.GFlag.CHARGE_MASK) >> Const.GFlag.CHARGE_SHIFT
+	# Mutasiyalar serverin bayrağından. Təsirlər əmsaldır və hər tick vəziyyətdən oxunur:
+	# yenidən oynatma onları bir dəfə tətbiq edir — nə ikiqat düşür, nə itir.
+	me.mutations = (flags & Const.GFlag.MUT_MASK) >> Const.GFlag.MUT_SHIFT
+	if _evolve_send >= 0 and Const.has_mut(me.mutations, _evolve_send):
+		_evolve_send = -1
 	var super_on := (flags & Const.GFlag.SUPER) != 0
 	# Super əvvəlki snapshot-da da işləyirdi — sayğac aşağıda, yenidən oynatmadan
 	# ƏVVƏL geri çəkilir (bax həmin yer).
@@ -3510,6 +3570,7 @@ func _render_germs(render_time: float) -> void:
 	# Öz toqquşma ellipsin proqnozun sürətindən qurulur — rəqibin topu sənə
 	# məhz bu ellipslə "dəyir" (bax [method _remote_shot_pos]), gövdə də onun içində qalır.
 	mine.net_vel = me.vel
+	mine.muts = me.mutations
 	# Aura yalnız HƏQİQƏTƏN işlədilə bilən superdə yanır: doluluq tamdır, amma
 	# top çatmırsa (kirpikli), düymə kimi aura da susur.
 	mine.super_ready = me.super_ready()
@@ -3554,6 +3615,7 @@ func _render_germs(render_time: float) -> void:
 			# Bufer qurudu: son sürətlə qısa müddət irəli (bax [constant EXTRAP_MAX]).
 			pos = _clip_to_walls(pos, pos + v.net_vel * extra)
 		var flags := int(n[Const.GF.FLAGS])
+		v.muts = (flags & Const.GFlag.MUT_MASK) >> Const.GFlag.MUT_SHIFT
 		v.apply(pos, aim, int(n[Const.GF.BALLS]), int(n[Const.GF.CAP]),
 			(flags & Const.GFlag.SAFE) != 0, true,
 			(flags & Const.GFlag.SUPER) != 0)
@@ -3737,7 +3799,7 @@ func _render_shots(render_time: float) -> void:
 					_dress_shot(spr, color, Const.SHOT_PROFILE_RADIUS[profile])
 					view = {"node": spr, "mine": color == my_color, "color": color}
 				# Profil topun ömrü boyu dəyişmir: sürət, radius və yük ondandır.
-				view["speed"] = Const.SHOT_PROFILE_SPEED[profile]
+				view["speed"] = Const.shot_speed(profile, Const.meta_muts(float(e[Const.SF.META])))
 				view["radius"] = Const.SHOT_PROFILE_RADIUS[profile]
 				view["payload"] = Const.SHOT_PROFILE_PAYLOAD[profile]
 				_shot_views[sid] = view
@@ -4200,7 +4262,7 @@ func _sync_lob(sid: int, e: Array) -> void:
 	# gec bitməməlidir. Snapshot-ların ən erkən təxmini saxlanılır.
 	var t1 := _last_snap_t + float(e[Const.SF.LIFE]) - _rtt * 0.5
 	view["t1"] = minf(float(view.get("t1", INF)), t1)
-	view["t0"] = float(view["t1"]) - Const.LOB_FLIGHT
+	view["t0"] = float(view["t1"]) - Const.lob_flight(Const.meta_muts(float(e[Const.SF.META])))
 
 
 ## Öz damcılarının son düşmə nöqtələri: `{"pos", "t"}` (bax [method _own_lob_at]).
@@ -4237,7 +4299,7 @@ func _render_lobs() -> void:
 		if not g.alive or g.profile != Const.Shot.LOB:
 			continue
 		marks.append({"origin": g.origin, "target": g.target, "path": true,
-			"t0": g.born, "t1": g.born + Const.LOB_FLIGHT, "color": own_col})
+			"t0": g.born, "t1": g.born + g.flight, "color": own_col})
 	for sid in _lob_views:
 		var v: Dictionary = _lob_views[sid]
 		if v["own"]:
@@ -4307,7 +4369,7 @@ func _spawn_own_shot(membrane: Vector2, aim: float, age := 0.0, view := -1.0,
 	var dir := Vector2.from_angle(aim)
 	if not center.is_finite():
 		center = membrane - dir * Const.germ_radius(me.capacity)
-	for g in _own_shots.spawn_volley(center, dir, _clock - age, view, profile):
+	for g in _own_shots.spawn_volley(center, dir, _clock - age, view, profile, me.mutations):
 		if age > 0.0:
 			_own_shots.catch_up(g, age, _clock, pred.obstacles, _broken)
 
@@ -6206,7 +6268,8 @@ func _objective_left() -> Vector2:
 ## `T + k − rewind` halına qarşı yoxlayır; proqnoz isə `view0 + k`-ya qarşı. Snapshot
 ## tick-i S-də top `j` addım atıb: T = S − j + 1.
 func _trace_claim(ghost: ShotPrediction.Ghost, e: Array) -> void:
-	var life0 := Const.SHOT_PROFILE_LIFE[Const.meta_profile(float(e[Const.SF.META]))]
+	var life0 := Const.shot_life(Const.meta_profile(float(e[Const.SF.META])),
+		Const.meta_muts(float(e[Const.SF.META])))
 	var j := int(round((life0 - float(e[Const.SF.LIFE])) / Const.TICK_DELTA))
 	var s_tick := float(_last_snap[Const.Snap.TICK])
 	var v_s := s_tick - float(j) + 1.0 - float(e[Const.SF.REWIND]) / Const.TICK_DELTA

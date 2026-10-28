@@ -264,11 +264,107 @@ static func profile_from(value: int) -> int:
 
 
 ## Bir növün düz atəşinin çatdığı məsafə (sıçrayışsız) — nişan xətti və botlar üçün.
-static func shot_reach(profile: int) -> float:
+## [param muts] — atıcının mutasiyaları ([enum Mut]); UZUN ÇIXINTI məsafəni artırır.
+static func shot_reach(profile: int, muts := 0) -> float:
 	var p := profile_from(profile)
 	if p == Shot.LOB:
-		return LOB_MAX
-	return SHOT_PROFILE_SPEED[p] * SHOT_PROFILE_LIFE[p]
+		return lob_max(muts)
+	return shot_speed(p, muts) * shot_life(p, muts)
+
+
+# ---------- Mutasiyalar (eksperimental profil, design/MODES.md §19) ----------
+## Matç içində seçilən mutasiyalar — yalnız SONSUZ ARENA-nın [constant Profile.MUTATIONS]
+## profilində. Bit nömrəsidir: mikrobun mutasiyaları bir ədəddə saxlanılır
+## ([member Sim.GermState.mutations]). Rəqəmlər prototipdir.
+enum Mut { LONG = 0, WHIP = 1, STICKY = 2 }
+const MUT_COUNT := 3
+## Bir həyatda ən çox bu qədər mutasiya.
+const MUT_MAX := 2
+## Bu yaşlarda (s, serverin saydığı həyat yaşı) bir seçim açılır.
+const MUT_AGES := [45.0, 90.0]
+## UZUN ÇIXINTI: topun ən uzaq məsafəsi ×1.20, sürəti ×0.85 — ömür ikisindən hesablanır.
+const MUT_LONG_RANGE := 1.20
+const MUT_LONG_SPEED := 0.85
+## İMPULS QAMÇISI: atəşin geri təpməsi ×1.30, hərəkət buraxılanda əyləc ×0.80.
+const MUT_WHIP_RECOIL := 1.30
+const MUT_WHIP_BRAKE := 0.80
+## YAPIŞQAN AYAQLAR: su axını və cərəyan deşiyinin itələməsi ×0.75, öz sürəti ×0.95.
+## Döyüş itələməsi (trixosist), atəşin geri təpməsi və mikrobların ayrılması dəyişmir.
+const MUT_STICKY_FLOW := 0.75
+const MUT_STICKY_SPEED := 0.95
+
+## Qaydalar profili — server seçir, join info-da client-ə deyir (bax [method World.join_info_for]).
+## Standart profil buraxılışın indiki davranışıdır.
+enum Profile { STANDARD = 0, MUTATIONS = 1 }
+
+
+static func has_mut(muts: int, m: int) -> bool:
+	return (muts & (1 << m)) != 0
+
+
+## Neçə mutasiya seçilib.
+static func mut_count(muts: int) -> int:
+	var n := 0
+	for m in MUT_COUNT:
+		if has_mut(muts, m):
+			n += 1
+	return n
+
+
+## Bu yaşa qədər neçə seçim açılıb (0..2). Sayılır, hadisə deyil: iki hədd bir
+## snapshot-da keçilsə də ikisi də açılır.
+static func mut_earned(age: float) -> int:
+	var n := 0
+	for a in MUT_AGES:
+		if age >= float(a):
+			n += 1
+	return n
+
+
+## Mərminin sürəti — server ([method Sim._fire]), proqnoz və botlar EYNİ funksiyanı işlədir.
+static func shot_speed(profile: int, muts := 0) -> float:
+	var s: float = SHOT_PROFILE_SPEED[profile_from(profile)]
+	return s * MUT_LONG_SPEED if has_mut(muts, Mut.LONG) else s
+
+
+## Mərminin ömrü. UZUN ÇIXINTI-da məsafə ×1.20, sürət ×0.85, yəni ömür ×1.20/0.85 —
+## sürət azaldığı üçün məsafə təsadüfən qısalmır. Damcının ömrü uçuş müddətidir.
+static func shot_life(profile: int, muts := 0) -> float:
+	var p := profile_from(profile)
+	if p == Shot.LOB:
+		return lob_flight(muts)
+	var l: float = SHOT_PROFILE_LIFE[p]
+	return l * MUT_LONG_RANGE / MUT_LONG_SPEED if has_mut(muts, Mut.LONG) else l
+
+
+## Damcının uçuşu: üfüqi sürət ×0.85 → müddət uzanır; xəbərdarlıq da bundan hesablanır.
+static func lob_flight(muts := 0) -> float:
+	return LOB_FLIGHT / MUT_LONG_SPEED if has_mut(muts, Mut.LONG) else LOB_FLIGHT
+
+
+## Damcının ən uzaq düşmə məsafəsi.
+static func lob_max(muts := 0) -> float:
+	return LOB_MAX * MUT_LONG_RANGE if has_mut(muts, Mut.LONG) else LOB_MAX
+
+
+## Atəşin geri təpməsi (px/s).
+static func recoil(muts := 0) -> float:
+	return SHOT_RECOIL * MUT_WHIP_RECOIL if has_mut(muts, Mut.WHIP) else SHOT_RECOIL
+
+
+## Hərəkət buraxılanda sönmə əmsalının vuruğu — əmsala vurulur, sürətə yox.
+static func mut_brake(muts := 0) -> float:
+	return MUT_WHIP_BRAKE if has_mut(muts, Mut.WHIP) else 1.0
+
+
+## Su axını və cərəyan deşiyinin mikroba təsirinin vuruğu.
+static func mut_flow(muts := 0) -> float:
+	return MUT_STICKY_FLOW if has_mut(muts, Mut.STICKY) else 1.0
+
+
+## Mikrobun öz ən böyük sürətinin vuruğu.
+static func mut_speed(muts := 0) -> float:
+	return MUT_STICKY_SPEED if has_mut(muts, Mut.STICKY) else 1.0
 
 # ---------- Qida ----------
 const FOOD_RADIUS := 10.0
@@ -829,7 +925,10 @@ static func hit_payload(arg: float) -> int:
 ## 3: SONSUZ ARENA-nın qida koloniyaları — join info-da yerləri, snapshot-un sonunda
 ## vəziyyəti ([constant Snap.COLONY]). Köhnə client onları görməzdi və qida "boşluqdan"
 ## çıxardı, ona görə versiya artırılıb.
-const RULES := 3
+## 4: mutasiyalar ([enum Mut]) — mikrob bayrağında üç bit ([enum GFlag] `MUT`), top sətrinin
+## META-sında "uzun çıxıntı" biti ([method shot_meta]) və snapshot-un sonunda açılmış seçim sayı
+## ([constant Snap.EVO]). Köhnə client mutasiyalı mikrobun hərəkətini yanlış proqnozlaşdırardı.
+const RULES := 4
 
 
 ## Şəbəkəyə gedən rejim ədədi: aşağı bayt rejim, yuxarı bayt [constant RULES].
@@ -1053,7 +1152,9 @@ static func species_from(value: int) -> Species:
 ## MATCH də sonda əlavə olunub, eyni səbəbdən (bax yuxarı).
 ## COLONY — qida koloniyalarının vəziyyəti ([method Sim.colony_bytes]); koloniyasız
 ## rejimdə boşdur. Hər snapshot-da TAM gedir: paket itsə də növbəti onu bərpa edir.
-enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP, WALLS, MATCH, SELF, COLONY }
+## EVO — baxanın öz mikrobunun açılmış mutasiya seçimlərinin sayı (0..2); mutasiyasız
+## profildə -1. Şəxsidir: başqalarına getmir (aktiv mutasiyalar isə bayraqdadır).
+enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP, WALLS, MATCH, SELF, COLONY, EVO }
 
 ## [constant Snap.SELF] sahəsi — YALNIZ qəbul edən oyunçunun öz mikrobuna aid.
 ##
@@ -1156,6 +1257,9 @@ enum GFlag {
 	## İKİ bit BƏS ETMİR: CÜT-də beş komanda var (5 × 2 = 10 mikrob), iki bit
 	## isə cəmi dördünü daşıyır. design/MODES.md §4 iki bit deyirdi — səhvdir.
 	TEAM_SHIFT = 8, TEAM_MASK = 1792,
+	## Aktiv mutasiyalar ([enum Mut]) — bit 11-13. Sahə float32-dir və 24 bitə qədər tam
+	## ədədi dəqiq saxlayır; bit 0-10 doludur (yoxlanılıb), 11-23 boşdur — üçü bura girir.
+	MUT_SHIFT = 11, MUT_MASK = 14336,
 }
 ## `REWIND` — server bu topu qurbanlarının neçə saniyə ƏVVƏLKİ yerinə qarşı
 ## yoxlayır (bax [member Sim.lag_comp]); botun topunda 0. `META` — profil, bir
@@ -1178,8 +1282,26 @@ const SHOT_STRIDE := 8
 
 
 ## `META`: `profil + 4 × yük + 64 × (qrup mod 65536)`.
-static func shot_meta(profile: int, payload: int, volley: int) -> float:
-	return float(profile_from(profile) + 4 * clampi(payload, 0, 15) + 64 * posmod(volley, 65536))
+## Bit 0-1 profil, 2-5 yük, 6-21 qrup, 22 — atıcının UZUN ÇIXINTI mutasiyası ([param long]):
+## client uzaqdakı topun sürətini və damcının uçuş müddətini bundan bilir. 23 bit float32-yə
+## dəqiq sığır.
+static func shot_meta(profile: int, payload: int, volley: int, long := false) -> float:
+	return float(profile_from(profile) + 4 * clampi(payload, 0, 15) + 64 * posmod(volley, 65536)
+		+ (META_LONG if long else 0))
+
+
+const META_LONG := 4194304
+
+
+## Top sətrinin atıcısı UZUN ÇIXINTI-lıdırmı — onda sürət və damcının uçuşu [method shot_speed]
+## və [method lob_flight] ilə hesablanır.
+static func meta_long(meta: float) -> bool:
+	return (int(meta) & META_LONG) != 0
+
+
+## META-dan atıcının mərmiyə təsir edən mutasiyaları.
+static func meta_muts(meta: float) -> int:
+	return (1 << Mut.LONG) if meta_long(meta) else 0
 
 
 static func meta_profile(meta: float) -> int:
@@ -1191,7 +1313,7 @@ static func meta_payload(meta: float) -> int:
 
 
 static func meta_volley(meta: float) -> int:
-	return int(meta) >> 6
+	return (int(meta) >> 6) & 65535
 
 
 ## Sıx top axınını sətirlərə açır — [method unpack_germs] ilə eyni səbəbdən.

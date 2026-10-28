@@ -679,6 +679,40 @@ orada olur), kənarda zəif mənbə, yoxsa səpələnmiş qida
   görə seçir ([`Bot._pick_colony`](game/scripts/shared/bot.gd)); tükənmiş koloniyada
   gözləmir, dolu bot ora göndərilmir.
 
+**Mutasiyalar (eksperimental profil, yalnız SONSUZ ARENA).** Mikrob bir həyatda **45** və
+**90** saniyə sağ qalanda bir mutasiya seçir, ən çoxu iki. Standart buraxılışda yoxdur —
+profili server açır və client-ə join info-da deyir (design/MODES.md §19):
+
+```bash
+# Server — mutasiya profili
+godot --headless --path game -- --server --ws --profile mutations
+# Məşq — yerli dünya serverin özüdür
+godot --path game -- --practice --mutations
+```
+
+| Mutasiya | Üstünlük | Qiyməti |
+|---|---|---|
+| **UZUN ÇIXINTI** | topun ən uzaq məsafəsi ×1.20 (damcınınki də) | top ×0.85 yavaş, damcı 1.0 s uçur |
+| **İMPULS QAMÇISI** | atəşin geri təpməsi ×1.30 | buraxılan hərəkətin əyləci ×0.80 — dayanmaq çətin |
+| **YAPIŞQAN AYAQLAR** | su axını və cərəyan deşiyi ×0.75 aparır | öz sürəti ×0.95 |
+
+- Təsirlər **paylaşılan əmsallardır** ([`Const.shot_speed`](game/scripts/shared/constants.gd),
+  `recoil`, `mut_brake`, `mut_flow`, `mut_speed`): server, proqnoz və botlar eyni funksiyanı
+  işlədir, hər tick vəziyyətdən oxunur — sürətə yığılmır, düzəlişdə ikiqat düşmür.
+  Atılmış top atəş anının qaydası ilə uçur. Yük (+2, iynə hərəsi +1) və qiymət (−1) dəyişmir.
+- **Seçim:** kartlar sol yuxarıda yığcam sütundur, oyun dayanmır; 1/2/3, bağlamaq və
+  göstəricidən yenidən açmaq olar, avtomatik seçim yoxdur. Seçim girişin bayraq bitlərində
+  təsdiq gələnə qədər təkrarlanır, server onu bir dəfə tətbiq edir; saxta, vaxtından əvvəl,
+  təkrar və rejimə uyğun olmayan seçim rədd olunur ([`World.choose_mutation`](game/scripts/server/world.gd)).
+- **Şəbəkə:** aktiv mutasiyalar mikrob bayrağının 11–13-cü bitlərindədir, açılmış seçim
+  sayı snapshot-un sonundadır (`Snap.EVO`), uzun çıxıntılı atıcının topu META-da işarələnir.
+  Qaydalar versiyası 4-dür. Ölüm hər şeyi sıfırlayır, yenidən qoşulan sağ mikrob saxlayır.
+- **Anatomiya** ([`MutationAnatomy`](game/scripts/client/mutation_anatomy.gd)): nişan
+  tərəfə iti çıxıntı, arxada yellənən qamçı, membranın altından yapışqan yastıqlar —
+  GPU və GDScript yollarında eyni, bütün keyfiyyətlərdə; halqa yoxdur, membran böyümür.
+- **Botlar** eyni hədlərdə, eyni yoxlamadan keçən seçim edir (növünə görə plan) və öz
+  məsafəsini mutasiya ilə hesablayır.
+
 **Quru zonada qida yoxdur.** Qab daralanda kənarda qalan qida quruyur və
 doğuş hədəfi də qabın ölçüsü ilə kiçilir. Bu, qaydanı bir cümləyə yığır:
 *quru zonada TOP var, QİDA yoxdur.* Onsuz matçın sonu ilişirdi — aşağıya bax.
@@ -1048,6 +1082,7 @@ game/                    Godot layihəsi
       sim_test.gd        headless testlər (`--simtest`)
       attack_test.gd     növlərin adi atəşi — `--simtest`-in içindən
       colony_test.gd     qida koloniyaları — `--simtest`-in içindən
+      mutation_test.gd   mutasiyalar — `--simtest`-in içindən
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -1136,7 +1171,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları (972 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar (999 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

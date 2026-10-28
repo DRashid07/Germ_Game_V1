@@ -94,6 +94,26 @@ var _bot_name_no := 0
 ## Bu dünyanın rejimi. Dünya boyu dəyişmir — bir dünyada hamı eyni qaydada
 ## oynayır (bax `design/MODES.md`).
 var mode := Const.Mode.ENDLESS
+## Qaydalar profili ([enum Const.Profile]). Mutasiyalar yalnız SONSUZ ARENA-da və yalnız
+## proses eksperimental profillə işə salınanda işləyir ([method default_rules]). Client
+## profili join info-dan bilir — öz bayrağı ilə qaydanı dəyişmir.
+var profile := Const.Profile.STANDARD
+## Yeni dünyaların profili; -1 — hələ komanda sətrindən oxunmayıb. Testlər birbaşa yazır.
+static var default_profile := -1
+
+
+## Prosesin qaydalar profili, komanda sətrindən bir dəfə oxunur:
+##   server: `-- --server --ws --profile mutations`
+##   məşq:   `-- --practice --mutations` (yerli dünya serverin özüdür)
+## Bayraq yoxdursa — standart profil, yəni buraxılışın indiki davranışı.
+static func default_rules() -> int:
+	if default_profile < 0:
+		var args := OS.get_cmdline_user_args()
+		var i := args.find("--profile")
+		var named := args[i + 1] if i >= 0 and i + 1 < args.size() else ""
+		default_profile = Const.Profile.MUTATIONS if args.has("--mutations") or named == "mutations" \
+			else Const.Profile.STANDARD
+	return default_profile
 ## Matçın fazası. SONSUZ ARENA həmişə PLAYING-dədir və oradan çıxmır.
 var phase := Const.Phase.PLAYING
 ## Hazırkı fazanın öz saatı (saniyə). Faza dəyişəndə sıfırlanır.
@@ -176,6 +196,7 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	# (bax [method DishMap.colony_spots]). Toxum hər dünyada başqadır — yerlər də.
 	if mode == Const.Mode.ENDLESS:
 		sim.setup_colonies(randi())
+		profile = default_rules()
 	# Qabın kənarı elə İNDİ qurulur, ilk tick-i gözləmədən.
 	#
 	# Oyunçu [method add_player] ilə tick-dən ƏVVƏL doğulur və
@@ -291,7 +312,39 @@ func join_info_for(peer: int) -> Dictionary:
 		# hər snapshot-dadır ([constant Const.Snap.COLONY]). Gec qoşulan da, qayıdan da
 		# eyni yerləri alır.
 		"colonies": sim.colony_flat(),
+		# Qaydalar profili — mutasiyaların kartları və proqnozu yalnız bununla açılır.
+		"profile": int(profile),
 	}
+
+
+## Oyunçunun mutasiya seçimi (design/MODES.md §19). Server yeganə hakimdir: profil və rejim,
+## canlı mikrob, etibarlı və hələ seçilməmiş mutasiya, açılmış seçim (serverin saydığı həyat
+## yaşı ilə), ən çox [constant Const.MUT_MAX]. Rədd səbəbi qaytarılır, "" — qəbul.
+## Saxta, vaxtından əvvəl, təkrar və rejimə uyğun olmayan seçim heç nə dəyişmir.
+func choose_mutation(peer: int, m: int) -> String:
+	if profile != Const.Profile.MUTATIONS or mode != Const.Mode.ENDLESS:
+		return "profile"
+	var g: Sim.GermState = sim.germs.get(peer)
+	if g == null or not g.alive:
+		return "dead"
+	if m < 0 or m >= Const.MUT_COUNT:
+		return "unknown"
+	if Const.has_mut(g.mutations, m):
+		return "taken"
+	var have := Const.mut_count(g.mutations)
+	if have >= Const.MUT_MAX:
+		return "full"
+	if have >= Const.mut_earned(g.age):
+		return "early"
+	g.mutations |= 1 << m
+	return ""
+
+
+## Baxanın açılmış seçim sayı ([constant Const.Snap.EVO]); mutasiyasız profildə -1.
+func _evo_of(g: Sim.GermState) -> int:
+	if profile != Const.Profile.MUTATIONS:
+		return -1
+	return Const.mut_earned(g.age) if g != null else 0
 
 
 static func _new_token() -> String:
@@ -981,6 +1034,10 @@ func accept_input(peer: int, packed: Array) -> void:
 		if not me.newbie:
 			me.newbie = true
 			me.safe_t = maxf(me.safe_t, Const.NEWBIE_SAFE_TIME)
+	# Mutasiya seçimi dərhal yoxlanılır və tətbiq olunur — növbəyə düşmür. Client onu təsdiq
+	# gələnə qədər hər girişdə təkrarlayır; ikinci gəlişi "taken" deyə rədd olunur.
+	if inp.evolve >= 0:
+		choose_mutation(peer, inp.evolve)
 	# BİR DƏFƏLİK bayraqlar köhnə paketdən yenisinə KEÇİR, onunla birlikdə
 	# atılmır.
 	#
@@ -1053,6 +1110,11 @@ func tick(dt: float) -> Array:
 		var bot: Bot = _bots[bid]
 		_inputs[bid] = Sim.PlayerInput.make(0, Vector2.ZERO, sim.germs[bid].aim, false) \
 			if frozen and sim.germs.has(bid) else bot.think(sim, dt)
+		# Botlar da eyni hədlərdə, eyni yoxlamadan keçən seçim edir — gizli üstünlük yoxdur.
+		if profile == Const.Profile.MUTATIONS:
+			var bg: Sim.GermState = sim.germs.get(bid)
+			if bg != null and Const.mut_count(bg.mutations) < Const.mut_earned(bg.age):
+				choose_mutation(bid, Bot.pick_mutation(bg))
 
 	# Gec gələn girişlər təxmin olunan tick-lər üçün yenidən oynadılır (bax [constant REPLAY_MAX]).
 	_replay_late()
@@ -1226,7 +1288,7 @@ func _build_frame() -> void:
 
 	_frame_shots.clear()
 	for s in sim.shots:
-		var meta := Const.shot_meta(s.profile, s.payload, s.volley)
+		var meta := Const.shot_meta(s.profile, s.payload, s.volley, s.long)
 		if s.is_lob():
 			# Damcının sətri baxana görə qurulur (bax [method _lob_row]): burada xam
 			# məlumat — düşmə nöqtəsi, başlanğıc, qalan vaxt, sahib, atıcının kolu, indiki yer.
@@ -1297,6 +1359,8 @@ static func _flags_of(g: Sim.GermState) -> int:
 	# (bax [enum Const.GFlag]).
 	if g.team >= 0:
 		f |= ((g.team + 1) << Const.GFlag.TEAM_SHIFT) & Const.GFlag.TEAM_MASK
+	# Aktiv mutasiyalar — anatomiya hamıya görünür, proqnoz öz mikrobununkunu buradan alır.
+	f |= (g.mutations << Const.GFlag.MUT_SHIFT) & Const.GFlag.MUT_MASK
 	return f
 
 
@@ -1354,6 +1418,7 @@ func snapshot_for(peer: int) -> Array:
 		_match_row(peer),
 		_self_row(peer, g),
 		_frame_colony,
+		_evo_of(g),
 	]
 
 

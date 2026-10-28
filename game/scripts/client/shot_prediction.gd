@@ -148,8 +148,10 @@ var ball := Vector3(0.0, 0.0, -1.0)
 ##
 ## [param profile] — atəşin profili ([enum Const.Shot]); susmaya görə miniqanın topu,
 ## yəni köhnə düz top.
+## [param muts] — atıcının mutasiyaları: sürət və ömür serverlə EYNİ funksiyadan
+## ([method Const.shot_speed], [method Const.shot_life]).
 func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
-		profile := int(Const.Shot.MINIGUN)) -> Ghost:
+		profile := int(Const.Shot.MINIGUN), muts := 0) -> Ghost:
 	var g := Ghost.new()
 	g.id = _next_id
 	_next_id += 1
@@ -162,10 +164,10 @@ func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
 	g.view0 = view0
 	var p := Const.profile_from(profile)
 	g.profile = p
-	g.speed = Const.SHOT_PROFILE_SPEED[p]
+	g.speed = Const.shot_speed(p, muts)
 	g.radius = Const.SHOT_PROFILE_RADIUS[p]
 	g.payload = Const.SHOT_PROFILE_PAYLOAD[p]
-	g.life = Const.SHOT_PROFILE_LIFE[p]
+	g.life = Const.shot_life(p, muts)
 	g.volley = _next_volley
 	_next_volley += 1
 	if trace_on:
@@ -177,15 +179,15 @@ func spawn(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
 ## Bir atəş HƏRƏKƏTİ — [method Sim._fire] kimi: iynə profili iki top (±7°), qalanı bir.
 ## Hərəkətin topları bir qrupdadır ([member Ghost.volley]).
 func spawn_volley(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
-		profile := int(Const.Shot.MINIGUN)) -> Array[Ghost]:
+		profile := int(Const.Shot.MINIGUN), muts := 0) -> Array[Ghost]:
 	var out: Array[Ghost] = []
 	var p := Const.profile_from(profile)
 	if p != Const.Shot.NEEDLE:
-		out.append(spawn(center, dir, now, view0, p))
+		out.append(spawn(center, dir, now, view0, p, muts))
 		return out
 	for k in Const.NEEDLE_COUNT:
 		var g := spawn(center, dir.rotated(Const.NEEDLE_SPREAD * (-1.0 if k == 0 else 1.0)),
-			now, view0, p)
+			now, view0, p, muts)
 		if not out.is_empty():
 			g.volley = out[0].volley
 		out.append(g)
@@ -194,11 +196,11 @@ func spawn_volley(center: Vector2, dir: Vector2, now: float, view0 := -1.0,
 
 ## Amöbün DAMCISI — [param center]-dən [param target]-ə [constant Const.LOB_FLIGHT]-da.
 ## Uçuşda heç nəyə toxunmur ([method Sim._step_shots]), düşəndə [constant Contact.LAND].
-func spawn_lob(center: Vector2, target: Vector2, now: float) -> Ghost:
-	var g := spawn(center, (target - center).normalized(), now, -1.0, Const.Shot.LOB)
+func spawn_lob(center: Vector2, target: Vector2, now: float, muts := 0) -> Ghost:
+	var g := spawn(center, (target - center).normalized(), now, -1.0, Const.Shot.LOB, muts)
 	g.origin = center
 	g.target = target
-	g.flight = Const.LOB_FLIGHT
+	g.flight = Const.lob_flight(muts)
 	return g
 
 

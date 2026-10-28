@@ -846,3 +846,97 @@ gözləmədən sonra partlayış yoxdur, böyük addım, 32 minimum, səpinti mi
 ümumi hədəf, qidanın yeri (576 qida), torla çəkilmə, join/snapshot, gec qoşulma və paket
 itkisi (client görüntüsü), bot seçimi, tükənmiş koloniyadan ayrılma, gizli rəqib, təhlükədən
 qaçma, dolu bot.
+
+## 19. Matç içi mutasiyalar — eksperimental profil (2026-10-28)
+
+Məqsəd: böyümə döyüş tərzini dəyişsin, hər həyatda başqa quruluş yaransın. İlk versiya
+YALNIZ SONSUZ ARENA-da və yalnız eksperimental qaydalar profilindədir; standart profil
+buraxılışın indiki davranışıdır. Qalan altı rejim profili heç vaxt almır (test edilib).
+
+### 19.1 Profil və işə salma
+
+- `Const.Profile` { STANDARD, MUTATIONS }. Prosesin profili komanda sətrindən bir dəfə
+  oxunur (`World.default_rules`): server `-- --server --ws --profile mutations`, məşq
+  `-- --practice --mutations`. Bayraq yoxdursa — standart.
+- Dünya profili join info-da (`profile`) deyir; client kartları və proqnozu YALNIZ bununla
+  açır — öz bayrağı ilə simulyasiya qaydasını dəyişmir.
+- Render-də açmaq üçün başlanğıc əmrinə `--profile mutations` əlavə etmək kifayətdir
+  (yerləşdirilməyib).
+
+### 19.2 Açılma və seçim
+
+- Serverin saydığı həyat yaşı 45 və 90 s-ə çatanda bir seçim açılır (`Const.mut_earned` —
+  sayılır, hadisə deyil: iki hədd bir snapshot-da keçilsə də iki seçim qalır). Ən çox iki
+  mutasiya, eyni mutasiya iki dəfə yoxdur; hər mərhələdə hələ seçilməmişlər təklif olunur.
+- Ölüm (yeni `GermState`) mutasiyaları, seçimləri və yaşı sıfırlayır; yenidən qoşulan sağ
+  mikrob (`resume_peer`) hamısını saxlayır.
+- Seçim yeni RPC deyil: Godot RPC-ləri ADA görə sıralanmış indekslə çağırır və yeni metod
+  köhnə client-in `request_join`-unu başqa metoda yönəldərdi — "oyunu yenilə" cavabı da
+  gəlməzdi. Ona görə seçim girişin bayraq ədədinin 5–6-cı bitlərindədir (`m + 1`), massivin
+  düzümü dəyişmir. Client onu təsdiq (mikrobun bayrağında bit) gələnə qədər hər girişdə
+  təkrarlayır; 3 s-də gəlməsə kartlar yenidən açılır. Server (`World.choose_mutation`) seçimi
+  dərhal yoxlayır və bir dəfə tətbiq edir; rədd səbəbləri: `profile`, `dead`, `unknown`,
+  `taken`, `full`, `early`.
+
+### 19.3 Təsirlər (paylaşılan funksiyalar, `constants.gd` «Mutasiyalar»)
+
+| Mutasiya | Nəyə toxunur |
+|---|---|
+| UZUN ÇIXINTI | `shot_speed` ×0.85, `shot_life` ×1.20/0.85 → məsafə ×1.20 (hər profildə: ox, iynə, miniqan); damcı: `lob_max` 460 → 552 px, `lob_flight` 0.85 → 1.0 s — düşmə yeri, uçuş, xəbərdarlıq, botun qabaqlaması eyni hesabdan |
+| İMPULS QAMÇISI | `recoil` ×1.30; buraxılan hərəkətin sönmə əmsalı ×0.80 (`mut_brake`) — əmsala vurulur, sürətə yox |
+| YAPIŞQAN AYAQLAR | su axını (`current_at`) və cərəyan deşiyinin itələməsi (`_vent_push`) ×0.75; öz ən böyük sürəti ×0.95. Trixosistin itələməsi, atəşin geri təpməsi, mikrobların ayrılması DƏYİŞMİR |
+
+- Yük (+2, iynə hərəsi +1) və qiymət (−1 top) dəyişmir. Atılmış top atəş anının qaydası ilə
+  uçur (`ShotState.long`) — mutasiya sonradan seçilsə də.
+- Proqnoz mutasiyanı öz mikrobunun bayrağından alır; təsirlər hər tick vəziyyətdən oxunur,
+  yenidən oynatma onları bir dəfə tətbiq edir. Test: server və proqnoz eyni girişlərlə (QAMÇI +
+  AYAQLAR, atəş, sürüşmə) 90 tick-də 0.0000 px fərqlə gedir.
+
+### 19.4 Şəbəkə və uyğunluq (qaydalar versiyası 3 → 4)
+
+- Mikrob bayrağı: bit 11–13 aktiv mutasiyalar (`GFlag.MUT_*`). Sahə float32-dir — 24 bitə
+  qədər tam ədəd dəqiqdir, bit 0–10 dolu idi (yoxlanılıb, fərz edilməyib).
+- Top META-sı: bit 22 — atıcı UZUN ÇIXINTI-lı idi; client uzaqdakı topun sürətini və damcının
+  uçuşunu bundan hesablayır. Bit 0–21 (profil, yük, qrup) toxunulmazdır (test).
+- Snapshot-un sonunda `Snap.EVO` — baxanın açılmış seçim sayı (standart profildə -1). Şəxsidir:
+  rəqib başqasının gözləyən seçimini görmür, aktiv mutasiyalar isə anatomiyada hamıya görünür.
+- Ən pis snapshot (10 mikrobun hamısı iki mutasiyalı, uçan toplar, qida): 1260 bayt < 1392.
+
+### 19.5 Görüntü
+
+- Kartlar (`MutationCards`) sol yuxarıda, top sayının altında yığcam sütun: hər kart adı,
+  "+" üstünlüyü və "−" qiyməti bir yerdə yazır; 1/2/3, bağlamaq və "MUTASİYA · N" göstəricisindən
+  açmaq olar, avtomatik seçim yoxdur, oyun dayanmır. Seçilən kart "SERVER GÖZLƏNİLİR…" yazır.
+  Əvvəl yuxarı ortada idi və "GİZLƏNDİN" kimi mərkəzi mesajların üstünə düşürdü (ekran
+  görüntüsündə görüldü) — köçürüldü.
+- Anatomiya (`MutationAnatomy`) — GermVisual-ın ilk uşağı, node-un arxasında: GDScript
+  gövdəsi də, GPU gövdə qatı da kökləri örtür, yəni iki yol eyni şeyi göstərir (ikisinin də
+  ekran görüntüsü çəkilib). Çıxıntı nişan tərəfə, qamçı arxada yellənir (transformasiya),
+  yastıqlar membranın altından çıxır. Halqa yoxdur, membran böyümür. Yalnız mutasiya və ya
+  ölçü dəyişəndə yenidən çəkilir.
+
+### 19.6 Botlar
+
+Botlar eyni hədlərdə və eyni yoxlamadan (`choose_mutation`) keçən seçim edir:
+kirpikli — çıxıntı, qamçı; ayaqlı — ayaqlar, qamçı; amöb — çıxıntı, ayaqlar. Durduğu
+məsafə, atəşin çatması, qabaqlama və damcının məsafəsi öz mutasiyası ilə hesablanır.
+Gizli üstünlük yoxdur.
+
+### 19.7 Sınaq (2026-10-28)
+
+- `mutation_test.gd` — 27 yoxlama: rəqəmlər, iqtisadiyyat, 45/90 s, iki hədd birdən, rədd
+  səbəbləri, təkrar paket, birləşmə, ölüm, clone/giriş/bayraq/META gedib-gəlməsi, yenidən
+  qoşulma, proqnoz = server, havadakı top, standart profil və altı rejim, botlar, kartlar,
+  ən pis paket. `--simtest` 999/0.
+- **Yerli botlu oyun** (məşq, profil açıq, 110 s, avtomatik oyunçu kartları UI ilə seçir):
+  45 s-də 1, 90 s-də 2 mutasiya, proqnoz serverlə eyni bitləri görür, hədd aşan mikrob 0.
+  Bu matçda heç bir bot 45 s yaşamadı.
+- **Server + iki client** (`--profile mutations`): A birbaşa — iki seçim təsdiqləndi, sonda
+  iki mutasiya və 2 açılmış seçim; proksili client-lər (70±30 ms) 45 s-ə çatmadan partladı.
+  Hər iki client serverdə mutasiyalı botları gördü (UZUN ÇIXINTI).
+- **Gecikmə ilə seçim** (scratch nüsxədə hədlər 8/16 s-ə endirilib, kod dəyişməyib):
+  proksili client iki seçimi ~0.5 s-də təsdiq aldı, uzun çıxıntılı 46 topun proqnozu
+  serverlə 0.0 px.
+- **Yoxlanmayıb:** APK və brauzer (anatomiya 45 s-dən sonra çıxır, avtomatik ssenari yoxdur);
+  insanlarla balans. Botlu matçda mutasiyaya çatmaq çətindir (çoxu 45 s yaşamır) — hədlər
+  prototipdir.

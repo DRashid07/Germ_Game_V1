@@ -147,7 +147,8 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 		var side := Vector2(-forward.y, forward.x) * _strafe
 
 		# Dolu botun məsafəsi daha uzaqdır — rəqibin bir topu onu partlada bilər.
-		var want := SPECIES_RANGE[int(me.species)] * (1.6 if bloated else 1.0)
+		var want := SPECIES_RANGE[int(me.species)] * (1.6 if bloated else 1.0) \
+			* (Const.MUT_LONG_RANGE if Const.has_mut(me.mutations, Const.Mut.LONG) else 1.0)
 		var radial := signf(dist - want)
 		move = (forward * radial * 0.9 + side * 0.7).limit_length(1.0)
 
@@ -193,6 +194,25 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 
 ## Damcının bu atəşdəki məsafəsi; NAN = sabit məsafə.
 var _lob_range := NAN
+
+
+## Botun mutasiya seçimi (eksperimental profil, design/MODES.md §19): növünün oyun tərzinə
+## uyğun ilk seçilməmiş mutasiya. Seçim [method World.choose_mutation]-dan — insanınkı ilə
+## eyni yoxlamadan — keçir, yəni bot vaxtından əvvəl və ya ikidən çox seçə bilmir.
+## Kirpikli uzaqdan vurur (çıxıntı, sonra qamçı); ayaqlı yavaşdır və axın onu aparır
+## (yapışqan ayaqlar); amöbün damcısı məsafə sevir (çıxıntı, sonra ayaqlar).
+const MUT_PLAN := [
+	[Const.Mut.LONG, Const.Mut.WHIP, Const.Mut.STICKY],
+	[Const.Mut.STICKY, Const.Mut.WHIP, Const.Mut.LONG],
+	[Const.Mut.LONG, Const.Mut.STICKY, Const.Mut.WHIP],
+]
+
+
+static func pick_mutation(g: Sim.GermState) -> int:
+	for m in MUT_PLAN[int(g.species)]:
+		if not Const.has_mut(g.mutations, m):
+			return m
+	return -1
 
 
 # ---------------------------------------------------------------- qida koloniyaları
@@ -290,9 +310,9 @@ static func _colony_threats(sim: Sim, me: Sim.GermState, at: Vector2, seen_r: fl
 func _can_hit(sim: Sim, me: Sim.GermState, target: Sim.GermState, dist: float) -> bool:
 	var profile := Const.shot_profile(int(me.species), me.in_cyst())
 	if profile != Const.Shot.LOB:
-		return dist < Const.shot_reach(profile) * 0.9 \
+		return dist < Const.shot_reach(profile, me.mutations) * 0.9 \
 			and sim.has_line_of_sight(me.pos, target.pos)
-	if dist > Const.LOB_MAX + Const.LOB_AREA or dist < Const.LOB_MIN - Const.LOB_AREA:
+	if dist > Const.lob_max(me.mutations) + Const.LOB_AREA or dist < Const.LOB_MIN - Const.LOB_AREA:
 		return false
 	var hide := sim.bush_of(target)
 	if hide >= 0 and hide != sim.bush_of(me):
@@ -384,11 +404,13 @@ static func _wants_super(sim: Sim, me: Sim.GermState, target: Sim.GermState,
 ## İki dəfə hesablanır: birinci təxmin məsafəni, ikinci artıq qabaqlanmış
 ## nöqtəyə görə uçuş vaxtını dəqiqləşdirir.
 ##
-## [param speed] — mərminin sürəti; sıfırdırsa (damcı) uçuş məsafədən asılı deyil.
-static func _lead_point(from: Vector2, target: Sim.GermState, speed := Const.SHOT_SPEED) -> Vector2:
+## [param speed] — mərminin sürəti; sıfırdırsa (damcı) uçuş məsafədən asılı deyil və
+## [param lob_t] saniyədir (atıcının mutasiyası ilə, [method Const.lob_flight]).
+static func _lead_point(from: Vector2, target: Sim.GermState, speed := Const.SHOT_SPEED,
+		lob_t := Const.LOB_FLIGHT) -> Vector2:
 	var point := target.pos
 	for _i in 2:
-		var flight := Const.LOB_FLIGHT + Const.TICK_DELTA if speed <= 0.0 \
+		var flight := lob_t + Const.TICK_DELTA if speed <= 0.0 \
 			else from.distance_to(point) / speed
 		point = target.pos + target.vel * flight
 	return point
@@ -405,8 +427,11 @@ static func _lead_point(from: Vector2, target: Sim.GermState, speed := Const.SHO
 ## damcısında məsafə də nişandır — [member _lob_range] nişan nöqtəsinə qədər yazılır.
 func _aim_at(me: Sim.GermState, target: Sim.GermState) -> float:
 	var profile := Const.shot_profile(int(me.species), me.in_cyst())
-	var speed := Const.SHOT_PROFILE_SPEED[profile]
-	var point := target.pos if target.newbie else _lead_point(me.pos, target, speed)
+	var speed := Const.shot_speed(profile, me.mutations)
+	if profile == Const.Shot.LOB:
+		speed = 0.0
+	var point := target.pos if target.newbie \
+		else _lead_point(me.pos, target, speed, Const.lob_flight(me.mutations))
 	var skill := minf(difficulty, Const.NEWBIE_BOT_SKILL) if target.newbie else difficulty
 	if profile == Const.Shot.LOB:
 		_lob_range = me.pos.distance_to(point)
@@ -578,7 +603,7 @@ func _mother_aim_point(sim: Sim, me: Sim.GermState, foe_c: Vector2, foe_r: float
 		Const.Shot.LOB:
 			return _lob_mother_point(sim, me, foe_c, foe_r)
 		Const.Shot.NEEDLE:
-			if me.pos.distance_to(surface) < Const.shot_reach(Const.Shot.NEEDLE) * 0.85 \
+			if me.pos.distance_to(surface) < Const.shot_reach(Const.Shot.NEEDLE, me.mutations) * 0.85 \
 					and sim.has_line_of_sight(me.pos, surface):
 				return foe_c
 		_:
@@ -596,7 +621,7 @@ func _lob_mother_point(sim: Sim, me: Sim.GermState, foe_c: Vector2, foe_r: float
 	for k in range(-4, 5):
 		var p := foe_c + Vector2.from_angle(base + float(k) * 0.2) * (foe_r + 14.0)
 		var d := me.pos.distance_to(p)
-		if d < Const.LOB_MIN or d > Const.LOB_MAX or not sim.lob_valid(p):
+		if d < Const.LOB_MIN or d > Const.lob_max(me.mutations) or not sim.lob_valid(p):
 			continue
 		# Damcı yoldaşa dəymir — yalnız rəqiblərdən uzaqlıq sayılır.
 		var clear := 120.0
@@ -873,7 +898,7 @@ func _ball_in_reach(sim: Sim, me: Sim.GermState, b: Sim.BallState) -> bool:
 	var d := me.pos.distance_to(b.pos)
 	match Const.shot_profile(int(me.species), me.in_cyst()):
 		Const.Shot.LOB:
-			return d >= Const.LOB_MIN - Const.LOB_AREA and d <= Const.LOB_MAX
+			return d >= Const.LOB_MIN - Const.LOB_AREA and d <= Const.lob_max(me.mutations)
 		Const.Shot.NEEDLE:
 			# Yan sapma Nüvənin radiusundan az olsun — ikisi də dəysin.
 			return d * tan(Const.NEEDLE_SPREAD) < b.radius() and sim.has_line_of_sight(me.pos, b.pos)

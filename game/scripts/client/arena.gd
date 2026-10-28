@@ -738,10 +738,18 @@ func configure_online(info: Dictionary) -> void:
 	_rules_mismatch = int(info.get("rules", 1)) != Const.RULES
 	if _rules_mismatch:
 		print("[arena] server qaydaları %d, client %d — matç açılmır" % [int(info.get("rules", 1)), Const.RULES])
+	var cols = info.get("colonies", null)
+	if cols is PackedFloat32Array:
+		_colony_flat = cols
 
 
 ## Server başqa qaydalar versiyasındadır — arena açılan kimi menyuya qayıdır.
 var _rules_mismatch := false
+
+## Qida koloniyalarının yerləri `[x, y, növ, ...]` (join info, bax [method World.join_info_for]);
+## koloniyasız rejimdə boşdur. Görüntüsü [ColonyView], vəziyyəti hər snapshot-dadır.
+var _colony_flat := PackedFloat32Array()
+var _colonies: ColonyView = null
 
 
 ## Rejimin qabını və xəritəsini qurur — serverin [method Sim.set_mode]-u ilə eyni mənbədən.
@@ -786,6 +794,8 @@ func configure_practice() -> void:
 	_local_world = load(WORLD_SCRIPT).new(1, Net.mode)
 	var g: Sim.GermState = _local_world.add_player(my_id, Net.nickname, Net.species)
 	my_color = g.color
+	# Məşq də eyni koloniyalarla oynanır — yerlər onlayndakı kimi join info-dan.
+	_colony_flat = _local_world.join_info_for(my_id).get("colonies", PackedFloat32Array())
 	if start_at.is_finite():
 		g.pos = start_at
 		g.vel = Vector2.ZERO
@@ -1022,6 +1032,12 @@ func _build_world() -> void:
 	_ripples = Node2D.new()
 	_ripples.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(_ripples)
+
+	# Qida koloniyaları — qidanın ALTINDA: çıxan qida koloniyanın üstündə görünür.
+	if not _colony_flat.is_empty():
+		_colonies = ColonyView.new()
+		add_child(_colonies)
+		_colonies.setup(_colony_flat)
 
 	_food_layer = Node2D.new()
 	add_child(_food_layer)
@@ -1369,6 +1385,7 @@ func _build_hud() -> void:
 	# Xəritə rejimin öz qabını və düzümünü göstərir (obyekt rejimlərində kiçik qab).
 	_hud.minimap.wall = _wall
 	_hud.minimap.obstacles = _obstacles
+	_hud.minimap.colonies = _colony_flat
 	_hud.minimap.goals = _mode == Const.Mode.BALL
 
 
@@ -2201,6 +2218,10 @@ func _ingest(data: Array, newest: bool) -> void:
 		_last_snap_t = _clock
 		_last_snap_tt = at
 		_snap_tick = tick
+		# Koloniyaların vəziyyəti — yalnız ən təzədən: köhnə snapshot doluluğu geri çəkməsin.
+		if _colonies != null and data.size() > Const.Snap.COLONY:
+			_colonies.apply(data[Const.Snap.COLONY])
+			_hud.minimap.colony_state = data[Const.Snap.COLONY]
 	_apply_walls(data[Const.Snap.WALLS])
 	_apply_match(data[Const.Snap.MATCH])
 	_queue_events(data[Const.Snap.EVENTS], at)

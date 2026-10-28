@@ -415,3 +415,103 @@ static func is_free_in(list: Array[Vector4], wall: float, pos: Vector2, radius: 
 		if pos.distance_squared_to(Vector2(o.x, o.y)) < pow(o.z + radius, 2.0):
 			return false
 	return true
+
+
+## Koloniya üçün toxumdan götürülən təsadüfi namizədlərin sayı; sonra şəbəkə gəzilir.
+const COLONY_TRIES := 24
+
+
+## SONSUZ ARENA-nın qida koloniyalarının yerləri: `Vector3(x, y, növ)`, sıra
+## [constant Const.COLONY_KINDS]-dakı kimidir (bax design/MODES.md §18).
+##
+## DETERMİNİSTİKDİR: eyni düzüm və eyni toxum eyni yerləri verir. Toxumu server dünya
+## yaranarkən seçir; client yerləri join info-da alır və heç vaxt özü axtarmır.
+##
+## Bol cüt qabın iki qarşı tərəfindədir, zəif cüt onlara dikdir — mənbələr dörd tərəfə
+## paylanır. Hər koloniya əvvəl [constant COLONY_TRIES] təsadüfi namizəddə, sonra
+## bucaq × məsafə şəbəkəsində yoxlanılır ([method colony_ok]). Heç biri uyğun gəlməsə
+## koloniya QOYULMUR (maneənin içinə səssizcə düşmür) və xəbərdarlıq yazılır.
+static func colony_spots(list: Array[Vector4], wall: float, seed: int) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed
+	var base := rng.randf() * TAU
+	for i in Const.COLONY_KINDS.size():
+		var kind: int = Const.COLONY_KINDS[i]
+		var span: Vector2 = Const.COLONY_DIST[kind]
+		var want := base + (PI if i % 2 == 1 else 0.0) \
+			+ (PI * 0.5 if kind == Const.ColonyKind.POOR else 0.0)
+		var spot := Vector2.INF
+		for _t in COLONY_TRIES:
+			var p := Vector2.from_angle(want + rng.randf_range(-0.7, 0.7)) * rng.randf_range(span.x, span.y)
+			if colony_ok(list, wall, p, out):
+				spot = p
+				break
+		if not spot.is_finite():
+			spot = _colony_scan(list, wall, want, span, out)
+		if spot.is_finite():
+			out.append(Vector3(spot.x, spot.y, float(kind)))
+		else:
+			push_warning("[colony] %d-ci koloniyaya uyğun yer tapılmadı — qoyulmur" % i)
+	return out
+
+
+## Toxumdan namizəd tapılmayanda: [param want] bucağından başlayıb hər iki tərəfə
+## növbə ilə 5°-lik addımla, hər bucaqda beş məsafə. Deterministikdir.
+static func _colony_scan(list: Array[Vector4], wall: float, want: float, span: Vector2,
+		placed: PackedVector3Array) -> Vector2:
+	for k in 72:
+		var a := want + float((k + 1) / 2) * deg_to_rad(5.0) * (1.0 if k % 2 == 0 else -1.0)
+		for j in 5:
+			var p := Vector2.from_angle(a) * lerpf(span.x, span.y, float(j) / 4.0)
+			if colony_ok(list, wall, p, placed):
+				return p
+	return Vector2.INF
+
+
+## Koloniya bu nöqtədə dura bilərmi?
+##
+## Sahəsi ([constant Const.COLONY_CLEAR]) şüşənin içində və HƏR maneədən — kol və cərəyan
+## deşiyi də daxil — aralıdır: qida maneənin içində çıxmır, kolun içindəki mənbə isə
+## yeyəni gizlədərdi. Başqa koloniyalardan [constant Const.COLONY_GAP] aralıdır. Ən azı iki
+## tərəfdən (aralarında 90°-dən çox) mikrob yaxınlaşa bilir.
+static func colony_ok(list: Array[Vector4], wall: float, p: Vector2,
+		placed: PackedVector3Array) -> bool:
+	if p.length() > wall - Const.COLONY_CLEAR:
+		return false
+	for o in list:
+		if p.distance_to(Vector2(o.x, o.y)) < o.z + Const.COLONY_CLEAR:
+			return false
+	for c in placed:
+		if p.distance_to(Vector2(c.x, c.y)) < Const.COLONY_GAP:
+			return false
+	return colony_sides(list, wall, p) >= 2
+
+
+## Koloniyaya neçə ayrı tərəfdən yaxınlaşmaq olar: səkkiz istiqamətdə sahənin kənarından
+## bir mikrob (radius 30) boyu kənarda yer boşdurmu. Tərəflər yalnız aralarında 90°-dən
+## çox olanda ayrı sayılır — yan-yana iki boş istiqamət "bir tərəfdir".
+static func colony_sides(list: Array[Vector4], wall: float, p: Vector2) -> int:
+	var free := PackedInt32Array()
+	for k in 8:
+		var probe := p + Vector2.from_angle(TAU * float(k) / 8.0) * (Const.COLONY_CLEAR + 30.0)
+		if probe.length() > wall - 30.0:
+			continue
+		var open := true
+		for o in list:
+			if blocks_germ(int(o.w)) and probe.distance_to(Vector2(o.x, o.y)) < o.z + 30.0:
+				open = false
+				break
+		if open:
+			free.append(k)
+	# Bir-birindən ən az iki addım (90°) aralı istiqamətlərin ən böyük dəsti — sadə hərisliklə.
+	var sides := 0
+	var last := -10
+	var first := -1
+	for k in free:
+		if k - last >= 2 and not (first >= 0 and first + 8 - k < 2):
+			sides += 1
+			last = k
+			if first < 0:
+				first = k
+	return sides

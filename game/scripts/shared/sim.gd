@@ -170,6 +170,34 @@ class FoodState:
 	var vel := Vector2.ZERO
 	var lock_id := 0            ## Bu mikrob onu hələ uda bilməz
 	var lock_t := 0.0
+	## Haradan gəlib: koloniyanın indeksi, [constant Const.ORIGIN_SCATTER] və ya
+	## [constant Const.ORIGIN_LOOSE]. Yalnız serverdədir — snapshot-a getmir.
+	var origin := Const.ORIGIN_LOOSE
+
+
+## Qida koloniyası — SONSUZ ARENA-nın neytral qida mənbəyi (bax design/MODES.md §18).
+##
+## Vəziyyəti YALNIZ server dəyişir ([method Sim._step_colony]); client onu snapshot-dan
+## alır və ehtiyatı özü xərcləmir.
+class ColonyState:
+	var id := 0                 ## sabit — [member Sim.colonies]-dakı indeks, qidanın mənşəyi
+	var pos := Vector2.ZERO
+	var kind := 0               ## [enum Const.ColonyKind]
+	var stock := 0
+	## Növbəti qidaya qalan vaxt. Gözləmədə sıfırda dayanır — borc yığmır.
+	var timer := 0.0
+	## Tükənibsə, bərpaya qalan vaxt.
+	var regen_t := 0.0
+	## Dünyada bu koloniyadan çıxmış udulmamış qida — hər tick yenidən sayılır.
+	var out := 0
+	## Sahəsindəki ([constant Const.COLONY_SPREAD] + 60 px) qida — botların seçimi üçün.
+	var near := 0
+
+	func full() -> int:
+		return Const.COLONY_STOCK[kind]
+
+	func period() -> float:
+		return Const.COLONY_PERIOD[kind]
 
 
 ## NÜVƏ TOPU-nun Nüvəsi — serverin fiziki cismi (bax design/MODES.md §16.4).
@@ -355,6 +383,11 @@ var ball_goal := -1
 var germs := {}                         ## id -> GermState
 var shots: Array[ShotState] = []
 var food: Array[FoodState] = []
+## Qida koloniyaları — yalnız SONSUZ ARENA-da, [method setup_colonies] qurur. Boşdursa
+## qida köhnə qayda ilə doğulur.
+var colonies: Array[ColonyState] = []
+## Koloniyaların yerinin toxumu ([method setup_colonies]) — dünyanın toxumunun bir hissəsi.
+var colony_seed := 0
 var obstacles: Array[Vector4] = []
 
 ## Dağılmış maneələr — 1 = artıq yoxdur. İndeks [member obstacles] ilə eynidir.
@@ -443,6 +476,45 @@ func set_mode(m: int) -> void:
 	ball = BallState.new() if mode == Const.Mode.BALL else null
 	if ball != null:
 		ball.reset()
+	colonies.clear()
+
+
+## Qida koloniyalarını qurur — YALNIZ dünya ([World]) və yalnız SONSUZ ARENA-da çağırır.
+## Client-in proqnozu koloniyasızdır: qida onsuz da snapshot-dan gəlir.
+##
+## Yerlər düzümdən və [param seed]-dən deterministik çıxır ([method DishMap.colony_spots]).
+## Hamısı dolu başlayır.
+func setup_colonies(seed: int) -> void:
+	colony_seed = seed
+	colonies.clear()
+	var spots := DishMap.colony_spots(obstacles, wall_radius, seed)
+	for i in spots.size():
+		var c := ColonyState.new()
+		c.id = i
+		c.pos = Vector2(spots[i].x, spots[i].y)
+		c.kind = int(spots[i].z)
+		c.stock = c.full()
+		colonies.append(c)
+
+
+## Koloniyaların yerləri join info üçün: `[x, y, növ, ...]`.
+func colony_flat() -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	for c in colonies:
+		out.append_array([c.pos.x, c.pos.y, float(c.kind)])
+	return out
+
+
+## Koloniyaların vəziyyəti snapshot üçün: hər koloniyaya iki bayt — ehtiyat və bərpaya
+## qalan vaxt ([constant Const.COLONY_REGEN_STEP] vahidində, işləyəndə 0).
+func colony_bytes() -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(colonies.size() * 2)
+	for i in colonies.size():
+		var c := colonies[i]
+		out[i * 2] = clampi(c.stock, 0, 255)
+		out[i * 2 + 1] = clampi(ceili(c.regen_t / Const.COLONY_REGEN_STEP), 0, 255) if c.stock <= 0 else 0
+	return out
 
 
 ## Ananın komandası — yerindən çıxır: qərbdəki komanda 0-ındır.
@@ -1819,7 +1891,8 @@ func _reap() -> void:
 
 # ---------------------------------------------------------------- qida
 
-func _drop_food(at: Vector2, vel: Vector2, lock_id: int) -> void:
+func _drop_food(at: Vector2, vel: Vector2, lock_id: int,
+		origin := Const.ORIGIN_LOOSE) -> void:
 	var f := FoodState.new()
 	f.id = _next_food_id
 	_next_food_id += 1
@@ -1827,6 +1900,7 @@ func _drop_food(at: Vector2, vel: Vector2, lock_id: int) -> void:
 	f.vel = vel
 	f.lock_id = lock_id
 	f.lock_t = Const.FOOD_ARM_TIME if lock_id != 0 else 0.0
+	f.origin = origin
 	food.append(f)
 
 
@@ -2012,6 +2086,9 @@ func _food_target() -> int:
 
 
 func _spawn_food(dt: float) -> void:
+	if not colonies.is_empty():
+		_spawn_ecology(dt)
+		return
 	var target := _food_target()
 	if food.size() >= target:
 		_food_budget = 0.0
@@ -2019,7 +2096,96 @@ func _spawn_food(dt: float) -> void:
 	_food_budget += Const.FOOD_SPAWN_RATE * dt
 	while _food_budget >= 1.0 and food.size() < target:
 		_food_budget -= 1.0
-		_drop_food(find_spawn(Const.FOOD_RADIUS), Vector2.ZERO, 0)
+		_drop_food(find_spawn(Const.FOOD_RADIUS), Vector2.ZERO, 0, Const.ORIGIN_SCATTER)
+
+
+## SONSUZ ARENA-nın qida iqtisadiyyatı: səpələnmiş minimum + koloniyalar (MODES.md §18).
+##
+## Köhnə generator dünyanı 110 səpələnmiş qida ilə doldururdu — onda koloniyanın mənası
+## qalmazdı. İndi iki ayrı mənbə var və sıra belədir:
+##   1. Səpələnmiş qida öz canlı hədəfinə ([constant Const.SCATTER_TARGET]) adi doğuş
+##      sürəti ilə qayıdır. Ölüm səpintisi və boşa çıxan top onun əvəzi SAYILMIR.
+##   2. Koloniyalar ümumi hədəfdən ([method _food_target]) qalan yerdə işləyir: hədəf
+##      keçilibsə istehsal dayanır, amma heç bir qida limit üçün SİLİNMİR.
+## Mənşə sayı hər tick qidanın özündən yığılır: udulma, quruma və ya başqa silinmə yolu
+## olsa da hesab düz qalır, ayrıca sayğac pozulmur.
+func _spawn_ecology(dt: float) -> void:
+	var scatter := 0
+	var n_col := colonies.size()
+	var near_r2 := pow(Const.COLONY_SPREAD + 60.0, 2.0)
+	for c in colonies:
+		c.out = 0
+		c.near = 0
+	for f in food:
+		if f.origin >= 0 and f.origin < n_col:
+			colonies[f.origin].out += 1
+		elif f.origin == Const.ORIGIN_SCATTER:
+			scatter += 1
+		if f.id > 0:
+			for c in colonies:
+				if f.pos.distance_squared_to(c.pos) < near_r2:
+					c.near += 1
+					break
+
+	if scatter >= Const.SCATTER_TARGET:
+		_food_budget = 0.0
+	else:
+		_food_budget += Const.FOOD_SPAWN_RATE * dt
+		while _food_budget >= 1.0 and scatter < Const.SCATTER_TARGET:
+			_food_budget -= 1.0
+			_drop_food(find_spawn(Const.FOOD_RADIUS), Vector2.ZERO, 0, Const.ORIGIN_SCATTER)
+			scatter += 1
+		# Böyük addımda da büdcə yığılıb sonradan bir tick-də partlamır.
+		_food_budget = minf(_food_budget, 1.0)
+
+	var room := _food_target() - food.size()
+	for c in colonies:
+		room = _step_colony(c, dt, room)
+
+
+## Bir koloniyanın tick-i; [param room] — ümumi hədəfə qədər qalan yer, qaytarılır.
+##
+## Gözləmə (8 çıxış, ümumi hədəf) BORC yığmır: sayğac sıfırda dayanır və yer açılanda
+## bir qida çıxır, sonra ritm davam edir. Böyük addımda bir tick-də bir neçə qida çıxa
+## bilər, amma ən çoxu çıxış həddinə qədər — limitsiz borc yoxdur.
+func _step_colony(c: ColonyState, dt: float, room: int) -> int:
+	if c.stock <= 0:
+		c.regen_t -= dt
+		if c.regen_t > 0.0:
+			return room
+		# Bərpa: ehtiyat yenilənir; əvvəlki qida yerində qalır, çıxış həddi yenə işləyir.
+		c.stock = c.full()
+		c.regen_t = 0.0
+		c.timer = 0.0
+	c.timer -= dt
+	while c.timer <= 0.0 and c.stock > 0:
+		if c.out >= Const.COLONY_OUT_MAX or room <= 0:
+			c.timer = 0.0
+			return room
+		_bud(c)
+		c.stock -= 1
+		c.out += 1
+		room -= 1
+		c.timer += c.period()
+	if c.stock <= 0:
+		c.regen_t = Const.COLONY_REGEN[c.kind]
+		c.timer = 0.0
+	return room
+
+
+## Koloniyanın ətrafında bir adi +1 qida. Yer şüşənin içində və maneədən kənardır;
+## altı cəhddən sonra koloniyanın öz mərkəzi (o, yerləşəndə yoxlanılıb).
+func _bud(c: ColonyState) -> void:
+	var r: float = Const.COLONY_RADIUS[c.kind]
+	var dir := Vector2.from_angle(rng.randf() * TAU)
+	var at := c.pos
+	for _t in 6:
+		var p := c.pos + dir * rng.randf_range(r * 0.6, Const.COLONY_SPREAD)
+		if DishMap.is_free_in(obstacles, wall_radius, p, Const.FOOD_RADIUS):
+			at = p
+			break
+		dir = Vector2.from_angle(rng.randf() * TAU)
+	_drop_food(at, dir * Const.COLONY_BUD_SPEED, 0, c.id)
 
 
 # ---------------------------------------------------------------- həndəsə

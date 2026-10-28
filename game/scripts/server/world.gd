@@ -158,6 +158,8 @@ var _frame_food_pos := PackedVector2Array()
 var _frame_food_id := PackedInt64Array()
 var _frame_events: Array = []
 var _frame_board := PackedInt32Array()
+## Koloniyaların vəziyyəti — tick-də bir dəfə, bütün baxanlar üçün eyni ([method Sim.colony_bytes]).
+var _frame_colony := PackedByteArray()
 
 
 func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
@@ -170,6 +172,10 @@ func _init(p_id: int, p_mode := Const.Mode.ENDLESS) -> void:
 	sim.lag_comp = true
 	# Rejimin öz qabı, xəritəsi və obyekti — doğuşdan ƏVVƏL (bax [method Sim.set_mode]).
 	sim.set_mode(int(mode))
+	# SONSUZ ARENA-nın qida koloniyaları: yerləri düzümdən və dünyanın toxumundan çıxır
+	# (bax [method DishMap.colony_spots]). Toxum hər dünyada başqadır — yerlər də.
+	if mode == Const.Mode.ENDLESS:
+		sim.setup_colonies(randi())
 	# Qabın kənarı elə İNDİ qurulur, ilk tick-i gözləmədən.
 	#
 	# Oyunçu [method add_player] ilə tick-dən ƏVVƏL doğulur və
@@ -281,6 +287,10 @@ func join_info_for(peer: int) -> Dictionary:
 		"pos": g.pos if g != null else Vector2.INF,
 		# Qaydaların versiyası — client uyğun gəlməsə açıq deyir (bax [constant Const.RULES]).
 		"rules": Const.RULES,
+		# Qida koloniyalarının yerləri `[x, y, növ, ...]` — dünya boyu dəyişmir; vəziyyəti
+		# hər snapshot-dadır ([constant Const.Snap.COLONY]). Gec qoşulan da, qayıdan da
+		# eyni yerləri alır.
+		"colonies": sim.colony_flat(),
 	}
 
 
@@ -1267,6 +1277,11 @@ func _build_frame() -> void:
 		_frame_board.push_back(int(row[Const.LF.ID]))
 		_frame_board.push_back(int(row[Const.LF.POPS]))
 
+	# Koloniyalar azdır və yerində durur — AOI-siz, hamısı gedir: minimap onları göstərir,
+	# qərar ("hansı mənbəyə gedim") ekrandan kənardakı mənbəni də bilməyi tələb edir.
+	# Mikrob haqqında heç nə daşımır, gizlənəni açmır.
+	_frame_colony = sim.colony_bytes()
+
 
 ## Mikrobun bayraqları bir ədəddə (bax [enum Const.GFlag]).
 static func _flags_of(g: Sim.GermState) -> int:
@@ -1338,6 +1353,7 @@ func snapshot_for(peer: int) -> Array:
 		sim.broken,
 		_match_row(peer),
 		_self_row(peer, g),
+		_frame_colony,
 	]
 
 

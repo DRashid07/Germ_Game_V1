@@ -630,6 +630,7 @@ matçın olub-olmamasındadır.
 | Ölüm | menyu, yenidən gir | matç bitir | **yoldaşın diriltir** | raund bitir |
 | Qab | sabit 1200 | 1200 → 90 | 1200 → 90 | 700 → 220 |
 | Spor | yox | 3 | 3 | yox |
+| Qida koloniyası | 4 | yox | yox | yox |
 | Bitiş | yoxdur | sonuncu mikrob | sonuncu cüt | 3 raundun 2-si |
 
 **Quru zona top ARTIRIR, azaltmır.** Bu, rejimin əsas qərarıdır: oyunun imza
@@ -642,6 +643,41 @@ eyni düsturu işlədir, ona görə daralma proqnozla ziddiyyət yaratmır.
 
 **Spor** — matçda doğulan iri qida yığını. Yeyənə **tutum** verir, yəni
 partlatmaqla eyni mükafata ikinci yol açır: döyüşməyən oyunçu da irəliləyir.
+
+**Qida koloniyaları (yalnız SONSUZ ARENA).** Qabda dörd neytral qida mənbəyi var:
+mərkəzdən 350–500 px-də iki **bol**, 750–900 px-də iki **zəif** koloniya. Koloniya
+ətrafına adi +1 qida çıxarır (udmaq üçün düymə yoxdur), ehtiyatı tükənir və bərpa olunur.
+Tutmaq xal vermir, sahibi yoxdur — oyunçu yalnız seçir: mərkəzə yaxın bol mənbə (döyüş
+orada olur), kənarda zəif mənbə, yoxsa səpələnmiş qida
+([`Sim._spawn_ecology`](game/scripts/shared/sim.gd), design/MODES.md §18).
+
+| | Bol | Zəif |
+|---|---|---|
+| Ehtiyat | 20 | 12 |
+| Bir qida | hər 0.45 s | hər 0.8 s |
+| Tükənəndən sonra bərpa | 24 s | 30 s |
+| Dünyada ən çox udulmamış qidası | 8 | 8 |
+
+- **Səkkiz qida həddi mənşəyə görədir**, yerə görə yox: axın koloniyanın qidasını uzağa
+  aparsa da o, koloniyanınkı sayılır — yoxsa koloniya yaxın sahəni boşaldıb sonsuz
+  istehsal edərdi. Gözləmə borc yığmır: yer açılanda bir qida çıxır, sonra ritm davam edir.
+- **Səpələnmiş qidanın ayrıca canlı minimumu 32-dir** (köhnə generator dünyanı 110
+  səpələnmiş qida ilə doldururdu — onda koloniyanın mənası qalmazdı). Ölüm səpintisi və
+  boşa çıxan top bu minimumun əvəzi sayılmır və limit üçün silinmir. Koloniyalar ümumi
+  hədəfdən (110) qalan yerdə işləyir: hədəf keçilibsə dayanır.
+- **Yer** düzümdən və dünyanın toxumundan deterministik çıxır
+  ([`DishMap.colony_spots`](game/scripts/shared/dish_map.gd)): sahəsi şüşənin içində və
+  hər maneədən 90 px aralı, ən azı iki tərəfdən yaxınlaşılır, koloniya bərk deyil —
+  heç bir dəhlizi bağlamır. Üç ümumi düzümdə 40 toxumun hamısında dördü də yerləşir.
+- **Şəbəkə:** yerlər join info-da, vəziyyət (ehtiyat və bərpaya qalan vaxt, 8 bayt) hər
+  snapshot-un sonundadır ([`Const.Snap.COLONY`](game/scripts/shared/constants.gd)) — paket
+  itsə də növbəti bərpa edir, gec qoşulan və qayıdan eyni şeyi görür. Qaydalar versiyası 3-dür.
+- **Görüntü** ([`ColonyView`](game/scripts/client/colony_view.gd)): qida rəngində hüceyrə
+  rozeti, ehtiyat azaldıqca hüceyrələr bir-bir kiçilib sönür; tükənəndə quru boz nüvə və
+  dolan bərpa halqası. Minimap mənbənin yerini və halını göstərir (mikrobu yox).
+- **Botlar:** ac bot mənbəni məsafəyə, ehtiyata, sahədəki qidaya və **gördüyü** rəqiblərə
+  görə seçir ([`Bot._pick_colony`](game/scripts/shared/bot.gd)); tükənmiş koloniyada
+  gözləmir, dolu bot ora göndərilmir.
 
 **Quru zonada qida yoxdur.** Qab daralanda kənarda qalan qida quruyur və
 doğuş hədəfi də qabın ölçüsü ilə kiçilir. Bu, qaydanı bir cümləyə yığır:
@@ -1011,6 +1047,7 @@ game/                    Godot layihəsi
     tools/
       sim_test.gd        headless testlər (`--simtest`)
       attack_test.gd     növlərin adi atəşi — `--simtest`-in içindən
+      colony_test.gd     qida koloniyaları — `--simtest`-in içindən
       auto_client.gd     Şəbəkə testi üçün insansız client (`--party` ilə komanda testi)
       social_test.gd     Dostluq və komanda testləri (`--simtest`-in içindən)
       social_demo.gd     Dostlar/komanda ekranlarının şəbəkəsiz stendi (`--social-demo`)
@@ -1099,7 +1136,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri (937 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları (972 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

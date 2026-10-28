@@ -156,6 +156,12 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 		# isə örtüyün ÜSTÜNDƏN keçir: ona xətt yox, məsafə və görünən hədəf lazımdır.
 		# Özünü acdan qorumaq üçün ehtiyat saxlayır.
 		fire = me.balls > Const.FIRE_MIN_BALLS and _can_hit(sim, me, target, dist)
+	elif hungry and not sim.colonies.is_empty() and _pick_colony(sim, me, meal, dt):
+		# Ac bot qida mənbəyinə gedir; sahəsinə çatanda oradakı qida ən yaxın olur və
+		# aşağıdakı adi "qidaya get" yolu işləyir.
+		var to_c := _colony_goal - me.pos
+		move = to_c.normalized()
+		aim = to_c.angle()
 	elif meal != null:
 		var to_food := meal.pos - me.pos
 		move = to_food.normalized()
@@ -187,6 +193,92 @@ func think(sim: Sim, dt: float) -> Sim.PlayerInput:
 
 ## Damcının bu atəşdəki məsafəsi; NAN = sabit məsafə.
 var _lob_range := NAN
+
+
+# ---------------------------------------------------------------- qida koloniyaları
+
+## Ən yaxın qida bundan yaxındırsa mənbə axtarılmır — əvvəl onu ye.
+const COLONY_NEAR_MEAL := 200.0
+## Sahəsinə çatıb qida tapmadığı koloniyanı bot bu qədər saniyə saymır.
+const COLONY_SKIP := 8.0
+## Koloniyanın yanında görünən rəqib onu bu qədər "uzaqlaşdırır" (px).
+const COLONY_THREAT := 300.0
+## Rəqib koloniyadan bu qədər yaxındırsa təhlükə sayılır.
+const COLONY_THREAT_R := 320.0
+## Koloniyadakı hər qida (ən çox 12) onu bu qədər "yaxınlaşdırır" (px).
+const COLONY_FOOD_PULL := 14.0
+## Seçilmiş koloniyaya bağlılıq — hər tick fikir dəyişməsin.
+const COLONY_STICK := 120.0
+
+## Seçilmiş koloniyanın mərkəzi ([method _pick_colony]-in cavabı).
+var _colony_goal := Vector2.INF
+var _colony_pick := -1
+## Koloniyanın id-si → onu saymamağa qalan vaxt.
+var _colony_skip := {}
+
+
+## Ac bot qida mənbəyini seçir (yalnız SONSUZ ARENA): səpələnmiş qida, yoxsa koloniya.
+##
+## Koloniyanın dəyəri məsafədir, sahəsindəki qida və ehtiyatı onu yaxınlaşdırır, yanında
+## GÖRÜNƏN rəqib uzaqlaşdırır. Yaxında qida varsa və ya səpələnmiş qida daha "ucuzdursa"
+## koloniya seçilmir. Tükənmiş və sahəsi boş koloniya heç seçilmir — bot orada gözləmir.
+## Sahəsinə çatıb qida tapmayan bot (qida axınla getmiş, çıxış dolu) onu
+## [constant COLONY_SKIP] saniyə saymır və başqa mənbəyə keçir.
+## Rəqib yalnız botun GÖRDÜYÜ kimidir: görüş sahəsindən kənardakı və başqa koldakı sayılmır.
+func _pick_colony(sim: Sim, me: Sim.GermState, meal: Sim.FoodState, dt: float) -> bool:
+	for cid in _colony_skip.keys():
+		_colony_skip[cid] = float(_colony_skip[cid]) - dt
+		if float(_colony_skip[cid]) <= 0.0:
+			_colony_skip.erase(cid)
+	var meal_d := meal.pos.distance_to(me.pos) if meal != null else INF
+	if meal_d < COLONY_NEAR_MEAL:
+		return false
+	var seen_r := Const.aoi_radius(me.capacity)
+	var best: Sim.ColonyState = null
+	var best_cost := INF
+	for c in sim.colonies:
+		if _colony_skip.has(c.id):
+			continue
+		var producing := c.stock > 0 and c.out < Const.COLONY_OUT_MAX
+		var there := c.near + (c.stock if producing else 0)
+		if there <= 0:
+			continue
+		var d := me.pos.distance_to(c.pos)
+		if d < Const.COLONY_SPREAD + 40.0 and c.near == 0 and not producing:
+			_colony_skip[c.id] = COLONY_SKIP
+			continue
+		var cost := d - COLONY_FOOD_PULL * float(mini(there, 12)) \
+			+ COLONY_THREAT * float(_colony_threats(sim, me, c.pos, seen_r))
+		if c.id == _colony_pick:
+			cost -= COLONY_STICK
+		if cost < best_cost:
+			best_cost = cost
+			best = c
+	if best == null or best_cost > meal_d:
+		_colony_pick = -1
+		return false
+	_colony_pick = best.id
+	_colony_goal = best.pos
+	return true
+
+
+## Koloniyanın yanında botun gördüyü rəqiblərin sayı.
+static func _colony_threats(sim: Sim, me: Sim.GermState, at: Vector2, seen_r: float) -> int:
+	var my_bush := sim.bush_of(me)
+	var n := 0
+	for gid in sim.germs:
+		var g: Sim.GermState = sim.germs[gid]
+		if g.id == me.id or not g.alive:
+			continue
+		if me.team >= 0 and g.team == me.team:
+			continue
+		if g.pos.distance_to(at) > COLONY_THREAT_R or g.pos.distance_to(me.pos) > seen_r:
+			continue
+		var bush := sim.bush_of(g)
+		if bush >= 0 and bush != my_bush:
+			continue
+		n += 1
+	return n
 
 
 ## Bu hədəfə adi atəş çatarmı.

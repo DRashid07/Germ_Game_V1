@@ -86,6 +86,36 @@ var goals := false:
 ## NÜVƏ TOPU: Nüvənin yeri (`Vector2.INF` — yoxdur). Nöqtələr qatında çəkilir.
 var ball := Vector2.INF
 
+## SONSUZ ARENA-nın qida koloniyaları `[x, y, növ, ...]` ([ColonyView]). Mənbənin yeri
+## xəritədədir, mikrob deyil — gizlənəni açmır.
+var colonies := PackedFloat32Array():
+	set(value):
+		colonies = value
+		queue_redraw()
+## Koloniyaların vəziyyəti (snapshot-dan). Xəritə yalnız mənbənin halı — dolu / az / boş —
+## dəyişəndə yenidən çəkilir, hər snapshot-da yox.
+var colony_state := PackedByteArray():
+	set(value):
+		colony_state = value
+		var key := _colony_key()
+		if key != _colony_drawn:
+			_colony_drawn = key
+			queue_redraw()
+var _colony_drawn := -1
+
+
+## Hər koloniyaya iki bit: 0 boş, 1 az (üçdə birdən az), 2 dolu.
+func _colony_key() -> int:
+	var key := 0
+	for i in colonies.size() / 3:
+		var level := 2
+		if i * 2 < colony_state.size():
+			var kind := clampi(int(colonies[i * 3 + 2]), 0, 1)
+			var stock := int(colony_state[i * 2])
+			level = 0 if stock <= 0 else (1 if stock * 3 < int(Const.COLONY_STOCK[kind]) else 2)
+		key |= level << (i * 2)
+	return key
+
 
 func set_dots(dots: Array) -> void:
 	_dots = dots
@@ -147,6 +177,21 @@ func _draw() -> void:
 		if int(o.w) == DishMap.Kind.MOTHER:
 			col = Palette.ALLY if (0 if o.x < 0.0 else 1) == team else Palette.FOE
 		BatchDraw.disc(self, c + Vector2(o.x, o.y) * k, maxf(o.z * k, 1.5), col)
+
+	# Qida koloniyaları — qida rəngində nöqtə (bol olan iri); az qalanda sönük, tükənəndə
+	# yalnız boz halqa: "hara gedim" sualının cavabı xəritədə də oxunsun.
+	var n_col := colonies.size() / 3
+	for pass_ring in [false, true]:
+		for i in n_col:
+			var p := c + Vector2(colonies[i * 3], colonies[i * 3 + 1]) * k
+			var rich := int(colonies[i * 3 + 2]) == Const.ColonyKind.RICH
+			var level := (_colony_drawn >> (i * 2)) & 3 if _colony_drawn >= 0 else 2
+			var rad := 4.2 if rich else 3.2
+			if not pass_ring and level > 0:
+				BatchDraw.disc(self, p, rad, Color(ColonyView.CELL, 0.95 if level == 2 else 0.5))
+			elif pass_ring:
+				BatchDraw.ring(self, p, rad + 1.2, 0.0, TAU, 12,
+					Color(ColonyView.DRY, 0.95) if level == 0 else Color(Palette.OUTLINE, 0.7), 1.4)
 
 
 ## Mikroblar — qabın üstündəki ayrı qatda (bax [member _dots_layer]).

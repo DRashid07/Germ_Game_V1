@@ -731,6 +731,18 @@ olar görünməzdi), içində olduğun kolun tacı isə **0.45**-ə şəffaflaş
 Stars-da kol öz oyunçusunun ətrafında şəffaflaşdığı kimi. Başqa kolların tacı
 tutqun qalır: gizli rəqib orada gizli qalır.
 
+### Qida koloniyası — bəzək deyil, MƏNBƏ (2026-10-28)
+
+SONSUZ ARENA-nın qida koloniyası ([`ColonyView`](../game/scripts/client/colony_view.gd),
+design/MODES.md §18) xəritənin qalanı ilə qarışmamalıdır: kol yaşıl yarpaqdır, selik
+mavi-boz şüşə, koloniya isə **qidanın öz rəngində** şişkin hüceyrə rozetidir (bol 9, zəif
+6 hüceyrə), altında qidanın çıxdığı sahənin zəif halosu. Rəng glow həddindən aşağıdır —
+koloniya parlayan top kimi oxunmamalıdır.
+
+Ehtiyat FORMA ilə oxunur, rəqəmlə yox: hüceyrələr bir-bir kiçilib sönür, tükənəndə quru
+boz-qəhvəyi nüvə qalır və ətrafında 12-dən saat əqrəbi ilə dolan ağımtıl **bərpa halqası**
+çıxır. Hamısı sadə disk və nazik halqadır — YÜKSƏK və MİNİMUM-da eyni oxunur.
+
 ---
 
 ### 4b. Xəritənin dərinliyi

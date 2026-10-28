@@ -201,6 +201,8 @@ static func run() -> int:
 	ObjectiveTest.run()
 	# Növlərin fərqli adi atəşi — ayrıca faylda, eyni sayğacla (bax [AttackTest]).
 	AttackTest.run()
+	# SONSUZ ARENA-nın qida koloniyaları (bax [ColonyTest]).
+	ColonyTest.run()
 	print("===== %d keçdi, %d uğursuz =====\n" % [_pass, _fail])
 	return _fail
 
@@ -1813,6 +1815,8 @@ static func _test_world_seed_repeats() -> void:
 	var two := World.new(1)
 	one.sim.rng.seed = 77
 	two.sim.rng.seed = 77
+	# Dünyanın toxumuna koloniyaların yeri də daxildir (bax [method Sim.setup_colonies]).
+	two.sim.setup_colonies(one.sim.colony_seed)
 	for i in 300:
 		one.tick(Const.TICK_DELTA)
 		two.tick(Const.TICK_DELTA)
@@ -4203,6 +4207,7 @@ static func _test_wall_damage_bits() -> void:
 ## qabı sabitdir — oyunçu düyməni basıb dərhal oynayır, əvvəlki kimi.
 static func _test_endless_untouched() -> void:
 	var world := World.new(1, Const.Mode.ENDLESS)
+	world.sim.rng.seed = 11
 	_check(world.phase == Const.Phase.PLAYING,
 		"sonsuz arena dərhal PLAYING-dədir")
 	_check(world.inputs_open(), "sonsuz arenada giriş həmişə açıqdır")
@@ -4213,6 +4218,14 @@ static func _test_endless_untouched() -> void:
 		"sonsuz arena fazadan çıxmır")
 	_check(is_equal_approx(world.sim.dish_radius, Const.WORLD_RADIUS),
 		"sonsuz arenada qab daralmır (%.0f)" % world.sim.dish_radius)
+	# Botlar döyüşür və yoxlama anında biri təzəcə partlamış ola bilər — yer növbəti
+	# doğuşda dolur ([constant World.BOT_RESPAWN]). Qida koloniyaları ilk döyüşü erkən
+	# gətirir: ac botlar mərkəzə yaxın bol mənbədə görüşür (ölçülüb — ilk ölüm orta
+	# 18 s-dən 8.6 s-ə; bax design/MODES.md §18). Yoxlanan şey dolmadır, bir an deyil.
+	var wait := int((3.0 * World.BOT_RESPAWN + 1.0) / Const.TICK_DELTA)
+	while world.sim.germs.size() < Const.MIN_POPULATION and wait > 0:
+		world.tick(Const.TICK_DELTA)
+		wait -= 1
 	_check(world.sim.germs.size() >= Const.MIN_POPULATION,
 		"sonsuz arenada əhali saxlanılır (%d)" % world.sim.germs.size())
 

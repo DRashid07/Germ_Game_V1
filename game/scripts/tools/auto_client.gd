@@ -217,6 +217,13 @@ func _log_hits() -> void:
 		_log("DAMCI: öz damcının server zərbələri %d (dərhal göstərildi)" % int(st["lob_hits"]))
 	if st.has("claims") and not (st["claims"] as Dictionary).is_empty():
 		_log("TƏSDİQ: server↔proqnoz (atəş tick fərqi, xətt boyu px): %s" % str(st["claims"]))
+	# Qida koloniyaları: client-in gördüyü say, doluluq və bərpa halqası (bax [ColonyView]).
+	var cols: ColonyView = _arena._colonies
+	if cols != null:
+		var parts := []
+		for i in cols.count():
+			parts.append("%.2f/%.2f" % [cols.shown_fill(i), cols.regen_progress(i)])
+		_log("KOLONİYA: %d mənbə · doluluq/bərpa %s" % [cols.count(), ", ".join(parts)])
 
 
 ## Komanda testinin addımı — hər [signal Friends.changed]-də çağırılır.

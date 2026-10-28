@@ -314,8 +314,9 @@ const SHOT_BYTES := 32
 const EVENT_BYTES := 20
 const FOOD_BYTES := 12
 
-## Dəyişməyən sahələr + massiv başlıqları + ehtiyat.
-const SNAP_FIXED := 330
+## Dəyişməyən sahələr + massiv başlıqları + ehtiyat. Koloniyaların sətri (dörd × 2 bayt
+## + başlıq = 16 bayt) daxildir.
+const SNAP_FIXED := 346
 ## Obyekt rejiminin matç sətrinə əlavəsi (`MF.OBJ` ≤ 7 float + `MF.RESPAWN`) və ehtiyat.
 const SNAP_OBJ := 48
 const FOOD_FRICTION := 1.8      ## Səpilən topların sürtünməsi (1/saniyə)
@@ -591,6 +592,45 @@ const SPORE_RADIUS := 22.0       ## Adi qida 10-dur
 const SPORE_CAPACITY := CAPACITY_STEP
 
 
+# ---------- Qida koloniyaları (yalnız SONSUZ ARENA, design/MODES.md §18) ----------
+## Neytral qida mənbəyi: ətrafına adi +1 qida çıxarır, ehtiyatı tükənir və bərpa olunur.
+## Tutmaq xal vermir, komanda sahibliyi və qoruma yaratmır. Seçim üçündür: mərkəzə yaxın
+## BOL mənbə (döyüş orada olur), kənarda ZƏİF mənbə və səpələnmiş qida. Rəqəmlər prototipdir.
+enum ColonyKind { RICH = 0, POOR = 1 }
+## Koloniyaların növü və sırası: iki bol, iki zəif (bax [method DishMap.colony_spots]).
+const COLONY_KINDS := [ColonyKind.RICH, ColonyKind.RICH, ColonyKind.POOR, ColonyKind.POOR]
+## Mərkəzdən məsafə (px), növə görə: x — ən az, y — ən çox.
+const COLONY_DIST := [Vector2(350.0, 500.0), Vector2(750.0, 900.0)]
+const COLONY_STOCK := [20, 12]           ## ehtiyat
+const COLONY_PERIOD := [0.45, 0.8]       ## istehsal dövrü (s)
+const COLONY_REGEN := [24.0, 30.0]       ## tükənəndən sonra bərpa (s)
+## Bir koloniyanın dünyadakı udulmamış qidası ən çox bu qədər olur. Qida MƏNŞƏYƏ görə
+## sayılır, yerinə görə yox: axın onu uzağa aparsa da sayılır — yoxsa koloniya yaxın
+## radiusu boşaldıb sonsuz istehsal edərdi.
+const COLONY_OUT_MAX := 8
+## Koloniyanın gövdəsi (görüntü).
+const COLONY_RADIUS := [30.0, 24.0]
+## Qida mərkəzdən bu qədər uzağa qədər çıxır.
+const COLONY_SPREAD := 56.0
+## Koloniyanın sahəsi istənilən maneədən bu qədər aralıdır: qida halqası, tumurcuğun
+## sürüşməsi və bir qida radiusu. Koloniya bərk deyil — heç bir dəhlizi bağlamır.
+const COLONY_CLEAR := 90.0
+## İki koloniyanın mərkəzləri arasında ən az məsafə — qida sahələri birləşməsin.
+const COLONY_GAP := 420.0
+## Çıxan qida mərkəzdən kənara bu sürətlə itələnir (px/s) — "tumurcuqlanma".
+const COLONY_BUD_SPEED := 30.0
+## Snapshot-da bərpa sayğacının vahidi (s) — bir bayta 63 saniyəyə qədər sığır.
+const COLONY_REGEN_STEP := 0.25
+## SONSUZ ARENA-da səpələnmiş (ekoloji) qidanın canlı hədəfi — koloniyalardan AYRI.
+## Bu, ümumi hədəfin içində bilərəkdən qorunan MİNİMUMDUR: ölüm səpintisi və boşa çıxan
+## top onun əvəzi sayılmır. Sərt maksimum deyil (bax [method Sim._spawn_ecology]).
+const SCATTER_TARGET := 32
+## Qidanın mənşəyi ([member Sim.FoodState.origin]) — yalnız serverdə, şəbəkəyə getmir.
+## 0 və yuxarı — koloniyanın indeksi.
+const ORIGIN_LOOSE := -1     ## ölüm səpintisi, boşa çıxan top, Nüvənin qidası
+const ORIGIN_SCATTER := -2   ## səpələnmiş ekoloji qida
+
+
 # ---------- Növ özəllikləri ----------
 ## Hər növün MÜHİTLƏ münasibəti başqadır — güc fərqi yox, münasibət fərqi.
 ##
@@ -786,7 +826,10 @@ static func hit_payload(arg: float) -> int:
 ## uyğunsuzluq açıq idarə olunur: client versiyanı rejim ədədinin yuxarı baytında
 ## göndərir ([method mode_wire]), server uyğun gəlməyəni dünyaya buraxmır
 ## ([method Lobby.join]), client də serverin dediyini yoxlayır ([method Arena.configure_online]).
-const RULES := 2
+## 3: SONSUZ ARENA-nın qida koloniyaları — join info-da yerləri, snapshot-un sonunda
+## vəziyyəti ([constant Snap.COLONY]). Köhnə client onları görməzdi və qida "boşluqdan"
+## çıxardı, ona görə versiya artırılıb.
+const RULES := 3
 
 
 ## Şəbəkəyə gedən rejim ədədi: aşağı bayt rejim, yuxarı bayt [constant RULES].
@@ -1008,7 +1051,9 @@ static func species_from(value: int) -> Species:
 ## WALLS sonda əlavə olunub, ortada yox: client sahələri İNDEKSLƏ oxuyur,
 ## ona görə mövcud indeksləri sürüşdürmək bütün oxumaları sındırardı.
 ## MATCH də sonda əlavə olunub, eyni səbəbdən (bax yuxarı).
-enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP, WALLS, MATCH, SELF }
+## COLONY — qida koloniyalarının vəziyyəti ([method Sim.colony_bytes]); koloniyasız
+## rejimdə boşdur. Hər snapshot-da TAM gedir: paket itsə də növbəti onu bərpa edir.
+enum Snap { TICK, GERMS, SHOTS, FOOD, EVENTS, BOARD, POP, WALLS, MATCH, SELF, COLONY }
 
 ## [constant Snap.SELF] sahəsi — YALNIZ qəbul edən oyunçunun öz mikrobuna aid.
 ##

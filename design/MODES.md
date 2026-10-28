@@ -728,3 +728,121 @@ amöbün damcısı, superdə miniqan. Hərəkət başına −1 top, mikroblara c
   başlanğıc doluluğu 70 → 76; hər ikisi 20 matçda yenə 1 partlama verdi, ona görə qayda
   dəyişmədi. Partlama tez-tez olsun, yoxsa bərabər matçlar xalla bitsin — sahibin qərarıdır
   (rəqəmlər botlarladır, insanlarla yoxlanmalıdır).
+
+## 18. Qida koloniyaları — SONSUZ ARENA (2026-10-28)
+
+Məqsəd: oyunçu üç qida yolu arasında seçsin — mərkəzə yaxın **bol** mənbə (döyüş orada
+olur), kənarda **zəif** mənbə və səpələnmiş qida. Koloniya neytraldır: tutmaq xal vermir,
+komanda sahibliyi və qoruma yaratmır. Yalnız `Mode.ENDLESS`; qalan altı rejimin qida, spor
+və obyekt qaydaları dəyişmir (test: join info və snapshot-da koloniya sətri boşdur, TƏK
+QALAN-da qida köhnə hədəfə dolur).
+
+### 18.1 Qaydalar (rəqəmlər prototipdir, `constants.gd` «Qida koloniyaları»)
+
+| | Bol (2) | Zəif (2) |
+|---|---|---|
+| Mərkəzdən | 350–500 px | 750–900 px |
+| Ehtiyat | 20 | 12 |
+| İstehsal dövrü | 0.45 s | 0.8 s |
+| Tükənəndən sonra bərpa | 24 s | 30 s |
+| Dünyada udulmamış qidası | ≤ 8 | ≤ 8 |
+
+- Koloniya ətrafına (mərkəzdən ≤ 56 px) **adi +1 qida** çıxarır, udma qaydası eynidir
+  (tutum doludursa yemirsən, `food_acc` və super doldurma eynidir). Hər qida ehtiyatdan bir
+  vahid çıxır. Ehtiyat sıfır olanda istehsal dayanır, bərpa sayğacı başlayır; vaxt bitəndə
+  ehtiyat dolur, əvvəlki qida yerində qalır, səkkiz hədd yenə işləyir.
+- **Səkkiz hədd mənşəyə görədir** (`FoodState.origin`, yalnız serverdə): axın qidanı uzağa
+  aparsa da koloniyanınkı sayılır. Say hər tick qidanın özündən yığılır — udulma, quruma və
+  ya başqa silinmə yolu olsa da hesab düz qalır.
+- **Borc yoxdur:** gözləmədə (8 çıxış, ümumi hədəf) sayğac sıfırda dayanır; yer açılanda bir
+  qida çıxır, sonra ritm. Böyük addımda (5 s, 60 s) da koloniya başına ən çoxu 8, səpələnmiş
+  ən çoxu 32 qida — test edilib.
+
+### 18.2 Qida iqtisadiyyatı (`Sim._spawn_ecology`)
+
+1. **Səpələnmiş (ekoloji) qida** öz canlı hədəfinə — **32** — adi doğuş sürəti ilə
+   (8/s) qayıdır və 32-də dayanır. Köhnə generator dünyanı 110 səpələnmiş qida ilə doldururdu;
+   indi o, yalnız SONSUZ ARENA-dan kənarda işləyir. Ölüm səpintisi və boşa çıxan top (mənşə
+   `LOOSE`) bu minimumun əvəzi sayılmır və **limit üçün silinmir**. Bu minimum ümumi
+   hədəfin içində bilərəkdən qorunan istisnadır, sərt maksimum deyil.
+2. **Koloniyalar** ümumi hədəfdən (`_food_target()` = 110) qalan yerdə işləyir: dünyadakı
+   bütün qida hədəfi keçibsə istehsal dayanır.
+
+### 18.3 Yer, şəbəkə, görüntü
+
+- **Yer** (`DishMap.colony_spots`): düzüm + toxumdan deterministik. Bol cüt qarşı-qarşıya,
+  zəif cüt onlara dik. Əvvəl toxumdan 24 namizəd, sonra bucaq × məsafə şəbəkəsi; sahə
+  (90 px) şüşənin içində və **hər** maneədən (kol və cərəyan deşiyi də) aralı, koloniyalar
+  arası ≥ 420 px, ən azı iki ayrı tərəfdən (aralarında > 90°) yaxınlaşılır. Uyğun yer
+  yoxdursa koloniya qoyulmur və xəbərdarlıq yazılır (maneəyə səssizcə düşmür). Üç ümumi
+  düzümdə 40 toxumun hamısında dördü də yerləşdi (ən az 2–3 tərəf). Koloniya bərk deyil.
+  Toxumu dünya yaranarkən server seçir; client yerləri join info-da alır.
+- **Şəbəkə:** join info `colonies` = `[x, y, növ] × 4`; snapshot-un sonunda
+  `Snap.COLONY` = hər koloniyaya 2 bayt (ehtiyat, bərpaya qalan vaxt 0.25 s vahidində) —
+  serializasiya ilə 16 bayt, `SNAP_FIXED` 330 → 346. Hər snapshot-da TAM gedir, AOI-siz
+  (dörd sabit mənbə, mikrob məlumatı yoxdur). Qaydalar versiyası 2 → 3: köhnə client
+  "oyunu yenilə" alır.
+- **Görüntü** (`ColonyView`): qida rəngində (glow həddindən aşağı) hüceyrə rozeti — bol 9,
+  zəif 6 hüceyrə; doluluq azaldıqca hüceyrələr bir-bir kiçilir, tükənəndə quru boz nüvə və
+  12-dən dolan bərpa halqası. Vəziyyət yalnız snapshot-dan; doluluq yumşaq yaxınlaşır, halqa
+  yerli saatla gedib hər snapshot-la düzəlir. Hər koloniya ayrı node-dur və yalnız görüntüsü
+  dəyişəndə çəkilir. YÜKSƏK və MİNİMUM-da eyni oxunur (ekran görüntüsü ilə yoxlanıb).
+  Minimap: qida rəngində nöqtə (bol iri), az qalanda sönük, tükənəndə boz halqa.
+- **Botlar** (`Bot._pick_colony`): ac bot, yaxında (200 px) qida yoxdursa, koloniyanı
+  `məsafə − 14 × qida (≤ 12) + 300 × görünən rəqib` dəyəri ilə səpələnmiş qida ilə müqayisə
+  edir. Rəqib yalnız botun gördüyüdür (görüş sahəsi, başqa kol yox). Tükənmiş və sahəsi boş
+  koloniya seçilmir; sahəsinə çatıb qida tapmadığı koloniyanı bot 8 s saymır. Dolu bot ora
+  göndərilmir. Ayaqlının toru koloniya qidasını adi qida kimi çəkir (ehtiyat təkrarlanmır).
+
+### 18.4 Ölçü (2026-10-28)
+
+**Botlu dünya**, SONSUZ ARENA, 12 toxum × 180 s (köhnə → yeni; skript scratch-dadır):
+
+| | Köhnə | Yeni (spesifikasiya) | Variant: hədəfdə yalnız ekoloji qida |
+|---|---:|---:|---:|
+| Partlatma / dəq | 7.50 | 7.53 | 8.61 |
+| Aclıqdan ölüm / dəq | 0.08 | 0.19 | 0.03 |
+| İlk ölüm (orta) | 18.1 s | 8.6 s | 8.6 s |
+| Ac bot-tick-ləri | 17.0% | 19.1% | 15.3% |
+| Xəritədə qida (orta) | 205 | 202 | 230 |
+| Yeyilən qida / dəq | 182 | koloniya 17, səpələnmiş 26, səpinti 154 | koloniya 39, səpələnmiş 25, səpinti 163 |
+| Koloniyaya gəliş / dəq | — | 14.2 | 14.6 |
+| Tükənmə / dəq | — | 0.64 | 2.75 |
+
+Koloniyanın halı (8 toxum × 180 s): **spesifikasiyada 79% vaxt ümumi hədəfə görə
+dayanır** (işləyir 4%, tükənib 7%, 8 hədd 11%) — çünki botlu matçda xəritədə orta 162
+səpinti (boşa çıxan top, ölüm) qidası var və o, 110-luq hədəfi tək başına keçir.
+
+**Açıq sual (sahibin qərarı):** spesifikasiya "ümumi hədəf keçilibsə koloniyanı dayandır"
+deyir və kod belədir. Ölçüyə görə aktiv matçda koloniyalar çox vaxt susur, seçim azalır.
+Variant — hədəfə yalnız ekoloji qidanı (səpələnmiş + koloniya) saymaq — koloniyaları
+canlandırır (tükənmə 0.64 → 2.75/dəq, aclıq 0.19 → 0.03/dəq), amma xəritədə qida artır
+(202 → 230) və döyüş bir az çoxalır (7.5 → 8.6/dəq). Dəyişiklik `_spawn_ecology`-də üç
+sətirdir. Hər ikisi botlarladır — insanlarla yoxlanmalıdır.
+
+**İlk ölüm erkən gəlir** (18 → 8.6 s): ac botlar mərkəzə yaxın bol mənbədə görüşür. Bu,
+"riskli bol mənbə" ideyasıdır, amma əhali testi (`_test_endless_untouched`) bir anlıq
+"5 / 6" ilə düşürdü (60 təzə dünyanın 5-də 6.7 s-də); test indi dolmanı yoxlayır.
+
+**Paket** (10 mikrob, baxan ən sıx yerdə, 6 toxum × 90 s): orta 809 → 844 bayt, p99
+1060 → 1116, maks 1164 → 1244, MTU-nu (1392) aşan 0 → 0. Fərq: koloniya sətri 16 bayt +
+bir az çox qida (27.8 → 29.1 / snapshot).
+
+**Kadr:** serverin tick-i (10 bot, masaüstü) 0.553 → 0.572 ms. Masaüstü məşq (kirpikli,
+`--auto`, 2 cüt): 240 FPS-də proses 0.52–0.57 → 0.58–0.60 ms. Android emulyatoru (APK,
+kirpikli məşq, 60 Hz): köhnə 5 qaçış orta 6.16 ms, yeni 6 qaçış orta 7.19 ms, hamısı 60 FPS
+və ilişməsiz. Görüntüsü söndürülmüş variant (koloniyalar oyunda, `ColonyView` yox) da eyni
+idi (7.34 ms) — fərq görüntünün yox, səhnənin özünün (koloniyada görüşən botlar) daha
+sıx olmasındandır. Emulyator açılandan sonrakı ilk qaçış hər iki kodda yavaşdır (bir dəfə
+yeni kodda 31 FPS, təkrarda köhnə kod birinci qaçdı və o yavaş oldu: 58.6 FPS).
+
+**Onlayn:** server + iki avtomatik client: A əvvəldən, B 15 s sonra girir, 12-ci saniyədə
+qopub nişanla qayıdır. Sonda ikisi də eyni koloniya halını görür (0.05 / 0.05 / 0.33 / 1.00),
+skript xətası yoxdur.
+
+**Testlər** (`colony_test.gd`, 35 yoxlama): yerləşmə (3 düzüm × 40 toxum), toxumla təkrar,
+digər rejimlər, tükənmə/bərpa, bərpada köhnə qida, ritm, 8 hədd, sürüşən qida, həqiqi udma,
+gözləmədən sonra partlayış yoxdur, böyük addım, 32 minimum, səpinti minimuma sayılmır,
+ümumi hədəf, qidanın yeri (576 qida), torla çəkilmə, join/snapshot, gec qoşulma və paket
+itkisi (client görüntüsü), bot seçimi, tükənmiş koloniyadan ayrılma, gizli rəqib, təhlükədən
+qaçma, dolu bot.

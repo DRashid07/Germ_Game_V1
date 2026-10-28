@@ -949,9 +949,15 @@ trixosisti və amöbün miniqanı olduğu kimidir; köhnə qabıq məntiqi qayı
 
 ### 20.1 Profil
 
-- Profillər indi BİT maskasıdır: `Const.Profile` { STANDARD 0, MUTATIONS 1, MEMBRANE 2 },
-  `Const.rule_on`. Server `--profile membrane` və ya `--profile mutations,membrane`; məşq
-  `--membrane`. Yalnız SONSUZ ARENA dünyası alır; altı rejim standart qalır (test).
+- Profillər BİT maskasıdır: `Const.Profile` { STANDARD 0, MUTATIONS 1, MEMBRANE 2 },
+  `Const.rule_on`. Yalnız SONSUZ ARENA dünyası alır; altı rejim olduğu kimi qalır (test).
+- **2026-10-28 (sahibin qərarı): membran SONSUZ ARENA-nın STANDART qaydasıdır** — rəy toplamaq
+  üçün. Bayraqsız proses membranlıdır (`World.rules_from_args`), söndürmək `--no-membrane`;
+  mutasiyalar eksperimental qalır (`--mutations` / `--profile mutations`). Matç başında izah
+  ilk üç matçda göstərilir (`Settings.tip_due("membrane")`).
+- Botlu ölçü (12 toxum × 180 s, membranlı → membransız): partlatma 6.14 → 7.53/dəq (membran
+  döyüşü ~18% azaldır), aclıqdan ölüm 0.11 → 0.19, ac bot-tick-ləri 25.6% → 19.1% (hər istifadə
+  1 top aparır), xəritədə qida 177 → 202. Serverin tick-i dəyişmir (0.61 → 0.61–0.62 ms).
 - `Sim.membrane_on` — serverdə profildən, proqnozda join info-dakı profildən. Client öz
   bayrağı ilə qaydanı açmır.
 

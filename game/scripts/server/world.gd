@@ -102,22 +102,26 @@ var profile: int = Const.Profile.STANDARD
 static var default_profile := -1
 
 
-## Prosesin qaydalar profili ([enum Const.Profile] bitləri), komanda sətrindən bir dəfə oxunur:
-##   server: `-- --server --ws --profile mutations,membrane` (vergüllə, biri də olar)
-##   məşq:   `-- --practice --mutations --membrane` (yerli dünya serverin özüdür)
-## Bayraq yoxdursa — standart profil, yəni buraxılışın indiki davranışı.
+## Prosesin qaydalar profili ([enum Const.Profile] bitləri), komanda sətrindən bir dəfə oxunur
+## ([method rules_from_args]).
 static func default_rules() -> int:
 	if default_profile < 0:
-		var args := OS.get_cmdline_user_args()
-		var i := args.find("--profile")
-		var named := (args[i + 1] if i >= 0 and i + 1 < args.size() else "").split(",")
-		var p: int = Const.Profile.STANDARD
-		if args.has("--mutations") or named.has("mutations"):
-			p |= Const.Profile.MUTATIONS
-		if args.has("--membrane") or named.has("membrane"):
-			p |= Const.Profile.MEMBRANE
-		default_profile = p
+		default_profile = rules_from_args(OS.get_cmdline_user_args())
 	return default_profile
+
+
+## Komanda sətrindən profil. MEMBRAN 2026-10-28-dən SONSUZ ARENA-nın STANDART qaydasıdır (rəy
+## mərhələsi, design/MODES.md §20) — söndürmək: `--no-membrane`. Mutasiyalar eksperimental
+## qalır: `--mutations` və ya `--profile mutations` (vergüllə, `--profile mutations,membrane`).
+static func rules_from_args(args: PackedStringArray) -> int:
+	var i := args.find("--profile")
+	var named := (args[i + 1] if i >= 0 and i + 1 < args.size() else "").split(",")
+	var p: int = Const.Profile.MEMBRANE
+	if args.has("--mutations") or named.has("mutations"):
+		p |= Const.Profile.MUTATIONS
+	if args.has("--no-membrane"):
+		p &= ~Const.Profile.MEMBRANE
+	return p
 ## Matçın fazası. SONSUZ ARENA həmişə PLAYING-dədir və oradan çıxmır.
 var phase := Const.Phase.PLAYING
 ## Hazırkı fazanın öz saatı (saniyə). Faza dəyişəndə sıfırlanır.

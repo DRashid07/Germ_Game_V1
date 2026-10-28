@@ -349,15 +349,26 @@ static func _test_shot_keeps_rule_midair() -> void:
 
 
 static func _test_standard_unchanged() -> void:
+	# Bayraqsız prosesin profili: membran standartdır, mutasiya yoxdur.
+	var none := World.rules_from_args(PackedStringArray())
+	_check(none == Const.Profile.MEMBRANE
+			and World.rules_from_args(PackedStringArray(["--no-membrane"])) == Const.Profile.STANDARD
+			and World.rules_from_args(PackedStringArray(["--profile", "mutations"]))
+				== Const.Profile.MUTATIONS | Const.Profile.MEMBRANE
+			and World.rules_from_args(PackedStringArray(["--mutations", "--no-membrane"]))
+				== Const.Profile.MUTATIONS,
+		"bayraqsız proses: membran standart, mutasiya yox; --no-membrane söndürür, --mutations əlavə edir")
+	World.default_profile = none
 	var w := SimTest._quiet_world(90)
+	World.default_profile = Const.Profile.STANDARD
 	w.add_player(A_ID, "A")
 	w.sim.germs[A_ID].age = 200.0
 	w.tick(DT)
 	var snap := w.snapshot_for(A_ID)
-	_check(w.profile == Const.Profile.STANDARD and int(w.join_info_for(A_ID)["profile"]) == 0
-			and int(snap[Const.Snap.EVO]) == -1 and w.choose_mutation(A_ID, 0) == "profile"
-			and World.default_rules() == Const.Profile.STANDARD,
-		"standart profil (bayraqsız proses): seçim yoxdur, EVO -1, join info 0")
+	_check(not Const.rule_on(w.profile, Const.Profile.MUTATIONS)
+			and int(w.join_info_for(A_ID)["profile"]) == Const.Profile.MEMBRANE
+			and int(snap[Const.Snap.EVO]) == -1 and w.choose_mutation(A_ID, 0) == "profile",
+		"standart profildə mutasiya yoxdur: seçim rədd, EVO -1, join info yalnız membran")
 	var ok := true
 	for m in Const.Mode.values():
 		World.default_profile = Const.Profile.MUTATIONS

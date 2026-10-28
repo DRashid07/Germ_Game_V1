@@ -1401,7 +1401,9 @@ func _build_hud() -> void:
 	_hud.membrane_button.used.connect(_on_membrane_pressed)
 	_hud.membrane_button.blocked.connect(_on_membrane_blocked)
 	_hud.membrane_button.visible = Const.rule_on(_profile, Const.Profile.MEMBRANE)
-	if _hud.membrane_button.visible:
+	# Yeni idarə — ilk üç matçda qısa izah (bax [method Settings.tip_due]).
+	if _hud.membrane_button.visible and Settings.tip_due("membrane"):
+		Settings.tip_shown("membrane")
 		_hud.flash_hint("MEMBRAN (E): öndən gələn ilk topu qaytarır · damcı yuxarıdan keçir")
 	# Xəritə rejimin öz qabını və düzümünü göstərir (obyekt rejimlərində kiçik qab).
 	_hud.minimap.wall = _wall

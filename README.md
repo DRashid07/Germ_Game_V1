@@ -713,14 +713,15 @@ godot --path game -- --practice --mutations
 - **Botlar** eyni hədlərdə, eyni yoxlamadan keçən seçim edir (növünə görə plan) və öz
   məsafəsini mutasiya ilə hesablayır.
 
-**Membran müdafiəsi (eksperimental profil, yalnız SONSUZ ARENA).** Vaxtlama ilə bir atəşi
-geri qaytarmaq: **E** və ya superin üstündəki membran düyməsi (design/MODES.md §20).
-Profillər bit maskasıdır və birlikdə açıla bilər:
+**Membran müdafiəsi (SONSUZ ARENA-nın standart qaydası, rəy mərhələsi).** Vaxtlama ilə bir
+atəşi geri qaytarmaq: **E** və ya superin üstündəki membran düyməsi (design/MODES.md §20).
+2026-10-28-dən bayraqsız açıqdır — oyunçulardan rəy toplamaq üçün; digər altı rejimdə yoxdur.
+Söndürmək və mutasiyaları əlavə etmək:
 
 ```bash
-godot --headless --path game -- --server --ws --profile membrane            # yalnız membran
-godot --headless --path game -- --server --ws --profile mutations,membrane  # ikisi birlikdə
-godot --path game -- --practice --membrane                                   # məşq
+godot --headless --path game -- --server --ws --no-membrane          # membransız (köhnə qayda)
+godot --headless --path game -- --server --ws --profile mutations    # membran + mutasiyalar
+godot --path game -- --practice --no-membrane                         # məşq, membransız
 ```
 
 | | |
@@ -1210,7 +1211,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası (1031 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası (1032 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client

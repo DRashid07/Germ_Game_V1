@@ -454,6 +454,8 @@ static func _test_roundtrips() -> void:
 
 
 static func _test_standard_and_supers() -> void:
+	# Membranı söndürülmüş proses (`--no-membrane`) — köhnə qayda.
+	World.default_profile = Const.Profile.STANDARD
 	var w := SimTest._quiet_world(123)
 	w.add_player(A_ID, "A")
 	var g: Sim.GermState = w.sim.germs[A_ID]
@@ -465,7 +467,7 @@ static func _test_standard_and_supers() -> void:
 	w.tick(DT)
 	_check(not w.sim.membrane_on and g.mem_left == 0.0 and g.balls == 8
 			and float(w.snapshot_for(A_ID)[Const.Snap.MEM]) < 0.0,
-		"standart profil: membran istəyi heç nə etmir, MEM -1")
+		"membran söndürülüb (--no-membrane): istək heç nə etmir, MEM -1")
 	var ok := true
 	for m in Const.Mode.values():
 		World.default_profile = Const.Profile.MEMBRANE

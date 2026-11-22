@@ -980,7 +980,10 @@ static func hit_payload(arg: float) -> int:
 ## ([constant Snap.EVO]). Köhnə client mutasiyalı mikrobun hərəkətini yanlış proqnozlaşdırardı.
 ## 5: membran müdafiəsi — girişin 7-ci biti, bayraqda faza və istiqamət ([enum GFlag] `MEM`),
 ## snapshot-un sonunda öz soyuması ([constant Snap.MEM]) və PARRY hadisəsi.
-const RULES := 5
+## 6: ÜÇLÜK-də ölən insan matçdan ÇIXMIR — nəticə almır, raundu yoldaşının gözü ilə gözləyir
+## və növbəti raundda doğulur; matçın sonunda komanda nəticəsi (`score_us`) gəlir. Köhnə
+## client öz mikrobu snapshot-dan düşəndə onu "kölgə" kimi idarə etməyə davam edərdi.
+const RULES := 6
 
 
 ## Şəbəkəyə gedən rejim ədədi: aşağı bayt rejim, yuxarı bayt [constant RULES].
@@ -1164,8 +1167,10 @@ static func mode_goal(mode: int) -> String:
 		Mode.DUO: return "Sona qalan cüt udur"
 		Mode.TRIO: return "Üç raundun ikisini udan qalib"
 		Mode.MOTHER: return "Rəqibin Anasını doldur, öz Ananı əm"
-		Mode.ISLAND: return "Adada çox ol — 100 xal udur"
-		Mode.BALL: return "Nüvəni rəqibin qapısına sal — 2 qol udur"
+		# Rəqəmlər sabitlərdən gəlir: əvvəl burada "100 xal" yazılmışdı, qələbə həddi isə
+		# 70 idi — nəticə ekranı başqa rəqəm deyirdi (QA 2026-11-22).
+		Mode.ISLAND: return "Adada çox ol — %d xal udur" % ISLAND_WIN
+		Mode.BALL: return "Nüvəni rəqibin qapısına sal — %d qol udur" % BALL_GOALS
 		_: return "Sona qalan udur"
 
 

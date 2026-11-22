@@ -342,6 +342,10 @@ func _settings(menu: MenuV2) -> void:
 	if gear == null:
 		_issue("menyu", "Ayarlar (dişli) düyməsi tapılmadı")
 		return
+	# Server sahəsi oyunçudan gizlidir (bax [member SettingsView.dev_open]) — agent onu
+	# tərtibatçı kimi açır, yoxsa yazacağı sahə olmazdı.
+	if not server.is_empty():
+		SettingsView.dev_open = true
 	await _click(gear, "dişli")
 	await _wait(0.4)
 	var view := menu._settings
@@ -580,6 +584,20 @@ func _drive(delta: float) -> void:
 	var a := _arena
 	_play_t += delta
 	if a._finished or a.me == null or _manual:
+		return
+	# Ölüb dünyaya qayıtmağı gözləyir (CÜT-də dirilmə, ÜÇLÜK-də növbəti raund, obyekt
+	# rejimində baza — bax [method Arena._own_dead]): mikrob gizli və donmuşdur, kamera
+	# ÜÇLÜK-də yoldaşdadır, super və atəş sönükdür. Bunlar qaydadır — yoxlamalar və sürmə
+	# dayanır, pəncərələr sıfırlanır ki, qayıdış anı "ilişdi" sayılmasın.
+	if a._own_dead():
+		_release_all()
+		_win_t = 0.0
+		_cmd_win = 0.0
+		_pos_win = a.me.pos
+		_stuck_run = 0
+		_ready_lag = 0.0
+		_fire_tap_t = -1.0
+		_super_tap_t = -1.0
 		return
 	var me := a.me
 	var hud := a._hud

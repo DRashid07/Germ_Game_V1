@@ -43,6 +43,13 @@ static func run() -> int:
 	_test_super_timer_survives_reconcile()
 	_test_spawn_inside_wet_zone()
 	_test_trio_rounds()
+	_test_trio_death_waits_round()
+	_test_duo_revive_eye()
+	_test_board_hidden_in_team_modes()
+	_test_server_field_hidden()
+	_test_countdown_economy_frozen()
+	_test_mode_goal_numbers()
+	_test_hud_wait_and_top()
 	_test_ranking_matches_board()
 	_test_super_consumed_once()
 	_test_world_frozen_after_over()
@@ -4990,6 +4997,218 @@ static func _test_trio_rounds() -> void:
 	world.tick(Const.TICK_DELTA)
 	_check(world.phase == Const.Phase.OVER,
 		"iki raund udan matçı udur (faza=%d, hesab=%s)" % [world.phase, str(world.round_wins)])
+
+
+## ÜÇLÜK: raundda ölən İNSAN matçdan çıxmır (QA 2026-11-22). Əvvəl o, dərhal nəticə alıb
+## menyuya qayıdırdı və "üç raundun ikisi" insan üçün bir raund idi. İndi: nəticə yoxdur,
+## yeri saxlanır, yoldaşının gözü ilə görür, növbəti raundda doğulur, matçın sonunda isə
+## KOMANDA nəticəsi alır.
+static func _test_trio_death_waits_round() -> void:
+	var world := World.new(47, Const.Mode.TRIO)
+	world.sim.rng.seed = 47
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+	var steps := int(Const.COUNTDOWN_TIME / Const.TICK_DELTA) + 2
+	for i in steps:
+		world.tick(Const.TICK_DELTA)
+	var team := int(world.teams.get(A_ID, -1))
+	_check(world.phase == Const.Phase.PLAYING and team >= 0, "ÜÇLÜK gözləmə: raund başladı (komanda %d)" % team)
+
+	world.sim.germs[A_ID].balls = 0
+	var out: Array = world.tick(Const.TICK_DELTA)
+	var got_result := false
+	for e in out:
+		got_result = got_result or int(e["id"]) == A_ID
+	_check(not world.sim.germs.has(A_ID) and not got_result and world._round_wait.has(A_ID),
+		"ÜÇLÜK-də ölən insan nəticə almır, raundu gözləyir")
+	_check(world.holds(A_ID), "gözləyən oyunçunun matçda yeri var (yenidən qoşula bilər)")
+
+	var target := world.spectate_target(A_ID)
+	var snap: Array = world.snapshot_for(A_ID)
+	var seen: PackedInt32Array = (snap[Const.Snap.GERMS] as Array)[0]
+	_check(target >= 0 and world.sim.germs[target].team == team and seen.has(target),
+		"gözləyən yoldaşını izləyir və onu snapshot-da görür (yoldaş %d)" % target)
+	var lowest := true
+	for gid in seen:
+		if gid != target and world.sim.germs.has(gid) and world.sim.germs[gid].team == team \
+				and gid < target:
+			lowest = false
+	_check(lowest, "izlənən snapshot-dakı ən kiçik id-li yoldaşdır (client eyni qaydanı işlədir)")
+
+	# Rəqib komandanı qırırıq → raund bitir, A yeni raundda doğulur.
+	for gid in world.sim.germs.keys():
+		if world.sim.germs[gid].team != team:
+			world.sim.germs[gid].balls = 0
+	world.tick(Const.TICK_DELTA)
+	world.tick(Const.TICK_DELTA)
+	var back: Sim.GermState = world.sim.germs.get(A_ID)
+	_check(back != null and back.team == team and back.balls == Const.START_BALLS \
+			and back.capacity == Const.START_CAPACITY and not world._round_wait.has(A_ID),
+		"növbəti raundda insan öz komandasında, başlanğıc tutumu ilə qayıdır")
+	_check(world.sim.germs.size() == Const.TRIO_GERMS and world.phase == Const.Phase.COUNTDOWN,
+		"yeni raundda 6 mikrob, bot insanın yerini tutmayıb (%d)" % world.sim.germs.size())
+	var per_team := [0, 0]
+	for gid in world.sim.germs:
+		var t2: int = world.sim.germs[gid].team
+		if t2 == 0 or t2 == 1:
+			per_team[t2] += 1
+	_check(per_team[0] == 3 and per_team[1] == 3, "komandalar 3v3 qalır (%s)" % str(per_team))
+
+	# İkinci raund: A yenə ölür, sonra rəqib qırılır → matç bitir, A komanda nəticəsi alır.
+	for i in steps:
+		world.tick(Const.TICK_DELTA)
+	world.sim.germs[A_ID].balls = 0
+	world.tick(Const.TICK_DELTA)
+	for gid in world.sim.germs.keys():
+		if world.sim.germs[gid].team != team:
+			world.sim.germs[gid].balls = 0
+	world.tick(Const.TICK_DELTA)
+	world.tick(Const.TICK_DELTA)
+	var res := {}
+	for r in world.pending_results:
+		if int(r["id"]) == A_ID:
+			res = r
+	_check(world.phase == Const.Phase.OVER and not res.is_empty(),
+		"matç bitəndə son raundda ölüb gözləyən insan da nəticə alır")
+	_check(bool(res.get("won", false)) and int(res.get("mode", -1)) == Const.Mode.TRIO \
+			and int(res.get("score_us", -1)) == 2 and int(res.get("score_them", -1)) == 0,
+		"nəticə komandanındır: QALİB, raund hesabı 2 — 0 (%s)" % str(res))
+	_check(world._round_wait.is_empty(), "matç bitəndə gözləmə növbəsi təmizlənir")
+
+
+## CÜT: dirilməni gözləyənin görüş sahəsi öldüyü yerdir (əvvəl qabın mərkəzi idi) —
+## client-in kamerası da orada qalır.
+static func _test_duo_revive_eye() -> void:
+	var world := _duo_pair(53)
+	var at: Vector2 = world.sim.germs[A_ID].pos
+	world.sim.germs[A_ID].balls = 0
+	world.tick(Const.TICK_DELTA)
+	_check(world._revive.has(A_ID), "CÜT gözləmə: A dirilmə növbəsindədir")
+	var eye: Vector2 = world._revive.get(A_ID, {}).get("eye", Vector2.INF)
+	_check(eye.distance_to(at) < 40.0, "dirilmə gözləyənin gözü öldüyü yerdədir (%.0f px)" % eye.distance_to(at))
+
+
+## ANA HÜCEYRƏ: geri sayımda Ana boşalmır, metabolizm işləmir (QA 2026-11-22 — əvvəl
+## Anaya toxunaraq doğulan yoldaşlar sayım boyu ondan top əmirdi: "öz 66, rəqib 70").
+static func _test_countdown_economy_frozen() -> void:
+	var world := World.new(61, Const.Mode.MOTHER)
+	world.sim.rng.seed = 61
+	world.add_player(A_ID, "A")
+	world.tick(Const.TICK_DELTA)
+	_check(world.phase == Const.Phase.COUNTDOWN, "ANA sayımı: matç sayımdadır")
+	# Botları Anaların düz kənarına qoyuruq — sayımda əmmə şansı ən yüksək haldır.
+	for gid in world.sim.germs:
+		var g: Sim.GermState = world.sim.germs[gid]
+		if g.team == 0 or g.team == 1:
+			var o: Vector4 = world.sim.obstacles[world.sim.mother_index[g.team]]
+			g.pos = Vector2(o.x, o.y) + Vector2(0.0, o.z + g.radius() + 2.0)
+	var balls := {}
+	for gid in world.sim.germs:
+		balls[gid] = world.sim.germs[gid].balls
+	var ticks := 0
+	while world.phase == Const.Phase.COUNTDOWN and ticks < 200:
+		world.tick(Const.TICK_DELTA)
+		ticks += 1
+	var same := true
+	for gid in balls:
+		if world.sim.germs.has(gid) and world.sim.germs[gid].balls < int(balls[gid]):
+			same = false
+	_check(world.sim.mother_balls[0] == Const.MOTHER_START and world.sim.mother_balls[1] == Const.MOTHER_START,
+		"sayım bitəndə iki Ana da %d topdadır (%s)" % [Const.MOTHER_START, str(world.sim.mother_balls)])
+	_check(same, "sayımda heç bir mikrobun topu azalmayıb (metabolizm donub)")
+	# Oyun başlayanda iqtisadiyyat yenə işləyir.
+	for i in 30:
+		world.tick(Const.TICK_DELTA)
+	_check(world.phase == Const.Phase.PLAYING and not world.sim.economy_paused,
+		"oyun başlayanda metabolizm və əmmə yenidən işləyir")
+
+
+## Başlanğıc yazısının rəqəmləri sabitlərdən gəlir (əvvəl YAŞ ADA "100 xal" yazırdı, həddi 70 idi).
+static func _test_mode_goal_numbers() -> void:
+	var island := Const.mode_goal(Const.Mode.ISLAND)
+	var ball := Const.mode_goal(Const.Mode.BALL)
+	_check(island.contains(str(Const.ISLAND_WIN)) and not island.contains("100")
+			and ball.contains(str(Const.BALL_GOALS)),
+		"rejim məqsədləri sabitlərlə eynidir ('%s', '%s')" % [island, ball])
+
+
+## HUD: ölü ikən joystik və göstərici solğun, yuxarıda FPS və bağlantı nişanı obyekt
+## lövhəsinin üstünə düşmür, ipucları növbə ilə və uzun göstərilir (QA 2026-11-22).
+static func _test_hud_wait_and_top() -> void:
+	var h := Hud.new()
+	h.build(load("res://assets/ui/joystick_base.svg"), load("res://assets/ui/joystick_knob.svg"))
+	h.dead_wait = true
+	var dim := is_equal_approx(h.move_stick.modulate.a, Hud.DEAD_DIM) \
+		and is_equal_approx(h._gauge_lbl.modulate.a, Hud.DEAD_DIM)
+	h.dead_wait = false
+	var back := is_equal_approx(h.move_stick.modulate.a, 1.0)
+	_check(dim and back, "ölü ikən joystik və göstərici solğunlaşır, qayıdanda tam görünür")
+
+	h._fps_lbl.visible = true
+	h.set_objective(Const.Mode.BALL, Const.Phase.PLAYING, 0, 0, 120.0, false, 0.0)
+	var obj_ok := not h.fps_rect_overlaps_objective()
+	h.set_objective(Const.Mode.BALL, Const.Phase.WAITING, 0, 0, 120.0, false, 0.0)
+	var back_top := is_equal_approx(h._fps_lbl.offset_top, 10.0)
+	_check(obj_ok and back_top, "FPS və ZƏİF BAĞLANTI obyekt lövhəsinin altına enir, lövhə yoxdursa yerinə qayıdır")
+
+	h.show_tip("birinci", Hud.TIP_TIME, 1.0)
+	h.show_tip("ikinci")
+	var seen := []
+	var t := 0.0
+	while t < 12.0:
+		h._step_tip(0.1)
+		t += 0.1
+		var cur := h.tip_text()
+		if not cur.is_empty() and (seen.is_empty() or seen[-1][0] != cur):
+			seen.append([cur, snappedf(t, 0.1)])
+	var order_ok: bool = seen.size() == 2 and seen[0][0] == "birinci" and seen[1][0] == "ikinci"
+	var timing_ok: bool = order_ok and float(seen[0][1]) >= 1.0 and float(seen[1][1]) - float(seen[0][1]) >= Hud.TIP_TIME
+	_check(order_ok and timing_ok, "ipucları növbə ilə, hərəsi %.0f s (%s)" % [Hud.TIP_TIME, str(seen)])
+	h.free()
+
+	var tip := Arena.membrane_tip()
+	_check(tip.contains("superin üstündəki düymə") and (Const.is_handheld() or tip.contains("E ")),
+		"membran izahı düyməni göstərir, klaviatura yalnız masaüstündə ('%s')" % tip)
+
+
+## Fərdi partlatma cədvəli yalnız fərdi rejimlərdə görünür, komanda rejimlərində minimap
+## onun yerinə qalxır (QA 2026-11-22).
+static func _test_board_hidden_in_team_modes() -> void:
+	var h := Hud.new()
+	h.build(load("res://assets/ui/joystick_base.svg"), load("res://assets/ui/joystick_knob.svg"))
+	var ok := true
+	var report := PackedStringArray()
+	for m in [Const.Mode.SOLO, Const.Mode.DUO, Const.Mode.TRIO, Const.Mode.MOTHER,
+			Const.Mode.ISLAND, Const.Mode.BALL]:
+		h.set_match(int(m), Const.Phase.PLAYING, 1.0, 6, false)
+		var want := not Const.is_team_mode(int(m))
+		var top := h.minimap.offset_top
+		var top_ok := top > Hud.BOARD_BOTTOM if want else top < Hud.BOARD_BOTTOM
+		if h.is_board_shown() != want or not top_ok:
+			ok = false
+		report.append("%s=%s/%.0f" % [Const.mode_name(int(m)), str(h.is_board_shown()), top])
+	_check(ok, "cədvəl yalnız TƏK QALAN-da, komanda rejimlərində minimap yuxarıda (%s)" % ", ".join(report))
+	h.free()
+
+
+## Server ünvanı sahəsi oyunçu ayarlarında görünmür; xüsusi ünvan saxlanıbsa və ya
+## tərtibatçı qapısı açılıbsa görünür (QA 2026-11-22).
+static func _test_server_field_hidden() -> void:
+	var keep_addr := Settings.address
+	var keep_open := SettingsView.dev_open
+	Settings.address = Const.default_server()
+	SettingsView.dev_open = false
+	var hidden := not SettingsView._server_row_due()
+	Settings.address = "ws://127.0.0.1:27015"
+	var custom := SettingsView._server_row_due()
+	Settings.address = Const.default_server()
+	SettingsView.dev_open = true
+	var dev := SettingsView._server_row_due()
+	Settings.address = keep_addr
+	SettingsView.dev_open = keep_open
+	_check(hidden and custom and dev,
+		"server sahəsi: standartda gizli (%s), xüsusi ünvanla (%s) və tərtibatçı qapısı ilə (%s) görünür"
+		% [str(hidden), str(custom), str(dev)])
 
 
 ## Matçın son sıralaması liderlər cədvəli ilə EYNİ meyara görə işləyir.

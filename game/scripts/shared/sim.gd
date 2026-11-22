@@ -495,6 +495,13 @@ var _spore_timer := 0.0
 ## Prediction rejimi: metabolizm və acından partlama işlədilmir
 ## (bax [method step_movement]).
 var _no_metabolism := false
+## Matçın geri sayımı: mikroblar yerində durur, top İQTİSADİYYATI da donur — metabolizm,
+## quru zonanın topu və Anadan əmmə ([method _suck]). [World] hər tick qoyur.
+##
+## Əvvəl sayımda bunların hamısı işləyirdi: ANA HÜCEYRƏ-də Anaya toxunaraq doğulan
+## yoldaşlar sayım boyu ondan top əmirdi və matç "öz Ana 66, rəqibinki 70" ilə başlayırdı
+## (QA 2026-11-22). Hərəkət fizikası (axın) dəyişmir.
+var economy_paused := false
 
 
 func _init() -> void:
@@ -828,7 +835,7 @@ func _step_germs(inputs: Dictionary, dt: float) -> void:
 		g.safe_t = maxf(0.0, g.safe_t - dt)
 
 		# Metabolizm: vaxt keçdikcə bir top yanır.
-		if not _no_metabolism:
+		if not _no_metabolism and not economy_paused:
 			g.drain_t -= dt
 			if g.drain_t <= 0.0:
 				g.drain_t += Const.drain_period(g.capacity)

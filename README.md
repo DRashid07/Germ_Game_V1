@@ -315,7 +315,10 @@ median 16–24 saniyə yaşadı, ilk zərbəni qalxan bitən kimi (4–9 s) ald�
 kimi partlatmadı. 5/10 ilə doğulan mikrobu üç zərbə partladır, botlar isə ən
 yaxındakına dəqiq, qabaqlayaraq atır.
 
-**Həll — ilk 10 matç** (`Const.NEWBIE_MATCHES`; məşq də sayılır):
+**Həll — ilk 10 matç** (`Const.NEWBIE_MATCHES`). Sayılan yalnız ONLAYN və həqiqətən oynanan
+matçdır: 20 s oynayanda və ya ölüm/nəticə gələndə ([`Arena._count_match`](game/scripts/client/arena.gd)).
+Məşqdə qoruma işləyir, amma onu xərcləmir; girib dərhal çıxmaq da sayılmır (QA 2026-11-22 —
+əvvəl hər arena açılışı sayılırdı və məşq qorumanı tükəndirirdi).
 
 | | Adi oyunçu | Yeni oyunçu |
 |---|---|---|
@@ -627,7 +630,7 @@ matçın olub-olmamasındadır.
 |---|---|---|---|---|
 | Mikrob | ən azı 6 | 10 | 10 (5×2) | 6 (3v3) |
 | Giriş | dərhal | 3 s sayım | 3 s sayım | 3 s sayım |
-| Ölüm | menyu, yenidən gir | matç bitir | **yoldaşın diriltir** | raund bitir |
+| Ölüm | menyu, yenidən gir | matç bitir | **yoldaşın diriltir** | yoldaşını izləyirsən, növbəti raundda qayıdırsan |
 | Qab | sabit 1200 | 1200 → 90 | 1200 → 90 | 700 → 220 |
 | Spor | yox | 3 | 3 | yox |
 | Qida koloniyası | 4 | yox | yox | yox |
@@ -764,11 +767,25 @@ ayrı sualdır. Yoldaşın adı **laym**, düşməninki sönük ağdır.
 
 CÜT-də yoldaşın sağ ikən ölüm müvəqqətidir: 15 saniyə sonra qayıdırsan, amma
 **tutum sıfırlanır** — dirilmə ikinci şansdır, cəzasız davam deyil. İkiniz də
-ölsəniz cüt matçdan çıxır.
+ölsəniz cüt matçdan çıxır. Gözləyəndə ekranın ortasında saniyə sayılır («Yoldaşın
+sağdır — səni diriltəcək»), idarə bağlıdır, kamera ölüm yerində qalır. Əvvəl client bu
+halı bilmirdi: ölü mikrob ekranda 15 s "kölgə" kimi gəzir və atəş açırdı
+([`Arena._watch_own_presence`](game/scripts/client/arena.gd), QA 2026-11-22).
 
 ÜÇLÜK-də tutum raunddan raunda **keçmir**: keçsəydi, birinci raundu udan
 komanda ikincidə də üstün başlayardı və matç faktiki olaraq bir raundda
 həll olunardı.
+
+ÜÇLÜK-də ölən oyunçu matçdan **çıxmır**: raundun qalanını yoldaşının gözü ilə izləyir
+(«İZLƏYİRSƏN»), növbəti raundda hamı ilə birlikdə doğulur, nəticəni isə matçın sonunda
+**komanda** kimi alır («QALİB! · RAUND 2 — 1»). Əvvəl ölən dərhal menyuya qayıdırdı və
+qalan raundlar onsuz oynanırdı. İzlənən — komandanın ən kiçik id-li sağ mikrobudur:
+server görüş sahəsini onun üstünə qurur, client eyni qaydanı snapshot-dan çıxarır, şəbəkəyə
+sahə əlavə olunmur ([`World.spectate_target`](game/scripts/server/world.gd)). Qaydalar
+versiyası 6-dır.
+
+Komanda rejimlərində (CÜT, ÜÇLÜK, ANA, ADA, NÜVƏ TOPU) fərdi «partlatma» cədvəli
+**göstərilmir** — matçı hesab həll edir; minimap onun yerinə qalxır.
 
 ### Obyekt rejimləri
 
@@ -791,6 +808,9 @@ var — yalnız rejimə lazım olan maneələr (`DishMap.obstacles_for`, `Const.
 - **NÜVƏ TOPU:** gövdə ilə itələmək pulsuzdur, topla vurmaq Nüvəni ağırlaşdırır (40-da
   partlayır). Qapı şüşənin üstündədir; qoldan sonra hamı yerinə qayıdır.
 - Rənglər baxana görədir: bizim Ana və qapı **laym**, onlarınkı **narıncı**.
+- Geri sayımda top iqtisadiyyatı DONUR: metabolizm, quru zonanın topu və Anadan əmmə
+  (`Sim.economy_paused`). Əvvəl Anaya toxunaraq doğulan yoldaşlar sayım boyu ondan top əmirdi
+  və matç «öz 66, rəqib 70» ilə başlayırdı (QA 2026-11-22).
 - Rəqəmlər botlu matçlarla ölçülüb: `Godot --headless --path game -- --objtest`
   (testlər), `… --objtest --probe --no-human --mode 4 --seeds 20` (balans).
 
@@ -844,6 +864,8 @@ Menyudakı dişli → tam ekran **AYARLAR**. **Matçın içində ayarlar yoxdur*
 Brawl Stars-da olduğu kimi, döyüş ekranında sistem düyməsi yoxdur. Matçdan
 çıxmaq üçün Android-in **GERİ** jesti və ya **ESC**: kiçik təsdiq açılır
 (DAVAM ET / ÇIX). Sonsuz arenada matç bitmədiyi üçün bu çıxış qalmalıdır.
+MƏŞQ-də təsdiq açıq ikən dünya **dayanır** — oflayn dünyanı yalnız arena addımlayır
+([`Arena.paused_by_prompt`](game/scripts/client/arena.gd)); onlayn dünya serverdədir və dayanmır.
 
 Üç sütun, çünki ekran yatay 1280×720-dir: bir sütunluq siyahı eni boş qoyub
 oyunçunu sürüşdürməyə məcbur edərdi.
@@ -858,7 +880,7 @@ oyunçunu sürüşdürməyə məcbur edərdi.
 | | Kadr sayğacı | HUD-un yuxarı-mərkəzində FPS |
 | **İDARƏ** | Sol əl düzümü | Joystick sağ yarıya, atəş və super sol aşağıya |
 | | Titrəmə | Zərbə, super, tutum artımı, ölüm (yalnız telefonda) |
-| | Server ünvanı · Sıfırla · versiya | |
+| | Sıfırla · versiya | Server ünvanı oyunçudan GİZLİDİR: versiya yazısına 5 dəfə toxunanda açılır, saxlanan ünvan standart deyilsə özü görünür ([`SettingsView.dev_open`](game/scripts/client/settings_view.gd)) |
 
 Hamısı [`Settings`](game/scripts/shared/settings.gd) autoload-undadır və
 `user://settings.cfg`-yə yazılır. Autoload olması praktik nəticə verir: menyunu
@@ -1211,7 +1233,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası (1032 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası + ÜÇLÜK/CÜT gözləməsi + HUD və sayım (1056 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -2503,6 +2525,21 @@ keytool -genkeypair -v -keystore germ_arena_release.keystore -alias germarena \
 > yeniləmək mümkün olmur — yalnız yeni paket adı ilə sıfırdan yayımlamaq qalır.
 >
 > **iOS:** Windows-da mümkün deyil, Mac tələb olunur.
+
+### Paketə nə düşmür
+
+`export_presets.cfg`-dəki `exclude_filter` (QA 2026-11-22):
+
+| Profil | Çıxarılır | Qalır |
+|---|---|---|
+| **Android Release** (Play Store) | bütün `scripts/tools/*`, köhnə menyu (`main_menu.*`), 3D prototip (`assets/proto3d`, `proto3d_jelly`), `_verify` | yalnız oyun |
+| **Android** (test APK), **Web** (canlı sayt — Render bunu ixrac edir) | test dəstləri (`*_test.gd`), QA agenti, `social_demo`, `map_preview`, `species_preview`, 3D prototip, köhnə menyu, `_verify` | ölçmə probe-ları (`frame_probe`, `perf_probe`, `germ_bench`, `screenshot`, `super_probe`, `hit_probe`, `net_probe`, `stall_probe`, `auto_client`) — emulyator və brauzer ölçmələri onları bayraqla yükləyir |
+| Windows, Linux Server | dəyişməyib | hamısı (`3D prototip.bat`, mutasiya `.bat`-ı Windows build-ini işlədir) |
+
+Oyunun kodu test fayllarının SİNFİNƏ istinad etməməlidir — sinif ixracdan düşəndə istinad edən
+skript kompilyasiya olunmur. `boot.gd`-dəki yeganə istinad (`SimTest._pass`) skript obyekti ilə
+oxunur. Yoxlama: hər profilin `--export-pack`-i, paketdə faylların adı, və `--main-pack` ilə
+menyu + ÜÇLÜK məşqi xətasız açılır; paket 14.92 → 14.36 MB (Release).
 
 ---
 

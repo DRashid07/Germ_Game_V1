@@ -39,6 +39,9 @@ const MAP_SIZE := 132.0
 const BOARD_ROWS := 5
 const BOARD_ROW_H := 33.0
 const BOARD_BOTTOM := 74.0 + BOARD_ROWS * BOARD_ROW_H
+## Cədvəl olmayan (komanda) rejimlərində minimapın yuxarı kənarı: "SAĞ: N" və raund
+## hesabının (40–70 px) altında.
+const MAP_TOP_NO_BOARD := 82.0
 
 ## Matçın içində AYARLAR YOXDUR — Brawl Stars-da olduğu kimi.
 ##
@@ -109,6 +112,46 @@ var _message_tween: Tween = null
 ## ÜÇLÜK-ün raund hesabı — nəticə ekranı da onu göstərməlidir, ona görə
 ## [method set_match]-dan saxlanılır.
 var _trio := false
+## Baxan ölüb, dünyaya qayıtmağı gözləyir ([method Arena._own_dead]) — təhlükə
+## xəbərdarlıqları susur ([method update_gauge]), joystik və göstərici SÖNÜKLƏŞİR.
+##
+## Əvvəl ölü oyunçu bazada doğulmanı gözləyərkən canlı HUD görürdü: qırmızı
+## "15/15 DOLURSAN — TOP AT!", hazır SUPER və tam parlaq joystik (QA 2026-11-22).
+## Joystik GİZLƏNMİR, yalnız solğunlaşır: gizlənən Control toxunuşu buraxar, barmağını
+## saxlayan oyunçu isə doğulan kimi yeriməlidir.
+var dead_wait := false:
+	set(v):
+		if v == dead_wait:
+			return
+		dead_wait = v
+		var a := DEAD_DIM if v else 1.0
+		for c in [move_stick, _gauge_lbl, _level_lbl]:
+			if c != null:
+				(c as CanvasItem).modulate.a = a
+## Ölüb gözləyən oyunçunun joystiki və göstəricisi bu qədər görünür.
+const DEAD_DIM := 0.35
+
+## Öyrədici ipucunun ekranda qalma müddəti (s). Mərkəzdəki 2 saniyəlik mesaj uzun
+## cümləni oxumağa çatmırdı (QA 2026-11-22).
+const TIP_TIME := 5.0
+## İki ipucu arasındakı boşluq və sönmə/yanma müddəti.
+const TIP_GAP := 0.4
+const TIP_FADE := 0.25
+var _tip_box: PanelContainer
+var _tip_lbl: Label
+## Növbədəki ipucları — [mətn, saniyə]. Eyni anda yalnız biri görünür.
+var _tips: Array = []
+var _tip_left := 0.0
+var _tip_total := 0.0
+var _tip_wait := 0.0
+## Mərkəz mesajının nömrəsi: [method flash_message]-in taymeri yalnız ÖZ mesajını silir.
+var _msg_id := 0
+## Obyekt lövhəsi (yuxarı-mərkəz) görünürmü — FPS və "ZƏİF BAĞLANTI" onun altına keçir.
+var _obj_on := false
+## [method set_wait]-in yazısı mərkəzdədirmi.
+var _wait_shown := false
+## [method _show_board] ən azı bir dəfə yer qoyubmu.
+var _board_placed := false
 var _score_us := 0
 var _score_them := 0
 
@@ -132,6 +175,7 @@ func build(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 	_build_center()
 	_build_result()
 	_build_system()
+	_build_tip()
 	_build_controls(base_tex, knob_tex)
 	# Mutasiya kartları — yuxarı ortada, idarə düymələrinin üstündə, çıxış təsdiqinin altında.
 	mutations = MutationCards.new()
@@ -416,9 +460,107 @@ func _build_system() -> void:
 	_safe_root.add_child(_net_lbl)
 
 
+## Yuxarı-mərkəzin iki sistem yazısı: kadr sayğacı və "ZƏİF BAĞLANTI".
+##
+## Obyekt rejimində o yeri hesab lövhəsi tutur (8–62 px) — FPS onun üstünə düşürdü və
+## "QOL" ilə birlikdə "2QOLPS" kimi oxunurdu, bağlantı nişanı da vaxtı örtürdü
+## (QA 2026-11-22). Lövhə görünəndə ikisi də onun ALTINA enir.
+func _build_tip() -> void:
+	_tip_box = PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(Palette.PANEL, 0.86)
+	sb.border_color = Palette.PANEL_BORDER
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(14)
+	sb.content_margin_left = 18.0
+	sb.content_margin_right = 18.0
+	sb.content_margin_top = 8.0
+	sb.content_margin_bottom = 10.0
+	_tip_box.add_theme_stylebox_override("panel", sb)
+	_tip_box.anchor_left = 0.5
+	_tip_box.anchor_right = 0.5
+	_tip_box.anchor_top = 1.0
+	_tip_box.anchor_bottom = 1.0
+	# ±270: sağ əldə SUPER düyməsi 918 px-dən, sol əl düzümündə güzgüsü 362 px-ə qədərdir
+	# (1280 enində) — lövhə ikisinin arasında qalır. 660 px-lik ilk variant SUPER-i örtürdü.
+	_tip_box.offset_left = -270.0
+	_tip_box.offset_right = 270.0
+	_tip_box.offset_top = -196.0
+	_tip_box.offset_bottom = -132.0
+	_tip_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_tip_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tip_box.visible = false
+	_tip_lbl = _make_label(19, Palette.TEXT)
+	_tip_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tip_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tip_box.add_child(_tip_lbl)
+	_safe_root.add_child(_tip_box)
+
+
+## Öyrədici ipucu — aşağı-ortada, sakit rəngli lövhədə, [param secs] saniyə.
+##
+## Əvvəl ipucları təhlükə xəbərdarlığının QIRMIZI yazısı ilə ([method flash_hint]) və ya
+## mərkəz mesajı ilə 2 saniyə göstərilirdi, eyni anda bir neçəsi üst-üstə düşürdü
+## (QA 2026-11-22). İndi növbə ilə gəlir; [param delay] — ilk ipucunun gecikməsi (girişin
+## mərkəz mesajı ilə toqquşmasın).
+func show_tip(text: String, secs := TIP_TIME, delay := 0.0) -> void:
+	if text.is_empty() or _tip_box == null:
+		return
+	if _tip_left <= 0.0 and _tips.is_empty():
+		_tip_wait = maxf(_tip_wait, delay)
+	_tips.append([text, secs])
+
+
+## Hazırda görünən ipucunun mətni (boş — ipucu yoxdur).
+func tip_text() -> String:
+	return _tip_lbl.text if _tip_box != null and _tip_box.visible else ""
+
+
+func _step_tip(delta: float) -> void:
+	if _tip_box == null:
+		return
+	if _tip_left > 0.0:
+		_tip_left = maxf(0.0, _tip_left - delta)
+		_tip_box.modulate.a = clampf(minf(_tip_left, _tip_total - _tip_left) / TIP_FADE, 0.0, 1.0)
+		if _tip_left <= 0.0:
+			_tip_box.visible = false
+			_tip_wait = TIP_GAP
+		return
+	if _tips.is_empty():
+		return
+	_tip_wait -= delta
+	if _tip_wait > 0.0:
+		return
+	var t: Array = _tips.pop_front()
+	_tip_lbl.text = String(t[0])
+	_tip_total = float(t[1])
+	_tip_left = _tip_total
+	_tip_box.modulate.a = 0.0
+	_tip_box.visible = true
+
+
+func _place_top() -> void:
+	var y := 64.0 if _obj_on else 10.0
+	_fps_lbl.offset_top = y
+	_fps_lbl.offset_bottom = y + 24.0
+	_net_lbl.offset_top = y + 26.0
+	_net_lbl.offset_bottom = y + 58.0
+
+
+func fps_rect_overlaps_objective() -> bool:
+	var a := Rect2(_fps_lbl.offset_left, _fps_lbl.offset_top,
+		_fps_lbl.offset_right - _fps_lbl.offset_left, _fps_lbl.offset_bottom - _fps_lbl.offset_top)
+	var n := Rect2(_net_lbl.offset_left, _net_lbl.offset_top,
+		_net_lbl.offset_right - _net_lbl.offset_left, _net_lbl.offset_bottom - _net_lbl.offset_top)
+	var o := Rect2(_obj_mid.offset_left, _obj_mid.offset_top,
+		_obj_mid.offset_right - _obj_mid.offset_left, _obj_mid.offset_bottom - _obj_mid.offset_top)
+	return a.intersects(o) or n.intersects(o)
+
+
 ## "MATÇDAN ÇIXIRSAN?" — GERİ jestinin təsdiqi (bax [signal leave_confirmed]).
 ##
-## Oyun DAYANMIR: dünya serverdədir və bu pəncərə ora heç nə demir. Ona görə
+## Onlayn oyun DAYANMIR: dünya serverdədir və bu pəncərə ora heç nə demir (MƏŞQ-də isə
+## dayanır — bax [method Arena.paused_by_prompt]). Ona görə
 ## örtük yarımşəffafdır və DAVAM ET böyük, sol tərəfdədir — oyunçunun ilk
 ## refleksi geri qayıtmaqdır, çıxmaq yox.
 func _build_leave_prompt() -> void:
@@ -552,6 +694,7 @@ func _build_controls(base_tex: Texture2D, knob_tex: Texture2D) -> void:
 ## və oyun oynanmaz olar.
 func apply_settings() -> void:
 	_fps_lbl.visible = Settings.show_fps
+	_place_top()
 
 	var lefty := Settings.left_handed
 
@@ -651,6 +794,7 @@ func _process(delta: float) -> void:
 
 	if _hint_t > 0.0:
 		_hint_t = maxf(0.0, _hint_t - delta)
+	_step_tip(delta)
 
 	if _net_lbl.visible:
 		_net_t += delta
@@ -691,7 +835,9 @@ func update_gauge(balls: int, capacity: int) -> void:
 	# yalnız pisləşdirir.
 	# Oyun bitibsə xəbərdarlıq susur: nəticə lövhəsinin altından yanıb-sönən
 	# "DOLURSAN — TOP AT!" görünürdü, halbuki artıq atmağa mikrob yoxdur.
-	if _result.visible:
+	if _result.visible or dead_wait:
+		# Ölüb dünyaya qayıtmağı gözləyən oyunçuya da: göstərici ölüm anının rəqəmində
+		# donub qalır və "TOP AT!" deyə bilmir — atacaq mikrob yoxdur.
 		_warn_lbl.visible = false
 	elif _hint_t > 0.0:
 		# Basılmış düymənin cavabı təhlükə yazısını qısa müddət üstələyir:
@@ -734,6 +880,42 @@ func update_board(rows: PackedInt32Array, population: int, names: Dictionary) ->
 	_board_lbl.text = "\n".join(lines)
 
 
+## Baxan ölüb və dünyaya qayıtmağı gözləyir: CÜT-də yoldaşı onu diriltməlidir, ÜÇLÜK-də
+## növbəti raund başlamalıdır. Mərkəzdə [param big] (sayğac və ya söz), altında
+## [param sub]; ikisi də boşdursa gözləmə bitib və yazı yalnız ÖZÜNÜNKÜ idisə silinir —
+## başqa mesajın (geri sayım, "GİZLƏNDİN") üstündən xətt çəkilmir.
+func set_wait(big: String, sub: String) -> void:
+	if not big.is_empty() and not _result.visible:
+		_center_lbl.text = big
+		_center_lbl.visible = true
+		_sub_lbl.text = sub
+		_sub_lbl.visible = true
+		_wait_shown = true
+	elif _wait_shown:
+		_wait_shown = false
+		hide_message()
+
+
+## Fərdi "partlatma" cədvəli YALNIZ hər kəsin özü üçün oynadığı rejimdədir.
+##
+## Komanda rejimlərində (CÜT, ÜÇLÜK, ANA, ADA, NÜVƏ TOPU) matçı hesab və ya sona
+## qalan komanda həll edir — kimin neçə mikrob partlatdığı nəticəni dəyişmir. Cədvəl
+## isə sağ yuxarının beş sətrini tutur və minimapı aşağı itələyirdi: NÜVƏ TOPU-nda
+## döyüş və Nüvə məhz o küncdə örtülürdü. Cədvəl gizlənəndə minimap onun yerinə qalxır.
+func _show_board(on: bool) -> void:
+	if _board_lbl.visible == on and _board_placed:
+		return
+	_board_placed = true
+	_board_lbl.visible = on
+	var top := BOARD_BOTTOM + 12.0 if on else MAP_TOP_NO_BOARD
+	minimap.offset_top = top
+	minimap.offset_bottom = top + MAP_SIZE
+
+
+func is_board_shown() -> bool:
+	return _board_lbl.visible
+
+
 ## Bağlantı nişanı — [Arena] snapshot gəlməyəndə və ya girişlər təsdiqlənməyəndə yandırır.
 func set_weak_net(on: bool) -> void:
 	_net_lbl.visible = on
@@ -745,6 +927,7 @@ func set_fire_state(ratio: float, has_ammo: bool) -> void:
 
 
 func show_message(text: String, sub := "") -> void:
+	_msg_id += 1
 	_center_lbl.text = text
 	_center_lbl.visible = true
 	_sub_lbl.text = sub
@@ -758,6 +941,21 @@ func show_message(text: String, sub := "") -> void:
 	_message_tween = create_tween()
 	_message_tween.tween_property(_center_lbl, "scale", Vector2.ONE, 0.24) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+## Mərkəz mesajı [param secs] saniyəlik — taymer yalnız ÖZ mesajını silir.
+##
+## Əvvəl hər mesaj öz taymerini `hide_message`-ə bağlayırdı: kolda doğulan oyunçuda
+## "DÜNYAYA GİRDİN"-in 2 s-lik taymeri arxasınca gələn "GİZLƏNDİN"-i də silirdi və o,
+## 1.9 s-də itirdi (QA 2026-11-22).
+func flash_message(text: String, sub: String, secs: float) -> void:
+	show_message(text, sub)
+	if not is_inside_tree():
+		return
+	var id := _msg_id
+	get_tree().create_timer(secs).timeout.connect(func() -> void:
+		if _msg_id == id:
+			hide_message())
 
 
 func hide_message() -> void:
@@ -888,9 +1086,13 @@ func _show_team_result(result: Dictionary) -> void:
 			why = "Vaxt bitdi — çox xal udur" if timed else "%d xala ilk çatan udur" % Const.ISLAND_WIN
 		Const.Mode.BALL:
 			why = "Vaxt bitdi — çox qol udur" if timed else "%d qol vuran udur" % Const.BALL_GOALS
+		Const.Mode.TRIO:
+			why = "%d raund udan komanda qalibdir" % Const.TRIO_ROUNDS_WIN
 	if draw:
 		why = "Vaxt bitdi — hesab bərabərdir"
 	var word := "ANA" if mode == Const.Mode.MOTHER else ("XAL" if mode == Const.Mode.ISLAND else "QOL")
+	if mode == Const.Mode.TRIO:
+		word = "RAUND"
 	_result_rule.visible = won
 	if won:
 		_result_title.pivot_offset = _result_title.get_rect().size * 0.5
@@ -936,6 +1138,8 @@ func set_match(mode: int, phase: int, phase_t: float, alive: int, drying: bool,
 	elif phase == Const.Phase.PLAYING:
 		countdown_note = ""
 
+	_show_board(not Const.is_team_mode(mode))
+
 	var trio := mode == Const.Mode.TRIO
 	_trio = trio
 	_score_us = us
@@ -977,6 +1181,9 @@ func set_objective(mode: int, phase: int, us: int, them: int, left: float, ot: b
 	var on := phase != Const.Phase.WAITING and not _result.visible
 	for lbl in [_obj_us, _obj_mid, _obj_them]:
 		lbl.visible = on
+	if on != _obj_on:
+		_obj_on = on
+		_place_top()
 	if not on:
 		return
 	_obj_us.text = str(us)

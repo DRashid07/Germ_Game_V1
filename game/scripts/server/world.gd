@@ -164,6 +164,18 @@ var _revive := {}
 ## partlayanların siyahısına qatır ki, [Lobby] nəticəni göndərsin.
 var _revive_lost: Array = []
 
+## ÜÇLÜK: raundda ölən İNSANLAR — `id -> {team, name, color, species, eye}`.
+##
+## Əvvəl ölən oyunçu dərhal nəticə alıb menyuya qayıdırdı, komandası isə qalan iki
+## raundu onsuz (yerinə gələn botla) oynayırdı: "üç raundun ikisi" formatı insan üçün
+## faktiki bir raund idi. İndi ölüm yalnız RAUNDU bitirir: oyunçu dünyada qalır,
+## yoldaşını izləyir (bax [method spectate_target]) və növbəti raundda hamı ilə birlikdə
+## doğulur ([method _reset_round]). Nəticəni matçın sonunda komanda kimi alır.
+var _round_wait := {}
+## ÜÇLÜK: bitmiş raundların cəmi vaxtı — nəticədəki "Matç" müddəti üçün
+## ([member match_t] hər raundda sıfırlanır).
+var _rounds_t := 0.0
+
 ## OBYEKT rejimləri (design/MODES.md §16): ölən mikrob öz bazasında yenidən doğulur —
 ## `id -> {left, team, bot, name, color, species, charge, eye}`. Ölüm matçdan çıxarmır,
 ## ona görə nəticə ekranı da yalnız matçın sonunda gəlir.
@@ -455,6 +467,7 @@ func _end_round() -> void:
 	# ikincidə də üstün başlayardı və matç faktiki olaraq bir raundda həll
 	# olunardı.
 	round_no += 1
+	_rounds_t += match_t
 	_revive.clear()
 	# `match_t` və qabın radiusu [method _reset_round]-un içində sıfırlanır —
 	# doğuş yeri onlardan asılıdır, ona görə bir sahibi olmalıdır.
@@ -472,6 +485,15 @@ func _reset_round() -> void:
 	# mərkəzinə — üstəlik maneənin üstünə — yığılırdı.
 	match_t = 0.0
 	_apply_wet()
+	# Raundda ölən insanlar QAYIDIR — öz komandalarına, adları və növləri ilə. Botlardan
+	# ƏVVƏL: geri sayımda [method _keep_population] boş yerləri botlarla doldurur və
+	# insanın yerini bot tutmamalıdır.
+	for gid in _round_wait.keys():
+		var r: Dictionary = _round_wait[gid]
+		var back := sim.add_germ(gid, String(r["name"]), int(r["color"]), false,
+			Const.species_from(int(r["species"])))
+		back.team = int(r["team"])
+	_round_wait.clear()
 	for gid in sim.germs.keys():
 		var g: Sim.GermState = sim.germs[gid]
 		g.balls = Const.START_BALLS
@@ -544,6 +566,9 @@ func _step_revive(dt: float) -> void:
 func _award_survivors() -> void:
 	if Const.is_objective_mode(int(mode)):
 		_award_teams()
+		return
+	if mode == Const.Mode.TRIO:
+		_award_trio()
 		return
 	var ids := sim.germs.keys()
 	ids.sort_custom(func(a, b) -> bool:
@@ -887,6 +912,40 @@ func _finish(winner: int, by_time: bool) -> void:
 
 ## Obyekt rejiminin nəticəsi KOMANDANINDIR: hər insan — sağ da, doğulmağı gözləyən
 ## də — eyni anda nəticə alır. Yer: qalib komanda 1, uduzan 2, heç-heçədə hamı 1.
+## ÜÇLÜK-ün nəticəsi KOMANDANINDIR: iki raund udan komanda qalibdir, raund hesabı
+## göstərilir, fərdi "N-ci YER" yoxdur. Son raundda ölüb gözləyən insan da ([member
+## _round_wait]) nəticəni məhz burada alır — öz komandasının nəticəsini.
+##
+## Forma obyekt rejimlərininki ilədir (`mode`, `score_us`, `score_them`): [Lobby] və
+## məşq bu açarları olduğu kimi ötürür, client isə komanda ekranını göstərir.
+func _award_trio() -> void:
+	if round_wins.size() < 2:
+		round_wins.resize(2)
+	var winner := -1
+	if round_wins[0] != round_wins[1]:
+		winner = 0 if round_wins[0] > round_wins[1] else 1
+	for gid in teams:
+		places[gid] = 1 if winner < 0 or int(teams[gid]) == winner else 2
+	for peer in peers:
+		var t := int(teams.get(peer, -1))
+		var g: Sim.GermState = sim.germs.get(peer)
+		pending_results.append({
+			"id": peer,
+			"killer_name": "",
+			"pops": int(_obj_pops.get(peer, 0)) + (g.pops if g != null else 0),
+			"cap": g.capacity if g != null else Const.START_CAPACITY,
+			"age": _rounds_t + match_t,
+			"won": winner >= 0 and t == winner,
+			"survived": true,
+			"timed_out": timed_out,
+			"draw": winner < 0,
+			"mode": int(mode),
+			"score_us": round_wins[t] if t == 0 or t == 1 else 0,
+			"score_them": round_wins[1 - t] if t == 0 or t == 1 else 0,
+		})
+	_round_wait.clear()
+
+
 func _award_teams() -> void:
 	var score := team_scores()
 	for gid in teams:
@@ -1005,7 +1064,7 @@ func _keep_population(dt: float) -> void:
 			return
 		# Doğulmağı gözləyən də yer tutur — NÜVƏ TOPU-nda qoldan sonrakı sayımda
 		# ölənlərin yerinə bot gəlməsin.
-		while sim.germs.size() + _respawn.size() < Const.mode_capacity(int(mode)):
+		while sim.germs.size() + _respawn.size() + _round_wait.size() 				< Const.mode_capacity(int(mode)):
 			_add_bot()
 		return
 
@@ -1143,6 +1202,7 @@ func tick(dt: float) -> Array:
 	# dəyişməyə davam edir: oyunçu "bitmiş" matçın davam etdiyini görür və
 	# server nəticə ekranı boyu boş yerə hesablayır.
 	if phase != Const.Phase.OVER:
+		sim.economy_paused = phase == Const.Phase.COUNTDOWN
 		sim.step(_inputs, dt)
 	else:
 		# Hadisələri və partlama siyahısını yalnız `step` təmizləyir. Donmuş
@@ -1220,9 +1280,24 @@ func tick(dt: float) -> Array:
 				"color": int(entry.get("color", 0)),
 				"species": int(entry.get("species", 0)),
 				"entry": entry,
+				# Gözləyən öldüyü yeri görür — client-in kamerası da orada qalır
+				# (bax [method snapshot_for]). Əvvəl görüş sahəsi qabın MƏRKƏZİ idi.
+				"eye": entry.get("pos", Vector2.ZERO),
 			}
 			if _bots.has(gid):
 				_bots.erase(gid)
+			continue
+		# ÜÇLÜK — ölən insan matçda qalır, növbəti raundu gözləyir (bax [member _round_wait]).
+		if mode == Const.Mode.TRIO and phase == Const.Phase.PLAYING \
+				and not _bots.has(gid) and peers.has(gid):
+			_obj_pops[gid] = int(_obj_pops.get(gid, 0)) + int(entry.get("pops", 0))
+			_round_wait[gid] = {
+				"team": t,
+				"name": String(entry.get("name", "Mikrob")),
+				"color": int(entry.get("color", 0)),
+				"species": int(entry.get("species", 0)),
+				"eye": entry.get("pos", Vector2.ZERO),
+			}
 			continue
 
 		if mode != Const.Mode.ENDLESS:
@@ -1396,12 +1471,22 @@ func snapshot_for(peer: int) -> Array:
 	# Doğulmağı gözləyən öldüyü yeri görür — client-in kamerası da orada qalır.
 	if g == null and _respawn.has(peer):
 		eye = _respawn[peer]["eye"]
+	elif g == null and _revive.has(peer):
+		eye = _revive[peer]["eye"]
+	# ÜÇLÜK-də raundu gözləyən YOLDAŞININ gözü ilə görür (bax [method spectate_target]):
+	# görüş sahəsi də, kol qaydası da onunkudur — yoxsa kolda gizlənən yoldaş izləyicinin
+	# snapshot-undan düşərdi və kamera başqasına sıçrayardı.
+	var watch: Sim.GermState = null
+	if g == null and _round_wait.has(peer):
+		var target := spectate_target(peer)
+		watch = sim.germs.get(target) if target >= 0 else null
+		eye = watch.pos if watch != null else _round_wait[peer]["eye"]
 	# Böyük mikrob daha geniş görür, ona görə sahə tutumla birlikdə böyüyür —
 	# əks halda ekranın kənarında obyektlər kəsilərdi.
 	var cap: int = g.capacity if g != null else Const.START_CAPACITY
 	var r2 := pow(Const.aoi_radius(cap), 2.0)
 	# Baxan özü hansı koldadır — gizlənənləri yalnız o görür.
-	var eye_bush := sim.bush_of(g) if g != null else -1
+	var eye_bush := sim.bush_of(g) if g != null else (sim.bush_of(watch) if watch != null else -1)
 
 	# BÜDCƏ — paket MTU-ya sığmalıdır və sabit hədlər bunu təmin etmir.
 	#
@@ -1447,6 +1532,22 @@ func snapshot_for(peer: int) -> Array:
 		_evo_of(g),
 		_mem_of(g),
 	]
+
+
+## ÜÇLÜK-də ölüb raundu gözləyən oyunçu kimi izləyir: komandasının ən kiçik id-li SAĞ
+## mikrobunu. Client eyni qaydanı öz snapshot-undan çıxarır ([method Arena._spectate_id]):
+## izlənən yoldaş görüş sahəsinin mərkəzi olduğu üçün snapshot-da həmişə var, ondan kiçik
+## id-li sağ yoldaş isə ola bilməz — iki tərəf eyni mikrobu seçir, şəbəkəyə sahə lazım deyil.
+## Sağ yoldaş yoxdursa (raund elə bu tick bitir) öldüyü yer.
+func spectate_target(peer: int) -> int:
+	var team := int(teams.get(peer, -1))
+	var best := -1
+	for gid in sim.germs:
+		if gid != peer and sim.germs[gid].team == team and team >= 0 \
+				and (best < 0 or gid < best):
+			best = gid
+	return best
+
 
 
 ## Mikroblar üçün ayrıca süzgəc: məsafədən ƏLAVƏ gizlənmə qaydası var.
@@ -1717,7 +1818,7 @@ func resume_peer(old_peer: int, new_peer: int) -> void:
 	# snapshot-unda komandası -1 olardı və HUD yoldaşını düşmən kimi göstərərdi.
 	# `_revive` də: dirilməni gözləyərkən qayıdan oyunçu YENİ id ilə dirilməlidir,
 	# köhnə id ilə dirilən mikrob heç kimin olmazdı.
-	for src in [tokens, _last_seq, teams, places, _revive, _respawn, _obj_pops]:
+	for src in [tokens, _last_seq, teams, places, _revive, _respawn, _obj_pops, _round_wait]:
 		if src.has(old_peer):
 			src[new_peer] = src[old_peer]
 			src.erase(old_peer)
@@ -1736,7 +1837,7 @@ func is_suspended(peer: int) -> bool:
 ## gözləyir. İkinci hal üçün `sim.germs.has` KİFAYƏT DEYİL — ölü mikrob oradan
 ## çıxır, oyunçu isə matçdadır və yoldaşı onu diriltməlidir.
 func holds(peer: int) -> bool:
-	return sim.germs.has(peer) or _revive.has(peer) or _respawn.has(peer)
+	return sim.germs.has(peer) or _revive.has(peer) or _respawn.has(peer) 		or _round_wait.has(peer)
 
 
 ## Oyunçu dünyanı tərk edir (partladı, çıxdı və ya qayıtmadı).
@@ -1752,6 +1853,7 @@ func drop_peer(peer: int) -> void:
 	# mikrobu 15 s sonra dirilir və sahibsiz dünyada qalırdı.
 	_revive.erase(peer)
 	_respawn.erase(peer)
+	_round_wait.erase(peer)
 
 
 func is_empty() -> bool:

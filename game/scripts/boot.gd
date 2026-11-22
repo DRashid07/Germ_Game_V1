@@ -29,7 +29,12 @@ func _ready() -> void:
 			get_tree().quit(2)
 			return
 		var failed: int = obj.run()
-		print("===== obyekt: %d keçdi, %d uğursuz =====" % [SimTest._pass, failed])
+		# Sayğac `SimTest`-in statik dəyişənidir, amma sinif ADI ilə yox, yüklənən skriptlə
+		# oxunur: test faylları buraxılış paketinə düşmür (bax `export_presets.cfg`), sinfə
+		# birbaşa istinad isə boot.gd-ni o paketdə kompilyasiya olunmaz edərdi.
+		var suite := _tool("sim_test")
+		var passed: int = int(suite.get("_pass")) if suite != null else 0
+		print("===== obyekt: %d keçdi, %d uğursuz =====" % [passed, failed])
 		get_tree().quit(failed)
 	elif args.has("--server"):
 		_start_server(args)

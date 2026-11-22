@@ -36,7 +36,23 @@ var quality_seg: Array[Button] = []
 var addr_edit: LineEdit
 var back_btn: Button
 
+## Server ünvanı sahəsi açıqdırmı — oyunçu üçün GİZLİDİR (bax [method _server_row_due]).
+##
+## Ünvan test alətidir: oyunçu onu təsadüfən pozanda oyun "qoşulmur" və səbəbi
+## heç yerdə görünmür. Sahə üç halda çıxır: versiya yazısına [constant DEV_TAPS]
+## dəfə toxunanda (Android-in "tərtibatçı seçimləri" kimi), saxlanan ünvan standart
+## deyilsə (özü dəyişib — geri qayıda bilməlidir), və QA agenti onu açanda.
+## Statikdir: bir dəfə açılan sahə oyun bağlanana qədər açıq qalır.
+static var dev_open := false
+
+## Versiya yazısına neçə ardıcıl toxunuş sahəni açır.
+const DEV_TAPS := 5
+## Ardıcıl sayılması üçün iki toxunuş arasındakı ən uzun fasilə (s).
+const DEV_TAP_GAP := 0.8
+
 var _cols: HBoxContainer
+var _dev_taps := 0
+var _dev_tap_t := -INF
 
 
 func _ready() -> void:
@@ -200,23 +216,24 @@ func _build_control_column() -> void:
 
 	_gap(box, 10)
 
-	var caption := Hud._make_label(17, Palette.TEXT_MUTED)
-	caption.text = "Server ünvanı"
-	box.add_child(caption)
+	if _server_row_due():
+		var caption := Hud._make_label(17, Palette.TEXT_MUTED)
+		caption.text = "Server ünvanı"
+		box.add_child(caption)
 
-	addr_edit = LineEdit.new()
-	addr_edit.text = Settings.address
-	addr_edit.custom_minimum_size.y = 44
-	addr_edit.add_theme_font_size_override("font_size", 16)
-	addr_edit.add_theme_color_override("font_color", Palette.TEXT)
-	addr_edit.text_changed.connect(func(t: String) -> void:
-		Settings.address = t
-		Settings.save())
-	WebText.attach(addr_edit, "server_addr", {
-		"title": "SERVER ÜNVANI", "ok": "OK", "inputmode": "url"})
-	box.add_child(addr_edit)
+		addr_edit = LineEdit.new()
+		addr_edit.text = Settings.address
+		addr_edit.custom_minimum_size.y = 44
+		addr_edit.add_theme_font_size_override("font_size", 16)
+		addr_edit.add_theme_color_override("font_color", Palette.TEXT)
+		addr_edit.text_changed.connect(func(t: String) -> void:
+			Settings.address = t
+			Settings.save())
+		WebText.attach(addr_edit, "server_addr", {
+			"title": "SERVER ÜNVANI", "ok": "OK", "inputmode": "url"})
+		box.add_child(addr_edit)
 
-	_gap(box, 6)
+		_gap(box, 6)
 
 	var reset := Button.new()
 	reset.text = "AYARLARI SIFIRLA"
@@ -241,7 +258,28 @@ func _build_control_column() -> void:
 	ver.text = "Germ Arena %s · Godot %d.%d.%d" % [
 		str(ProjectSettings.get_setting("application/config/version", "—")),
 		gv.get("major", 0), gv.get("minor", 0), gv.get("patch", 0)]
+	# Gizli qapı: ardıcıl toxunuşlar server sahəsini açır (bax [member dev_open]).
+	ver.mouse_filter = Control.MOUSE_FILTER_STOP
+	ver.gui_input.connect(_on_version_input)
 	box.add_child(ver)
+
+
+## Server sahəsi göstərilməlidirmi (bax [member dev_open]).
+static func _server_row_due() -> bool:
+	return dev_open or Settings.address.strip_edges() != Const.default_server()
+
+
+func _on_version_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	_dev_taps = _dev_taps + 1 if now - _dev_tap_t <= DEV_TAP_GAP else 1
+	_dev_tap_t = now
+	if _dev_taps >= DEV_TAPS and not dev_open:
+		dev_open = true
+		Sfx.play("ui_click")
+		_rebuild()
 
 
 ## Sürüşdürmə dəyəri ilə ən yaxın pilləni tapır.

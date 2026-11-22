@@ -313,7 +313,7 @@ mürəkkəbləşməsi bu mərhələdə lazım deyil.
 | Mikrob | 6 (3v3) |
 | Qab | `700` başlanğıc; 40-cı saniyədən `220`-yə |
 | Raund | 60 saniyə |
-| Dirilmə | **Yoxdur** (raund boyu) |
+| Dirilmə | **Yoxdur** (raund boyu) — ölən insan yoldaşını izləyir və növbəti raundda doğulur |
 | Raund qalibi | Rəqib komanda tam çıxdı, yaxud vaxt bitəndə **çox mikrobu qalan** |
 | Matç qalibi | Üç raundun ikisini udan |
 | Spor | Yoxdur |
@@ -582,7 +582,7 @@ Aşağıdakılar **qərar gözləyir** — dizaynda mövqeyim var, amma son söz
 |---|---|
 | ENDLESS qalsın? | ✅ **QƏRAR: qalır və ilkin rejimdir** |
 | Matç ortasında qoşulma olsun? | **Yox** — yalnız `COUNTDOWN`-da. Yarımçıq matça düşmək pisdir |
-| Öləndən sonra izləmə (spectate)? | **Yox** — dərhal menyuya. İzləmə yeni ekran, yeni şəbəkə axını deməkdir |
+| Öləndən sonra izləmə (spectate)? | ~~Yox — dərhal menyuya~~ → **2026-11-22: ÜÇLÜK-də BƏLİ.** Menyuya atmaq 3 raund formatını insan üçün bir raunda endirirdi (QA). Yeni şəbəkə axını lazım olmadı: server görüş sahəsini komandanın ən kiçik id-li sağ mikrobuna qurur, client eyni qaydanı snapshot-dan çıxarır (`World.spectate_target`, `Arena._spectate_id`). Qaydalar versiyası 6 |
 | Spor TRIO-da olsun? | **Yox** — qısa matçda balansı pozur |
 | Yer/hesab yadda saxlansın? | **Yox** — iqtisadiyyat qərarı “sonra”dır |
 | TRIO-da 3 raund çoxdurmu? | Sınamaq lazımdır. Raund 60 s → matç ~3.5 dəqiqə. Uzun gəlsə: 2 raund |

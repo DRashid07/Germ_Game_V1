@@ -168,6 +168,12 @@ var pred: Sim                       ## Yalnız lokal mikrobu saxlayan proqnoz
 var me: Sim.GermState
 ## Bu oyunçu yenidir — hər girişində serverə bit kimi gedir ([member Sim.PlayerInput.newbie]).
 var _newbie := false
+## Bu giriş yeni oyunçu sayğacına yazılıbmı (bax [method _count_match]).
+var _counted := false
+## Onlayn matçda PLAYING fazasında keçən vaxt — sayğac üçün.
+var _played_t := 0.0
+## Onlayn matç neçə saniyə oynananda "matç" sayılır (ölüm və ya nəticə ondan tez də sayır).
+const NEWBIE_COUNT_AFTER := 20.0
 var pending: Array[Sim.PlayerInput] = []
 ## Serverin son dediyi "super işləyir" biti — qalxma anını tutmaq üçün
 ## saxlanılır (bax [method _reconcile]).
@@ -664,6 +670,19 @@ var _match_clock := 0.0
 var _obj := PackedFloat32Array()
 ## Baxanın doğulmasına qalan saniyə (0 — sağdır).
 var _respawn_left := 0.0
+## CÜT / ÜÇLÜK: öz mikrobun serverdə ölüb, dünyaya qayıtmağı gözləyir — CÜT-də yoldaş
+## diriltməlidir ([constant Const.REVIVE_TIME]), ÜÇLÜK-də növbəti raund başlamalıdır.
+##
+## Server bunu ayrıca demir: mikrob snapshot-dan DÜŞÜR, nəticə isə gəlmir. Əvvəl client
+## bunu görmürdü — proqnoz ölü mikrobu "kölgə" kimi gəzdirir, atəş açdırır, HUD-da top
+## sayını azaldırdı və 15 s sonra mikrob xəbərsiz başqa yerə sıçrayırdı (QA 2026-11-22).
+var _waiting := false
+## CÜT-də dirilməyə qalan saniyə — client-in öz sayğacıdır (yox olma anından).
+var _wait_left := 0.0
+## ÜÇLÜK-də izlənən yoldaş (bax [method _spectate_id]), -1 — yoxdur.
+var _spectate := -1
+## İzləmə kamerasının hamarlanmış nöqtəsi.
+var _spectate_pos := Vector2.INF
 ## Obyektlərin görüntüsü (bax [method _build_objective]).
 var _objective: Node2D
 var _island: Node2D
@@ -839,9 +858,9 @@ func _ready() -> void:
 	_build_world()
 	_build_hud()
 	# Yeni oyunçu: ilk matçlarda qorunur (bax [constant Const.NEWBIE_MATCHES]).
-	# Qərar girişdən ƏVVƏL oxunur, sonra bu giriş sayılır.
+	# Qərar girişdən ƏVVƏL oxunur; giriş isə burada YOX, oynananda sayılır
+	# ([method _count_match]) — məşq və dərhal çıxış qorumanı xərcləmir.
 	_newbie = Settings.is_newbie()
-	Settings.note_match()
 	_init_prediction()
 	# Zərrəciklər və "şirə" effektləri [method _build_world]-də yaranır, ona
 	# görə keyfiyyət ONDAN SONRA tətbiq olunur — mühit isə artıq hazırdır.
@@ -861,8 +880,7 @@ func _ready() -> void:
 	# Öyrədici mesajdır — ilk bir neçə girişdə (bax [constant Settings.TIP_SHOWS]).
 	if Settings.tip_due("enter"):
 		Settings.tip_shown("enter")
-		_hud.show_message("DÜNYAYA GİRDİN", "Qida ye, rəqibi doldur, partlat")
-		get_tree().create_timer(2.0).timeout.connect(_hud.hide_message)
+		_hud.flash_message("DÜNYAYA GİRDİN", "Qida ye, rəqibi doldur, partlat", 3.0)
 	Sfx.play("spawn")
 	# Menyusuz açılışda (məşq, test client-i) brauzerin yükləmə örtüyü buradan götürülür.
 	Settings.web_page_ready()
@@ -1404,7 +1422,9 @@ func _build_hud() -> void:
 	# Yeni idarə — ilk üç matçda qısa izah (bax [method Settings.tip_due]).
 	if _hud.membrane_button.visible and Settings.tip_due("membrane"):
 		Settings.tip_shown("membrane")
-		_hud.flash_hint("MEMBRAN (E): öndən gələn ilk topu qaytarır · damcı yuxarıdan keçir")
+		# Sakit ipucu lövhəsində, girişin mərkəz mesajından SONRA (bax [method Hud.show_tip]).
+		# Əvvəl qırmızı xəbərdarlıq kimi 2 s çıxırdı və telefonda olmayan "E" düyməsini deyirdi.
+		_hud.show_tip(membrane_tip(), Hud.TIP_TIME, 3.2)
 	# Xəritə rejimin öz qabını və düzümünü göstərir (obyekt rejimlərində kiçik qab).
 	_hud.minimap.wall = _wall
 	_hud.minimap.obstacles = _obstacles
@@ -1415,7 +1435,104 @@ func _build_hud() -> void:
 ## Öz mikrobun doğulmağı gözləyir (obyekt rejimi): görünmür, idarə olunmur, atəş açmır.
 ## Kamera öldüyü yerdə qalır; server onu bazasında doğanda proqnoz ora sıçrayır.
 func _own_dead() -> bool:
-	return _respawn_left > 0.0 and Const.is_objective_mode(int(_mode))
+	return _waiting or (_respawn_left > 0.0 and Const.is_objective_mode(int(_mode)))
+
+
+## Yeni oyunçunun sayğacı ([constant Const.NEWBIE_MATCHES]) yalnız ONLAYN, həqiqətən
+## oynanan matçı sayır: [constant NEWBIE_COUNT_AFTER] saniyə oynayanda və ya matç
+## (ölüm, nəticə) bitəndə. Əvvəl hər arena açılışı sayılırdı — menyudakı MƏŞQ də, girib
+## dərhal çıxmaq da — və yeni oyunçu məşqdə bir neçə dəfə sınayandan sonra onlayn ilk
+## matçlarında qorumasız qalırdı (QA 2026-11-22).
+func _count_match() -> void:
+	if _counted or _local_world != null:
+		return
+	_counted = true
+	Settings.note_match()
+
+
+## Membranın öyrədici cümləsi — düyməni platformanın dili ilə deyir: telefonda klaviatura
+## yoxdur, "E" orada heç nə demirdi (QA 2026-11-22); düymə superin ÜSTÜNDƏDİR
+## ([method Hud.apply_settings]).
+static func membrane_tip() -> String:
+	var how := "superin üstündəki düymə" if Const.is_handheld() 		else "E və ya superin üstündəki düymə"
+	return "MEMBRAN (%s): öndən gələn ilk topu qaytarır · damcı yuxarıdan keçir" % how
+
+
+## Öz mikrobun snapshot-da varmı — CÜT və ÜÇLÜK-də ölüm nəticəsiz də ola bilər.
+##
+## Matç gedərkən mikrob snapshot-dan DÜŞÜB və nəticə gəlməyibsə, oyunçu gözləyir
+## (bax [member _waiting]). Qayıdanda (dirildi, yeni raund) gözləmə bitir; sıçrayış
+## isə teleport kimi göstərilir ([member _snap_next], yuxarıdakı döngü).
+func _watch_own_presence(was_in: bool) -> void:
+	if _me_in_snap:
+		# Ölü ikən giriş təsdiqlənmir (mikrob yoxdur) — qayıdış anı yalançı "ZƏİF BAĞLANTI"
+		# yandırmasın (bax [method _apply_match]-dakı eyni qayda).
+		if not was_in:
+			_ack_moved_t = _clock
+		if _waiting:
+			_waiting = false
+			_wait_left = 0.0
+			_spectate = -1
+			_spectate_pos = Vector2.INF
+		return
+	if not was_in or _waiting or _finished or _reconnecting or _phase != Const.Phase.PLAYING:
+		return
+	# Joystik BURAXILMIR: gözləmədə giriş onsuz da sıfırdır ([method _do_tick]), barmağını
+	# saxlayan oyunçu isə dirilən kimi yeriməlidir — obyekt rejimlərindəki kimi.
+	match _mode:
+		Const.Mode.DUO:
+			_waiting = true
+			_wait_left = Const.REVIVE_TIME
+		Const.Mode.TRIO:
+			_waiting = true
+
+
+## Gözləmənin yazısı: CÜT-də dirilməyə qalan saniyə, ÜÇLÜK-də kimi izlədiyin.
+func _show_wait() -> void:
+	if not _waiting:
+		_hud.set_wait("", "")
+		return
+	if _mode == Const.Mode.TRIO:
+		var mate := ""
+		if _spectate >= 0:
+			mate = String((_roster.get(_spectate, [""]) as Array)[0])
+		_hud.set_wait("İZLƏYİRSƏN", ("%s · " % mate if not mate.is_empty() else "")
+			+ "növbəti raundda qayıdırsan")
+	else:
+		_hud.set_wait(str(maxi(int(ceilf(_wait_left)), 1)), "Yoldaşın sağdır — səni diriltəcək")
+
+
+## ÜÇLÜK-də kimi izləyirik — serverlə EYNİ qayda ([method World.spectate_target]):
+## komandanın snapshot-dakı ən kiçik id-li mikrobu. Server görüş sahəsini məhz onun
+## üstünə qurur, yəni o, snapshot-da həmişə var.
+func _spectate_id() -> int:
+	if _last_snap.is_empty() or _my_team < 0:
+		return -1
+	var best := -1
+	for e in _last_snap[Const.Snap.GERMS]:
+		var gid := int(e[Const.GF.ID])
+		if gid == my_id:
+			continue
+		var flags := int(e[Const.GF.FLAGS])
+		var team := ((flags & Const.GFlag.TEAM_MASK) >> Const.GFlag.TEAM_SHIFT) - 1
+		if team == _my_team and (best < 0 or gid < best):
+			best = gid
+	return best
+
+
+## Kameranın baxdığı nöqtə: öz mikrobun, ÜÇLÜK-də gözləyəndə isə izlənən yoldaş.
+## Yoldaş dəyişəndə kamera sıçramır, ona sürüşür.
+func _camera_focus(delta: float) -> Vector2:
+	if _waiting and _mode == Const.Mode.TRIO:
+		_spectate = _spectate_id()
+		var v = _visuals.get(_spectate, {}).get("node")
+		if v != null and is_instance_valid(v):
+			var p: Vector2 = (v as Node2D).position
+			_spectate_pos = p if not _spectate_pos.is_finite() \
+				else _spectate_pos.lerp(p, 1.0 - exp(-delta * 6.0))
+		if _spectate_pos.is_finite():
+			return _spectate_pos
+	return _shown_pos()
 
 
 ## ESC və Android-in GERİ jesti — matçdan çıxış təsdiqi.
@@ -1587,10 +1704,17 @@ func _sync_shown() -> void:
 # ================================================================ dövr
 
 func _process(delta: float) -> void:
+	# Ölçənlər ([method _watch_performance], [method _watch_resolution]) HƏQİQİ kadr
+	# vaxtını alır; oyunun saatı isə məşqdə çıxış təsdiqi açıq ikən dayanır.
+	var real_delta := delta
+	if paused_by_prompt():
+		delta = 0.0
 	# Bu kadra qədər gələn snapshot-lar BİRLİKDƏ emal olunur (bax [method _drain_inbox]).
 	# Saat hələ artırılmayıb — əvvəlki kimi, siqnalın işlədiyi anın saatı.
 	_drain_inbox()
 	_clock += delta
+	if _wait_left > 0.0:
+		_wait_left = maxf(0.0, _wait_left - delta)
 	_advance_render(delta)
 	_corr_off *= exp(-delta / CORR_TAU)
 	if _corr_off.length_squared() < 0.01:
@@ -1614,8 +1738,18 @@ func _process(delta: float) -> void:
 
 	_render(delta)
 	_watch_net()
-	_watch_performance(delta)
-	_watch_resolution(delta)
+	_watch_performance(real_delta)
+	_watch_resolution(real_delta)
+
+
+## MƏŞQ-də "MATÇDAN ÇIXIRSAN?" açıq ikən dünya DAYANIR.
+##
+## Məşqin dünyası bu prosesdədir ([member _local_world]) və onu yalnız arena addımlayır,
+## yəni dayandırmaq pulsuzdur. Əvvəl dünya işləyirdi, idarə isə buraxılırdı: oyunçu
+## "davam et"i düşünərkən botlar onu vururdu (QA 2026-11-22 — 3 s-də 2 zərbə). Onlayn
+## dünya serverdədir və dayana bilməz — orada qayda dəyişmir.
+func paused_by_prompt() -> bool:
+	return _local_world != null and not _finished and _hud != null and _hud.is_leave_prompt_open()
 
 
 ## Xəritənin fasiləsiz iki yumşaq hərəkəti bir yerdə saxlanılır.
@@ -1658,6 +1792,10 @@ func _animate_environment() -> void:
 func _do_tick() -> void:
 	if _finished or _reconnecting:
 		return
+	if not _counted and _local_world == null and _phase == Const.Phase.PLAYING:
+		_played_t += Const.TICK_DELTA
+		if _played_t >= NEWBIE_COUNT_AFTER:
+			_count_match()
 
 	var inp := _sample_input()
 	inp.newbie = _newbie
@@ -1716,6 +1854,12 @@ func _do_tick() -> void:
 	_pos_prev = me.pos
 	_aim_prev = me.aim
 	pred.step_movement(_pred_inputs(inp), Const.TICK_DELTA, true)
+	# Ölü mikrobun proqnozu YERİNDƏ qalır: giriş sıfırdır, amma ölüm anının sürəti və su
+	# axını onu (və kameranı) yavaş-yavaş sürüşdürürdü — CÜT-də 4 s-də ~100 px. Server
+	# gözləyənin görüş sahəsini ölüm yerinə qurur ([method World.snapshot_for]).
+	if _own_dead():
+		me.pos = _pos_prev
+		me.vel = Vector2.ZERO
 	_pos_curr = me.pos
 	_aim_curr = me.aim
 	var tricho := 0.0
@@ -1754,11 +1898,14 @@ func _do_tick() -> void:
 		Net.send_input.rpc_id(1, inp.to_array())
 
 	# Miniqanda top pulsuzdur — sursat həddi düyməni söndürməməlidir.
+	var dead := _own_dead()
 	_hud.set_fire_state(me.cooldown / Const.FIRE_COOLDOWN,
-		me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst())
-	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready())
+		(me.balls >= Const.FIRE_MIN_BALLS or me.in_cyst()) and not dead)
+	_hud.set_super(float(_shown_charge()) / float(Const.SUPER_MAX), me.super_ready() and not dead)
+	_hud.dead_wait = dead
 	_update_mutations()
 	_update_membrane()
+	_show_wait()
 	if _mode != Const.Mode.ENDLESS:
 		# Yaş sahənin mərkəzi YAŞ ADA-da gəzir — quruda olmaq ondan olan məsafədir.
 		_hud.set_match(int(_mode), _phase, _phase_t, _alive,
@@ -2311,6 +2458,7 @@ func _drain_inbox() -> void:
 				_snap_next = true
 			_reconcile(entry, newest[Const.Snap.SELF])
 			break
+	_watch_own_presence(was_in)
 	_hud.update_board(newest[Const.Snap.BOARD], int(newest[Const.Snap.POP]), _roster)
 	# Minimap yaş radiusu da bilməlidir: TƏK QALAN-da təhlükəsiz zona 1200-dən
 	# 90 px-ə düşür və oyunçunun "hara qaçım" sualına cavab verən yeganə yer
@@ -2696,6 +2844,8 @@ func _on_you_burst(result: Dictionary) -> void:
 	if _finished:
 		return
 	_finished = true
+	# Matç sona çatdı (ölüm və ya nəticə) — qısa olsa da, oynanmış matçdır.
+	_count_match()
 	_hud.release_sticks()
 	_hud.show_result(result)
 
@@ -2709,6 +2859,13 @@ func _on_you_burst(result: Dictionary) -> void:
 		Sfx.play("level_up" if result.get("won", false) else "ui_click")
 		_freeze = 0.0
 		get_tree().create_timer(6.0).timeout.connect(_return_to_menu)
+		return
+
+	# CÜT: oyunçu artıq ölmüşdü və dirilməni gözləyirdi — indi yoldaşı da öldü.
+	# Partlayış, səs və donma ölüm anında artıq olub, ikinci dəfə oynanmır.
+	if _waiting:
+		_waiting = false
+		get_tree().create_timer(4.0).timeout.connect(_return_to_menu)
 		return
 
 	# Öz partlayışın daha böyük çəkilir — kamera onun üstündədir və oyun bitir.
@@ -2903,7 +3060,7 @@ func _update_camera(delta: float) -> void:
 	# İstiqamətli təpik random silkələnmədən tez sönür. Uzun quyruq kamera
 	# sürüşməsi kimi oxunurdu; 70 px/san onu təxminən 0.15 saniyədə bitirir.
 	_kick = _kick.move_toward(Vector2.ZERO, 70.0 * delta)
-	_cam.position = _shown_pos() + shake + _kick
+	_cam.position = _camera_focus(delta) + shake + _kick
 
 	# Zərrəciklər kameranı izləyir: dünyanın hamısını doldurmaq əvəzinə
 	# yalnız görünən sahədə saxlanılır (bax [WaterMotes]).
@@ -2983,6 +3140,12 @@ func _apply_match(row: Array) -> void:
 	_mode = Const.mode_from(int(row[Const.MF.MODE]))
 	var was := _phase
 	_phase = int(row[Const.MF.PHASE]) as Const.Phase
+	# Geri sayımda server girişi QƏBUL ETMİR, təsdiq sayğacı (ACK) donur. Oyun başlayan
+	# kimi [method _link_stalled] onu "girişlər təsdiqlənmir" sayırdı və hər matçın, qolun,
+	# raundun əvvəlində ~1 s "ZƏİF BAĞLANTI" yanırdı — 0 ms-lik lokal serverdə də
+	# (QA 2026-11-22). Saat bu andan sayılır.
+	if _phase == Const.Phase.PLAYING and was != Const.Phase.PLAYING:
+		_ack_moved_t = _clock
 	_phase_t = float(row[Const.MF.CLOCK])
 	_wet_radius = float(row[Const.MF.RADIUS])
 	_alive = int(row[Const.MF.ALIVE])
@@ -3007,8 +3170,7 @@ func _apply_match(row: Array) -> void:
 		Sfx.play("level_up" if ours else "you_burst")
 		_add_shake(6.0)
 	if _mode == Const.Mode.MOTHER and not was_ot and _obj.size() > 1 and _obj[1] > 0.5:
-		_hud.show_message("ƏLAVƏ VAXT", "Əmmək dayandı — iki Ana da dolur")
-		get_tree().create_timer(2.0).timeout.connect(_hud.hide_message)
+		_hud.flash_message("ƏLAVƏ VAXT", "Əmmək dayandı — iki Ana da dolur", 3.0)
 
 	if was != _phase:
 		_on_phase_changed()
@@ -3034,8 +3196,8 @@ func _on_phase_changed() -> void:
 			if Settings.tip_due(goal_tip):
 				Settings.tip_shown(goal_tip)
 				goal = Const.mode_goal(int(_mode))
-			_hud.show_message("BAŞLADI", goal)
-			get_tree().create_timer(1.4).timeout.connect(_hud.hide_message)
+			# Məqsəd cümləsi varsa oxumağa vaxt lazımdır — yalnız "BAŞLADI" isə qısadır.
+			_hud.flash_message("BAŞLADI", goal, 3.0 if not goal.is_empty() else 1.4)
 			Sfx.play("level_up")
 		_:
 			pass
@@ -3160,8 +3322,7 @@ func _watch_bush() -> void:
 	if inside and not _bush_taught and Settings.tip_due("bush"):
 		_bush_taught = true
 		Settings.tip_shown("bush")
-		_hud.show_message("GİZLƏNDİN", "Kolun içində rəqiblər səni görmür")
-		get_tree().create_timer(2.2).timeout.connect(_hud.hide_message)
+		_hud.flash_message("GİZLƏNDİN", "Kolun içində rəqiblər səni görmür", 3.0)
 
 
 ## Kolda öz mikrobunun şəffaflığı və içində olduğun kolun tacının şəffaflığı.

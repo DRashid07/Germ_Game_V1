@@ -2582,6 +2582,14 @@ static func _test_warm_up_covers_arena() -> void:
 	_check(gpu.contains("load(MAP_FLOOR)") and gpu.contains("_hold.append(shader)")
 			and gpu.contains(".draw_line(") and gpu.contains("set_extent(probe"),
 		"isinmə döşəməni və nazik xətti ekrandan kənarda çəkir, shader-i saxlayır")
+	# YAŞ ADA-nın palçığı 0:20-yə qədər gizlidir — isinmədə olmasa, shader qab quruyan
+	# anda kompilyasiya olunur. Arena onu çoxbucaqlı kimi çəkir, isinmə də elə çəkməlidir
+	# (düzbucaqlı shader-in başqa variantıdır).
+	_check(ResourceLoader.exists(GermGPU.ISLAND_DRY)
+			and arena.contains("preload(\"%s\")" % GermGPU.ISLAND_DRY)
+			and arena.contains("_island.draw_colored_polygon(")
+			and gpu.contains("load(ISLAND_DRY)") and gpu.contains("probe.draw_colored_polygon("),
+		"isinmə YAŞ ADA-nın palçıq shader-ini arenadakı kimi (çoxbucaqlı) çəkir")
 
 
 ## Skriptlərin mətnlərindəki hər simvol oyunun üç şriftinin hər birində var: mətn,

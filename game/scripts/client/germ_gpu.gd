@@ -38,6 +38,9 @@ const SHADER := preload("res://shaders/germ.gdshader")
 const SHAPE_SHADER := preload("res://shaders/germ_shape.gdshader")
 ## Xəritənin döşəməsi — [method warm_up] onu da isidir (arena `preload` edir).
 const MAP_FLOOR := "res://shaders/map_floor.gdshader"
+## YAŞ ADA-nın quru palçığı — qat matçın 20-ci saniyəsinə qədər gizlidir, ona görə
+## isinməsə shader-i məhz qab quruyan anda kompilyasiya olunurdu (bax [method warm_up]).
+const ISLAND_DRY := "res://shaders/island_dry.gdshader"
 
 ## Məlumat sətri (texel; bir texel 4 float, 16 bayt): başlıq və konturun
 ## ədədləri 20 texel ([method GermVisual.gpu_row_bytes]), sonra 13 ayaq.
@@ -216,7 +219,7 @@ static func warm_up(host: CanvasItem, done := Callable()) -> void:
 				body_mesh(kind)
 			else:
 				front_mesh(kind)
-	# Menyudan sonra arenanın özünə qalan son iki proqram: xəritənin döşəməsi və
+	# Menyudan sonra arenanın özünə qalan son proqramlar: xəritənin döşəməsi və
 	# nazik xətlər (Godot 4.7-də hər `draw_line` "primitive" çəkilişdir, standart
 	# shader-in ayrıca variantı). Soyuq keşdə — APK-nın ilk açılışında, brauzerdə ilk
 	# dəfə — arenanın ilk kadrı onları kompilyasiya edirdi; parlama, post-proses və su
@@ -226,7 +229,14 @@ static func warm_up(host: CanvasItem, done := Callable()) -> void:
 	# piksel dəyişmir. Döşəmənin shader-i saxlanılır: arena eyni resursu `preload`
 	# edir — yeni resurs olsaydı, brauzer onu matçın başında yenidən kompilyasiya
 	# edərdi (orada Godot-un disk keşi yoxdur).
-	for step in 2:
+	#
+	# Üçüncüsü YAŞ ADA-nın palçığıdır ([constant ISLAND_DRY]): onun qatı qab quruyana
+	# qədər (0:20) gizlidir və ilk dəfə məhz o anda çəkilirdi — shader matçın ortasında,
+	# oyunun ən gərgin anında kompilyasiya olunurdu (ölçülüb, soyuq keş: masaüstündə
+	# 81 ms, emulyatorda 75 ms bir kadr). Arena onu çoxbucaqlı kimi çəkir
+	# ([method Arena._build_island]) — isinmə də çoxbucaqlıdır: düzbucaqlı shader-in başqa
+	# variantını kompilyasiya edərdi.
+	for step in 3:
 		await tree.process_frame
 		if not is_instance_valid(host) or not host.is_inside_tree():
 			break
@@ -239,6 +249,16 @@ static func warm_up(host: CanvasItem, done := Callable()) -> void:
 			probe.material = mat
 			probe.draw.connect(func() -> void:
 				probe.draw_rect(Rect2(-100000.0, -100000.0, 4.0, 4.0), Color.WHITE))
+		elif step == 1:
+			var shader: Shader = load(ISLAND_DRY)
+			_hold.append(shader)
+			var mat := ShaderMaterial.new()
+			mat.shader = shader
+			probe.material = mat
+			probe.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+			probe.draw.connect(func() -> void:
+				probe.draw_colored_polygon(PackedVector2Array([Vector2(-100000.0, -100000.0),
+					Vector2(-99996.0, -100000.0), Vector2(-99996.0, -99996.0)]), Color.WHITE))
 		else:
 			probe.draw.connect(func() -> void:
 				probe.draw_line(Vector2(-100000.0, -100000.0), Vector2(-99996.0, -100000.0),

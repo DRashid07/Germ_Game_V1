@@ -1233,7 +1233,7 @@ Server və oyun EYNİ build-dir — simulyasiya kodu ikisində eynidir.
 
 ### Testlər
 ```bash
-# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası + ÜÇLÜK/CÜT gözləməsi + HUD və sayım (1056 test)
+# Simulyasiya + World + dostluq/komanda + obyekt rejimləri + adi atəşin profilləri + qida koloniyaları + mutasiyalar + membran + 3D prototipin izolyasiyası + ÜÇLÜK/CÜT gözləməsi + HUD və sayım + YAŞ ADA-nın isinməsi (1057 test)
 GODOT --headless --path game -- --simtest
 
 # Şəbəkə inteqrasiya testi: 1 server + 2 insansız client
@@ -1476,6 +1476,21 @@ Qiyməti menyuda bir əlavə kadrdır (~20 ms). Real Mali-də kompilyasiya daha 
 ona görə qazanc orada daha böyük olmalıdır (ölçülməyib). Emulyatorda Godot-un keşi
 ümumiyyətlə işləmir ("Failed to load cached shader, recompiling"), ona görə orada hər
 açılış soyuqdur. Qoruyucu test: `_test_warm_up_covers_arena`.
+
+**YAŞ ADA-nın palçığı da isidilir (2026-11-22).** Obyekt rejimləri gələndən sonra eyni
+keş üsulu (soyuq keş, faylların yazılma anı matçın saatına qarşı) bir proqram da tapdı:
+YAŞ ADA-nın quru palçığı (`island_dry.gdshader`). Onun qatı qab quruyana qədər (0:20)
+gizlidir, ona görə shader məhz o anda — rejimin ən gərgin anında — kompilyasiya olunurdu:
+masaüstündə 81 ms, emulyatorda 75 ms bir kadr (real Mali-də daha uzun). Digər altı
+rejimdə (məşq və onlayn, 45–90 s) matçda yeni proqram yoxdur. İndi palçıq isinmənin
+öz kadrında ekrandan kənarda ÇOXBUCAQLI kimi çəkilir — arena da onu belə çəkir
+([method Arena._build_island]), düzbucaqlı shader-in başqa variantını kompilyasiya
+edərdi. Yoxlama: soyuq keşlə YAŞ ADA-da həmin proqram (`84c09366…`) artıq isinmədə
+yazılır, 4.5 s-dən sonra heç bir fayl yoxdur; kadrın işi dəyişmir (emulyator, növbəli
+A/B: 4.39–4.57 / 4.50–4.70 ms). Emulyatorda bu donma yalnız İLK qaçışda görünür:
+emulyator shader-ləri host-un NVIDIA sürücüsü ilə kompilyasiya edir və sürücü onları
+öz diskində saxlayır — kompilyasiya donmaları üçün keş faylları yeganə deterministik
+ölçüdür.
 
 **Görüntü itmir.** Shader-lər GDScript formullarının bir-bir surətidir; antialias-lı
 xətlər Godot-un öz `canvas_item_add_polyline` həndəsəsidir (en kompensasiyası,

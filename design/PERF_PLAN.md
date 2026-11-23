@@ -435,6 +435,11 @@ keçidlərinin hazırlığı da gedir.
    > Soyuq keşlə giriş kadrı:
    > - Chrome: render 64–68 → 17–30 ms;
    > - emulyator: 53 → 39 ms (render 22.5 → 7).
+   > **YAŞ ADA-nın palçığı (2026-11-22).** Obyekt rejimlərindən sonra bir proqram matçın
+   > ortasına qalmışdı: `island_dry.gdshader` qab quruyan anda (0:20) ilk dəfə çəkilirdi —
+   > masaüstündə 81 ms, emulyatorda 75 ms. İndi isinmədədir (çoxbucaqlı kimi, arenadakı
+   > variant); yeddi rejimin heç birində matç yeni proqram kompilyasiya etmir. Bax
+   > `docs/PERF_ARASDIRMA_2026-11-22.md`.
    > **Açılış (2026-10-20):** klient serverin siniflərini (Lobby, World, SocialHub,
    > Bot) artıq kompilyasiya etmir — `boot.gd` və `friends.gd` onları adla çağırırdı.
    > Brauzerdə (CPU 13×) menyu 25.8–26.3 → 24.0–24.8 s, APK emulyatorunda 4767 → 4454 ms.
